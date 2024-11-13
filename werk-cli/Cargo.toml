@@ -1,0 +1,8 @@
+[package]
+name = "werk-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = "4.5.20"
+clio = "0.3.5"

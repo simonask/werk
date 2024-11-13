@@ -1,0 +1,7 @@
+[workspace]
+members = ["werk-parser", "werk-cli", "werk-runner"]
+resolver = "2"
+
+[workspace.dependencies]
+werk-runner.path = "werk-runner"
+werk-parser.path = "werk-parser"

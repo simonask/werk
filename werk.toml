@@ -1,0 +1,19 @@
+[global]
+out-dir = "target"
+profile = "debug"
+
+[command.build]
+deps = ["{profile}/werk"]
+post-message = "Build done for profile '{profile}'"
+
+[out.'{profile}/werk']
+command = "cargo build -p werk-cli --profile={profile}"
+
+[out.'%.o']
+in = ["%.c"]
+makefile-deps = "%.d"
+command = "clang -c -o {out} {in}"
+
+[out.'%.d']
+in = ["%.c"]
+command = "clang -MM -MT {out} -MF {out} {in}"
