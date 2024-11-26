@@ -2,7 +2,8 @@ use werk_fs::Path;
 use werk_parser::ast;
 
 use crate::{
-    AmbiguousPatternError, Error, Pattern, PatternMatch, PatternMatchData, Project, Scope, TaskId,
+    AmbiguousPatternError, Error, EvalError, Pattern, PatternMatch, PatternMatchData, Project,
+    Scope, TaskId,
 };
 
 pub struct Recipes {
@@ -59,7 +60,7 @@ impl From<RecipeMatch<'_>> for RecipeMatchData {
 }
 
 impl Recipes {
-    pub async fn new(root: ast::Root, project: &Project) -> Result<Self, Error> {
+    pub async fn new(root: ast::Root, project: &Project) -> Result<Self, EvalError> {
         // Evaluate global variables.
         let mut global = Scope::root();
         for (var, expr) in root.global.iter() {

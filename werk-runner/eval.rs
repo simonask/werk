@@ -4,8 +4,8 @@ use indexmap::IndexMap;
 use werk_parser::ast;
 
 use crate::{
-    project, Error, Pattern, PatternBuilder, PatternMatch, Project, RecipeMatch, ShellCommandLine,
-    ShellCommandLineBuilder, ShellError, Value,
+    project, Error, EvalError, Pattern, PatternBuilder, PatternMatch, Project, RecipeMatch,
+    ShellCommandLine, ShellCommandLineBuilder, ShellError, Value,
 };
 
 pub struct Scope<'a> {
@@ -20,55 +20,6 @@ pub enum StringEvalContext {
     Literal,
     Path,
     Argument,
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum EvalError {
-    #[error("no pattern stem in this rule")]
-    NoPatternStem,
-    #[error("one-of patterns not allowed in this context")]
-    IllegalOneOfPattern,
-    #[error("no implied interpolation value in this context; provide an identifier or a capture group index")]
-    NoImpliedValue,
-    #[error("no capture group with index {0}")]
-    NoSuchCaptureGroup(usize),
-    #[error("no identifier with name {0}")]
-    NoSuchIdentifier(String),
-    #[error("unexpected list; perhaps a join operation `{{var*}}` is missing?")]
-    UnexpectedList,
-    #[error("pattern stems `{{%}}` cannot be interpolated in patterns")]
-    PatternStemInterpolationInPattern,
-    #[error("path resolution `<...>` interpolations cannot be used in patterns")]
-    ResolvePathInPattern,
-    #[error("join interpolations `{{...*}}` cannot be used in patterns")]
-    JoinInPattern,
-    #[error("unexpected list in pattern")]
-    ListInPattern,
-    #[error("the command '{0}' was not found in the current PATH environment variable")]
-    CommandNotFound(String),
-    #[error("invalid path interpolation within quotes; path arguments are automatically quoted")]
-    PathWithinQuotes,
-    #[error("empty command")]
-    EmptyCommand,
-    #[error("unterminated quote")]
-    UnterminatedQuote,
-    #[error("`glob` expressions are only allowed in variables")]
-    UnexpectedGlob,
-    #[error("`which` expressions are only allowed in variables")]
-    UnexpectedWhich,
-    /// Shell command failed during evaluation. Note: This error is not reported
-    /// when executing commands as part of a rule, only when executing commands
-    /// during evaluation (settings variables etc.)
-    #[error(transparent)]
-    Shell(Arc<ShellError>),
-    #[error(transparent)]
-    Path(#[from] werk_fs::PathError),
-}
-
-impl From<ShellError> for EvalError {
-    fn from(err: ShellError) -> Self {
-        EvalError::Shell(Arc::new(err))
-    }
 }
 
 impl Scope<'static> {
@@ -128,7 +79,7 @@ impl<'a> Scope<'a> {
         self.vars.insert(name, value);
     }
 
-    pub async fn eval(&self, expr: &ast::Expr, project: &Project) -> Result<Value, Error> {
+    pub async fn eval(&self, expr: &ast::Expr, project: &Project) -> Result<Value, EvalError> {
         match expr {
             ast::Expr::StringExpr(s) => self
                 .eval_string_expr(s, project)
@@ -138,7 +89,7 @@ impl<'a> Scope<'a> {
             ast::Expr::Glob(g) => self.eval_glob(g, project).await.map(Value::List),
             ast::Expr::Which(which) => {
                 let string = self.eval_string_expr(which, project)?;
-                project.which(&string)
+                project.which(&string).map_err(Into::into)
             }
             ast::Expr::List(list) => {
                 Box::pin(async {
@@ -157,7 +108,7 @@ impl<'a> Scope<'a> {
         &self,
         expr: &ast::Expr,
         project: &Project,
-    ) -> Result<Vec<String>, Error> {
+    ) -> Result<Vec<String>, EvalError> {
         self.eval(expr, project).await.map(Value::collect_strings)
     }
 
@@ -204,7 +155,7 @@ impl<'a> Scope<'a> {
         &self,
         expr: &ast::StringExpr,
         project: &Project,
-    ) -> Result<String, Error> {
+    ) -> Result<String, EvalError> {
         let mut s = String::new();
 
         for fragment in &expr.fragments {
@@ -242,7 +193,7 @@ impl<'a> Scope<'a> {
         &self,
         expr: &ast::StringExpr,
         project: &Project,
-    ) -> Result<ShellCommandLineBuilder, Error> {
+    ) -> Result<ShellCommandLineBuilder, EvalError> {
         let mut builder = ShellCommandLineBuilder::default();
 
         for fragment in &expr.fragments {
@@ -366,17 +317,34 @@ impl<'a> Scope<'a> {
         &self,
         expr: &ast::StringExpr,
         project: &Project,
-    ) -> Result<String, Error> {
+    ) -> Result<String, EvalError> {
         let mut builder = self.eval_shell_command(expr, project)?;
 
         // Unconditionally disable color output when the command supports it,
         // because we are capturing the output as a string.
         let command = builder.set_no_color().build(&project.inner.which)?;
 
-        let output = project.run(&command).await?;
+        let output = match project.run(&command).await {
+            Ok(output) => output,
+            Err(e) => {
+                // Spawning the command failed.
+                return Err(ShellError {
+                    command,
+                    result: Arc::new(Err(e)),
+                }
+                .into());
+            }
+        };
+
         if !output.status.success() {
-            return Err(ShellError { command, output }.into());
+            // The command itself failed.
+            return Err(ShellError {
+                command,
+                result: Arc::new(Ok(output)),
+            }
+            .into());
         }
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         Ok(stdout.into_owned())
     }
@@ -385,7 +353,7 @@ impl<'a> Scope<'a> {
         &self,
         expr: &ast::Glob,
         project: &Project,
-    ) -> Result<Vec<Value>, Error> {
+    ) -> Result<Vec<Value>, EvalError> {
         let mut glob_pattern_string = self.eval_string_expr(&expr.pattern, project)?;
         if !glob_pattern_string.starts_with('/') {
             glob_pattern_string.insert(0, '/');
@@ -437,7 +405,7 @@ fn recursive_resolve_path(
     mut value: Value,
     working_dir: &werk_fs::Path,
     project: &Project,
-) -> Result<Value, Error> {
+) -> Result<Value, EvalError> {
     value.try_recursive_modify(|string| {
         let path = werk_fs::Path::new(&string)?;
         let path = path.absolutize(working_dir)?;
@@ -446,7 +414,7 @@ fn recursive_resolve_path(
             Some(path) => *string = path.to_owned(),
             None => panic!("Path resolution produced a non-UTF8 path; probably the project root path is non-UTF8"),
         }
-        Ok::<_, Error>(())
+        Ok::<_, EvalError>(())
     })?;
 
     Ok(value)

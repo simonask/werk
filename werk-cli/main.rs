@@ -64,7 +64,7 @@ pub enum OutputChoice {
     Json,
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
     let mut builder = tokio::runtime::Builder::new_multi_thread();
@@ -74,9 +74,7 @@ fn main() {
     builder.enable_all();
     let runtime = builder.build().unwrap();
     let result = runtime.block_on(try_main(args));
-    if result.is_err() {
-        std::process::exit(1);
-    }
+    result
 }
 
 async fn try_main(args: Args) -> Result<()> {
@@ -122,10 +120,10 @@ async fn try_main(args: Args) -> Result<()> {
         anyhow::bail!("No target specified");
     };
 
-    let tracker: Arc<dyn werk_runner::Watcher> = Arc::new(watcher::StdioWatcher);
+    let tracker: Arc<dyn werk_runner::Watcher> = Arc::new(watcher::StdioWatcher::default());
 
     println!("Starting run...");
-    let mut runner = Runner::new(&project, recipes, tracker, args.dry_run)?;
+    let mut runner = Runner::new(&project, recipes, tracker, args.dry_run);
     runner.build_or_run(&target).await?;
 
     Ok(())

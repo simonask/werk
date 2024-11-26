@@ -8,19 +8,20 @@ name = "werk"
 path = "main.rs"
 
 [dependencies]
+ahash = "0.8.11"
+anstream = "0.6.18"
+anyhow = "1.0.93"
 clap = { version = "4.5.20", features = ["derive"] }
 clio = "0.3.5"
-werk-runner.workspace = true
-werk-parser.workspace = true
-werk-fs.workspace = true
-anyhow = "1.0.93"
-tracing.workspace = true
-tracing-subscriber = "0.3.18"
-tokio.workspace = true
-anstream = "0.6.18"
 crossterm = "0.28.1"
 flume = "0.11.1"
-ratatui = "0.29.0"
-parking_lot.workspace = true
-ahash = "0.8.11"
+indexmap.workspace = true
 owo-colors = "4.1.0"
+parking_lot.workspace = true
+ratatui = "0.29.0"
+tokio.workspace = true
+tracing-subscriber = "0.3.18"
+tracing.workspace = true
+werk-fs.workspace = true
+werk-parser.workspace = true
+werk-runner.workspace = true

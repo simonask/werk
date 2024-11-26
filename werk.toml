@@ -7,6 +7,10 @@ version.shell = "toml get werk-cli/Cargo.toml package.version"
 [command.build]
 build = ["example{EXE_SUFFIX}"]
 post-message = "Build done for profile '{profile}' (SHA1 {sha1}, version {version})"
+command = "sleep 1"
+
+[command.clear]
+command = "rm -rf target/yikes.o target/src/test.o target/example"
 
 [out.'{profile}/werk']
 command = "cargo build -p werk-cli --profile={profile}"
@@ -14,7 +18,7 @@ command = "cargo build -p werk-cli --profile={profile}"
 [out.'%.o']
 in = "{%}.c"
 depfile = "{%}.c.d"
-command = "clang -c -o <out> <in>"
+command = ["sleep 1", "clang -c -o <out> <in>", "sleep 1"]
 
 [out.'%.c.d']
 in = "{%}.c"
@@ -22,7 +26,7 @@ command = "clang -MM -MT <out> -MF <out> <in>"
 
 [out.'example{EXE_SUFFIX}']
 in = [{ glob = "src/**/*.c", then = "{*:.c=.o}" }, "yikes.o"]
-command = "clang -o <out> <in*>"
+command = ["clang -o <out> <in*>", "sleep 1"]
 
 [out.'%.(frag|vert|comp).spv']
 in = "{%}.{0}"

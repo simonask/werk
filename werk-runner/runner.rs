@@ -54,7 +54,7 @@ pub trait Watcher: Send + Sync {
     fn did_execute(
         &self,
         task_id: &TaskId,
-        command: &ShellCommandLine,
+        command: &ShellCommandLineBuilder,
         result: &Result<std::process::Output, Error>,
         step: usize,
         num_steps: usize,
@@ -83,7 +83,7 @@ impl Watcher for () {
     fn did_execute(
         &self,
         _task_id: &TaskId,
-        _command: &ShellCommandLine,
+        _command: &ShellCommandLineBuilder,
         _result: &Result<std::process::Output, Error>,
         _step: usize,
         _num_steps: usize,
@@ -158,8 +158,8 @@ pub enum TaskId {
 impl std::fmt::Display for TaskId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TaskId::Command(s) => write!(f, "command `{}`", s),
-            TaskId::Build(p) => write!(f, "target `{}`", p),
+            TaskId::Command(s) => f.write_str(s),
+            TaskId::Build(p) => f.write_str(p.as_str()),
         }
     }
 }
@@ -192,7 +192,7 @@ impl<'a> Runner<'a> {
         recipes: Recipes,
         watcher: Arc<dyn Watcher>,
         dry_run: bool,
-    ) -> Result<Self, Error> {
+    ) -> Self {
         let inner = Inner {
             project: Project {
                 inner: project.inner.clone(),
@@ -202,10 +202,10 @@ impl<'a> Runner<'a> {
             state: Mutex::new(State::default()),
             dry_run,
         };
-        Ok(Self {
+        Self {
             inner: Arc::new(inner),
             _marker: PhantomData,
-        })
+        }
     }
 
     pub async fn build_file(&mut self, target: &Path) -> Result<BuildStatus, Error> {
@@ -538,8 +538,13 @@ impl Inner {
                 if let Some((step, shell_command)) = iter.next() {
                     self.watcher
                         .will_execute(task_id, shell_command, false, step, num_steps);
-                    let shell_command = shell_command.build(&self.project.inner.which)?;
-                    let result = self.project.run(&shell_command).await;
+
+                    let result = async {
+                        let shell_command = shell_command.build(&self.project.inner.which)?;
+                        self.project.run(&shell_command).await.map_err(Into::into)
+                    }
+                    .await;
+
                     self.watcher
                         .did_execute(task_id, &shell_command, &result, step, num_steps);
                     match result {
@@ -582,10 +587,23 @@ impl Inner {
                 }
 
                 let mut dep_status = BuildStatus::Unchanged;
+                let mut first_error = None;
                 while let Some(status) = tasks.join_next().await {
-                    dep_status |= status.unwrap()?;
+                    match status.unwrap() {
+                        Ok(s) => {
+                            dep_status |= s;
+                        }
+                        Err(err) => {
+                            // Don't interrupt other tasks if one fails.
+                            first_error.get_or_insert(err);
+                        }
+                    }
                 }
-                Ok(dep_status)
+                if let Some(first_error) = first_error {
+                    Err(first_error)
+                } else {
+                    Ok(dep_status)
+                }
             });
         } else {
             return Box::pin(futures::future::ready(Ok(BuildStatus::Unchanged)));

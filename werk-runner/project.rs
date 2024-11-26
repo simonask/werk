@@ -1,8 +1,9 @@
 use std::{sync::Arc, time::SystemTime};
 
 use parking_lot::Mutex;
+use werk_fs::PathError;
 
-use crate::{Error, Globber, Settings, ShellCommandLine, Value, WhichCache, Workspace};
+use crate::{Error, Globber, Settings, ShellCommandLine, Value, WhichCache, WhichError, Workspace};
 
 pub struct Project {
     pub(crate) inner: Arc<ProjectInner>,
@@ -31,7 +32,7 @@ impl Project {
         Ok(Self { inner })
     }
 
-    pub fn which(&self, command: &str) -> Result<Value, Error> {
+    pub fn which(&self, command: &str) -> Result<Value, WhichError> {
         self.inner
             .which
             .which(command)
@@ -39,7 +40,7 @@ impl Project {
             .map(Value::String)
     }
 
-    pub fn glob(&self, pattern: &str) -> Result<Vec<Value>, Error> {
+    pub fn glob(&self, pattern: &str) -> Result<Vec<Value>, globset::Error> {
         let mut globber = self.inner.globber.lock();
         globber.glob(pattern, &self.inner.workspace).map(|paths| {
             paths
@@ -52,7 +53,7 @@ impl Project {
     pub async fn run(
         &self,
         command_line: &ShellCommandLine,
-    ) -> Result<std::process::Output, Error> {
+    ) -> Result<std::process::Output, std::io::Error> {
         tracing::debug!("Run: {}", command_line);
         let mut command = tokio::process::Command::new(&command_line.program);
         command
@@ -66,6 +67,7 @@ impl Project {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            // All spawned commands always run in the project root.
             .current_dir(&self.inner.workspace.project_root);
 
         for k in &command_line.env_remove {
@@ -78,7 +80,7 @@ impl Project {
         Ok(output)
     }
 
-    pub fn resolve_path(&self, path: &werk_fs::Path) -> Result<std::path::PathBuf, Error> {
+    pub fn resolve_path(&self, path: &werk_fs::Path) -> Result<std::path::PathBuf, PathError> {
         let abs_path;
         let path = if !path.is_absolute() {
             abs_path = path.absolutize(werk_fs::Path::ROOT)?;

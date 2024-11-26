@@ -194,7 +194,7 @@ impl ShellCommandLineBuilder {
         self
     }
 
-    pub fn build(&mut self, which: &WhichCache) -> Result<ShellCommandLine, Error> {
+    pub fn build(&mut self, which: &WhichCache) -> Result<ShellCommandLine, EvalError> {
         if self.in_quotes {
             Err(EvalError::UnterminatedQuote.into())
         } else {

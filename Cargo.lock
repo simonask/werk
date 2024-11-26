@@ -1357,6 +1357,7 @@ dependencies = [
  "clio",
  "crossterm",
  "flume",
+ "indexmap",
  "owo-colors",
  "parking_lot",
  "ratatui",

@@ -42,7 +42,7 @@ impl Globber {
         &mut self,
         glob_str: &str,
         workspace: &Workspace,
-    ) -> Result<&[werk_fs::PathBuf], Error> {
+    ) -> Result<&[werk_fs::PathBuf], globset::Error> {
         match self.cache.entry(glob_str.to_owned()) {
             hash_map::Entry::Occupied(occupied_entry) => Ok(occupied_entry.into_mut()),
             hash_map::Entry::Vacant(vacant_entry) => {
@@ -114,7 +114,7 @@ impl Workspace {
         })
     }
 
-    pub fn contains(&self, path: &werk_fs::Path) -> Result<bool, Error> {
+    pub fn contains(&self, path: &werk_fs::Path) -> Result<bool, PathError> {
         let abs_path;
         let path = if path.is_absolute() {
             path
