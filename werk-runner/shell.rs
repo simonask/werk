@@ -1,0 +1,237 @@
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ffi::{OsStr, OsString},
+};
+
+use crate::{Error, EvalError, Value, WhichCache};
+
+#[derive(Clone)]
+pub struct ShellCommandLine {
+    pub program: std::path::PathBuf,
+    pub arguments: Vec<String>,
+    pub env: BTreeMap<OsString, OsString>,
+    /// Environment variables *not* to inherit from the parent process.
+    pub env_remove: BTreeSet<OsString>,
+}
+
+impl std::fmt::Display for ShellCommandLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            std::path::Path::new(
+                self.program
+                    .file_name()
+                    .unwrap_or(OsStr::new("<error: program name ends in ..>"))
+            )
+            .display()
+        )?;
+        for arg in &self.arguments {
+            // TODO: Don't escape Unicode sequences, just newlines, control chars, and quotes.
+            if arg.contains(char::is_whitespace) {
+                write!(f, " \"{}\"", arg)?;
+            } else {
+                write!(f, " {}", arg)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Debug for ShellCommandLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.program.display())?;
+        for arg in &self.arguments {
+            write!(f, " {}", arg.escape_debug())?;
+        }
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for ShellCommandLineBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut parts = self.parts.iter();
+        if let Some(program) = parts.next() {
+            write!(f, "{program}")?;
+
+            for arg in parts {
+                if arg.contains(char::is_whitespace) {
+                    write!(f, " \"{arg}\"")?;
+                } else {
+                    write!(f, " {arg}")?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct ShellCommandLineBuilder {
+    in_quotes: bool,
+    escape: bool,
+    parts: Vec<String>,
+    env: BTreeMap<OsString, OsString>,
+    /// Environment variables *not* to inherit from the parent process.
+    pub env_remove: BTreeSet<OsString>,
+}
+
+impl ShellCommandLineBuilder {
+    fn push_char(&mut self, ch: char) -> &mut Self {
+        if let Some(last) = self.parts.last_mut() {
+            last.push(ch);
+        } else {
+            self.parts.push(ch.to_string());
+        }
+        self
+    }
+
+    /// Push literal string. Any double-quote char enters/exits a quoted
+    /// argument. When not inside quotes, whitespace separates arguments.
+    pub fn push_lit(&mut self, s: &str) -> &mut Self {
+        for ch in s.chars() {
+            if self.escape {
+                self.escape = false;
+                self.push_char(ch);
+            } else if ch == '\\' {
+                self.escape = true;
+            } else if ch == '"' {
+                self.in_quotes = !self.in_quotes;
+            } else if ch.is_whitespace() && !self.in_quotes {
+                if !self.parts.last().is_some_and(|s| s.is_empty()) {
+                    self.parts.push(String::new());
+                }
+            } else {
+                self.push_char(ch);
+            }
+        }
+        self
+    }
+
+    /// Append string verbatim to the last argument.
+    pub fn push_str(&mut self, s: &str) -> &mut Self {
+        if let Some(last) = self.parts.last_mut() {
+            last.push_str(s);
+        } else if !s.is_empty() {
+            self.parts.push(s.to_owned());
+        }
+        self
+    }
+
+    /// Append string to the last current argument, passing quotes and
+    /// whitespace verbatim. This should be used for interpolated arguments.
+    /// When inside quotes, the value is appended to the quoted part. Otherwise,
+    /// the value is treated as a separate argument.
+    pub fn push_arg(&mut self, s: &str) -> &mut Self {
+        if self.in_quotes {
+            if let Some(last) = self.parts.last_mut() {
+                last.push_str(s);
+            } else if !s.is_empty() {
+                self.parts.push(s.to_owned());
+            }
+        } else {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                self.parts.push(trimmed.to_owned());
+            }
+        }
+        self
+    }
+
+    /// Append values recursively. If currently inside of quotes, the values are
+    /// passed as a single argument. Otherwise, each value is passed as a
+    /// separate argument.
+    pub fn push_all(&mut self, value: Value) -> &mut Self {
+        value.for_each_string_recursive(|s| {
+            self.push_arg(s);
+        });
+        self
+    }
+
+    pub fn env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Self {
+        self.env
+            .insert(key.as_ref().to_os_string(), value.as_ref().to_os_string());
+        self
+    }
+
+    pub fn env_remove(&mut self, key: impl AsRef<OsStr>) -> &mut Self {
+        self.env_remove.insert(key.as_ref().to_os_string());
+        self
+    }
+
+    pub fn envs<I, K, V>(&mut self, envs: I) -> &mut Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        self.env.extend(
+            envs.into_iter()
+                .map(|(k, v)| (k.as_ref().to_os_string(), v.as_ref().to_os_string())),
+        );
+        self
+    }
+
+    /// Set the `FORCE_COLOR` environment variable for this command. Also clears
+    /// the `NO_COLOR` environment variable.
+    pub fn set_force_color(&mut self) -> &mut Self {
+        self.env.remove(OsStr::new("NO_COLOR"));
+        // Prevent the inherited environment from setting `NO_COLOR`.
+        self.env_remove
+            .insert(OsStr::new("NO_COLOR").to_os_string());
+        self.env_remove.remove(OsStr::new("FORCE_COLOR"));
+        self.env("FORCE_COLOR", "1");
+        self
+    }
+
+    pub fn set_no_color(&mut self) -> &mut Self {
+        self.env.remove(OsStr::new("FORCE_COLOR"));
+        // Prevent the inherited environment from settings `FORCE_COLOR`.
+        self.env_remove
+            .insert(OsStr::new("FORCE_COLOR").to_os_string());
+        self.env_remove.remove(OsStr::new("NO_COLOR"));
+        self.env("NO_COLOR", "1");
+        self
+    }
+
+    pub fn build(&mut self, which: &WhichCache) -> Result<ShellCommandLine, Error> {
+        if self.in_quotes {
+            Err(EvalError::UnterminatedQuote.into())
+        } else {
+            let mut parts = self.parts.drain(..);
+            let Some(program) = parts.next() else {
+                return Err(EvalError::EmptyCommand.into());
+            };
+            let program = which.which(&program)?;
+            Ok(ShellCommandLine {
+                program,
+                arguments: parts.collect(),
+                env: std::mem::take(&mut self.env),
+                env_remove: std::mem::take(&mut self.env_remove),
+            })
+        }
+    }
+}
+
+pub enum ChildEnv<'a> {
+    /// Clear all environment variables, and set only the specified variables.
+    Clear(&'a [(&'a OsStr, &'a OsStr)]),
+    /// Inherit all environment variables from the spawning process, and
+    /// override/set the specified variables.
+    Inherit(&'a [(&'a OsStr, &'a OsStr)]),
+}
+
+impl<'a> ChildEnv<'a> {
+    pub fn vars(&self) -> &'a [(&'a OsStr, &'a OsStr)] {
+        match self {
+            ChildEnv::Clear(vars) => vars,
+            ChildEnv::Inherit(vars) => vars,
+        }
+    }
+}
+
+impl<'a> Default for ChildEnv<'a> {
+    fn default() -> Self {
+        ChildEnv::Inherit(&[])
+    }
+}

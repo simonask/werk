@@ -1,7 +1,19 @@
 [workspace]
-members = ["werk-parser", "werk-cli", "werk-runner"]
+members = ["werk-parser", "werk-cli", "werk-runner", "werk-fs"]
 resolver = "2"
 
 [workspace.dependencies]
 werk-runner.path = "werk-runner"
 werk-parser.path = "werk-parser"
+werk-fs.path = "werk-fs"
+winnow = "0.6.20"
+thiserror = "2.0"
+tokio = { version = "1.41", default-features = false, features = [
+    "rt-multi-thread",
+    "process",
+    "macros",
+    "fs",
+] }
+tracing = "0.1.40"
+indexmap = "2.6.0"
+parking_lot = "0.12.3"

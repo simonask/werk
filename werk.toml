@@ -1,19 +1,43 @@
 [global]
 out-dir = "target"
 profile = "debug"
+sha1.shell = "git rev-parse HEAD"
+version.shell = "toml get werk-cli/Cargo.toml package.version"
 
 [command.build]
-deps = ["{profile}/werk"]
-post-message = "Build done for profile '{profile}'"
+build = ["example{EXE_SUFFIX}"]
+post-message = "Build done for profile '{profile}' (SHA1 {sha1}, version {version})"
 
 [out.'{profile}/werk']
 command = "cargo build -p werk-cli --profile={profile}"
 
 [out.'%.o']
-in = ["%.c"]
-makefile-deps = "%.d"
-command = "clang -c -o {out} {in}"
+in = "{%}.c"
+depfile = "{%}.c.d"
+command = "clang -c -o <out> <in>"
 
-[out.'%.d']
-in = ["%.c"]
-command = "clang -MM -MT {out} -MF {out} {in}"
+[out.'%.c.d']
+in = "{%}.c"
+command = "clang -MM -MT <out> -MF <out> <in>"
+
+[out.'example{EXE_SUFFIX}']
+in = [{ glob = "src/**/*.c", then = "{*:.c=.o}" }, "yikes.o"]
+command = "clang -o <out> <in*>"
+
+[out.'%.(frag|vert|comp).spv']
+in = "{%}.{0}"
+depfile = "{%}.{0}.d"
+command = "glslc -o <out> <in>"
+
+[out.'%.(frag|vert|comp).d']
+in = "{%}.{0}"
+command = "glslc -MM -MT <out> -MF <out> <in>"
+
+[out.'%.spv']
+in = "{%}.slang"
+depfile = "{%}.slang.d"
+command = "slangc -o <out> <in>"
+
+[out.'%.slang.d']
+in = "{%}.slang"
+command = "slangc -MM -MT <out> -MF <out> <in>"

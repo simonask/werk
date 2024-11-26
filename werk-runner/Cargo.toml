@@ -3,4 +3,23 @@ name = "werk-runner"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+path = "lib.rs"
+
 [dependencies]
+werk-parser.workspace = true
+werk-fs.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+indexmap.workspace = true
+futures = "0.3.31"
+which = "7.0.0"
+globset = "0.4.15"
+walkdir = "2.5.0"
+ahash = "0.8.11"
+ignore = "0.4.23"
+regex = "1.11.1"
+rayon = "1.10.0"
+anyhow = "1.0.93"
