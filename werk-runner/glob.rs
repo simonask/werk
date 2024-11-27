@@ -64,7 +64,6 @@ impl Globber {
 }
 
 pub struct Workspace {
-    settings: GlobSettings,
     pub project_root: std::path::PathBuf,
     pub out_dir: std::path::PathBuf,
     workspace: HashSet<werk_fs::PathBuf>,
@@ -107,7 +106,6 @@ impl Workspace {
         }
 
         Ok(Workspace {
-            settings,
             project_root,
             out_dir,
             workspace,

@@ -32,6 +32,11 @@ impl Project {
         Ok(Self { inner })
     }
 
+    #[inline]
+    pub fn settings(&self) -> &Settings {
+        &self.inner.settings
+    }
+
     pub fn which(&self, command: &str) -> Result<Value, WhichError> {
         self.inner
             .which

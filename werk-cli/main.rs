@@ -1,6 +1,6 @@
 mod watcher;
 
-use std::{io::IsTerminal as _, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Result;
 use clap::Parser;

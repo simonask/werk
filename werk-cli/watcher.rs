@@ -4,7 +4,6 @@ use std::{
 };
 
 use anstream::stream::{AsLockedWrite, IsTerminal};
-use anstyle_query::clicolor;
 use indexmap::IndexMap;
 use owo_colors::OwoColorize;
 use parking_lot::{Mutex, MutexGuard};

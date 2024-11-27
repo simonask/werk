@@ -2,8 +2,6 @@ pub mod ast;
 pub mod parse;
 mod pattern;
 
-use std::path;
-
 use indexmap::IndexMap;
 pub use pattern::*;
 
@@ -285,48 +283,6 @@ fn parse_out_rule(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Recipe
         pre_message,
         post_message,
     })
-}
-
-fn parse_string_or_array_of_strings(
-    path: &TomlPath,
-    value: &toml_edit::Item,
-) -> Result<Vec<ast::StringExpr>, Error> {
-    if let Some(s) = value.as_str() {
-        Ok(vec![parse_string_expr(&path, s)?])
-    } else if let Some(array) = value.as_array() {
-        Ok(array
-            .iter()
-            .map(|item| {
-                if let Some(s) = item.as_str() {
-                    parse_string_expr(&path, s)
-                } else {
-                    Err(Error::ExpectedString(path.to_string()))
-                }
-            })
-            .collect::<Result<_, _>>()?)
-    } else {
-        return Err(Error::ExpectedStringOrArray(path.to_string()));
-    }
-}
-
-fn parse_expr_or_array_of_strings(
-    path: &TomlPath,
-    value: &toml_edit::Item,
-) -> Result<Vec<ast::Expr>, Error> {
-    if let Some(array) = value.as_array() {
-        Ok(array
-            .iter()
-            .map(|item| {
-                if let Some(s) = item.as_str() {
-                    parse_string_expr(&path, s).map(ast::Expr::StringExpr)
-                } else {
-                    Err(Error::ExpectedString(path.to_string()))
-                }
-            })
-            .collect::<Result<_, _>>()?)
-    } else {
-        parse_item_expr(path, value).map(|v| vec![v])
-    }
 }
 
 /// Path to a TOML value, for diagnostics.

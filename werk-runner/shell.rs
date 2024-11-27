@@ -3,7 +3,7 @@ use std::{
     ffi::{OsStr, OsString},
 };
 
-use crate::{Error, EvalError, Value, WhichCache};
+use crate::{EvalError, Value, WhichCache};
 
 #[derive(Clone)]
 pub struct ShellCommandLine {

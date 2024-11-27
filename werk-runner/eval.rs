@@ -4,8 +4,8 @@ use indexmap::IndexMap;
 use werk_parser::ast;
 
 use crate::{
-    project, Error, EvalError, Pattern, PatternBuilder, PatternMatch, Project, RecipeMatch,
-    ShellCommandLine, ShellCommandLineBuilder, ShellError, Value,
+    Error, EvalError, Pattern, PatternBuilder, PatternMatch, Project, ShellCommandLineBuilder,
+    ShellError, Value,
 };
 
 pub struct Scope<'a> {

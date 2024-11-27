@@ -8,7 +8,7 @@ use werk_parser::ast;
 
 use crate::{
     Error, GlobSettings, PatternMatch, Project, RecipeMatch, RecipeMatchData, Recipes,
-    ShellCommandLine, ShellCommandLineBuilder, Value,
+    ShellCommandLineBuilder, Value,
 };
 
 pub struct Runner<'a> {
