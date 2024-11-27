@@ -1352,6 +1352,8 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "anstream",
+ "anstyle-query",
+ "anstyle-wincon",
  "anyhow",
  "clap",
  "clio",

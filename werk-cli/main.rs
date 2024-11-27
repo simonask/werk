@@ -18,9 +18,13 @@ pub struct Args {
     #[clap(short, long)]
     pub list: bool,
     /// Dry run; do not execute any recipe commands. Note: Shell commands used
-    /// in global variables are still executed!
+    /// in global variables are still executed! This also implies
+    /// `--print-commands`.
     #[clap(long)]
     pub dry_run: bool,
+    /// Print recipe shell commands as they are executed.
+    #[clap(long)]
+    pub print_commands: bool,
     #[clap(long, default_value = "auto")]
     pub color: ColorChoice,
     #[clap(long, default_value = "auto")]
@@ -55,7 +59,7 @@ pub enum ColorChoice {
 /// Terminal output mode.
 #[derive(Clone, Copy, Default, Debug, clap::ValueEnum)]
 pub enum OutputChoice {
-    /// Choose the best output format.
+    /// Choose the best output format for the current terminal.
     #[default]
     Auto,
     /// Emit the progress as log statements (assuming `WERK_LOG` is set to a value).
@@ -120,9 +124,9 @@ async fn try_main(args: Args) -> Result<()> {
         anyhow::bail!("No target specified");
     };
 
-    let tracker: Arc<dyn werk_runner::Watcher> = Arc::new(watcher::StdioWatcher::default());
+    let tracker: Arc<dyn werk_runner::Watcher> =
+        Arc::new(watcher::StdoutWatcher::new(args.color, args.print_commands));
 
-    println!("Starting run...");
     let mut runner = Runner::new(&project, recipes, tracker, args.dry_run);
     runner.build_or_run(&target).await?;
 

@@ -1,4 +1,4 @@
 int foo()
 {
-    return lol;
+    return 1;
 }

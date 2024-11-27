@@ -28,12 +28,19 @@ pub static NULL_RUN_TRACKER: &'static dyn Watcher = &();
 
 pub trait Watcher: Send + Sync {
     /// Build task is about to start.
-    fn will_build(&self, task_id: &TaskId, dry_run: bool, num_steps: usize);
+    fn will_build(
+        &self,
+        task_id: &TaskId,
+        dry_run: bool,
+        num_steps: usize,
+        pre_message: Option<&str>,
+    );
     /// Build task finished (all steps have been completed).
     fn did_build(
         &self,
         task_id: &TaskId,
         result: &Result<BuildStatus, Error>,
+        dry_run: bool,
         post_message: Option<&str>,
     );
     /// Shell command is about to be executed.
@@ -63,11 +70,19 @@ pub trait Watcher: Send + Sync {
 }
 
 impl Watcher for () {
-    fn will_build(&self, _task_id: &TaskId, _dry_run: bool, _num_steps: usize) {}
+    fn will_build(
+        &self,
+        _task_id: &TaskId,
+        _dry_run: bool,
+        _num_steps: usize,
+        _pre_message: Option<&str>,
+    ) {
+    }
     fn did_build(
         &self,
         _task_id: &TaskId,
         _result: &Result<BuildStatus, Error>,
+        _dry_run: bool,
         _post_message: Option<&str>,
     ) {
     }
@@ -427,34 +442,26 @@ impl Inner {
         }
 
         if let BuildStatus::Rebuilt = build_status {
-            let pre_message = pre_message.as_ref();
-            if let Some(ref pre_message) = pre_message {
-                tracing::info!("{pre_message}");
-            }
-
-            self.watcher
-                .will_build(task_id, self.dry_run, shell_commands.len());
+            self.watcher.will_build(
+                task_id,
+                self.dry_run,
+                shell_commands.len(),
+                pre_message.as_deref(),
+            );
 
             let result = self
                 .execute_recipe_commands(task_id, &mut shell_commands)
                 .await
                 .map(|_| build_status);
 
-            if let Some(ref post_message) = post_message {
-                tracing::info!("{post_message}");
-            }
-
             self.watcher
-                .did_build(task_id, &result, post_message.as_deref());
+                .did_build(task_id, &result, self.dry_run, post_message.as_deref());
             result
         } else {
             tracing::debug!("Up to date: {task_id}");
-            self.watcher.will_build(task_id, self.dry_run, 1);
-            self.watcher.did_build(
-                task_id,
-                &Ok(BuildStatus::Unchanged),
-                post_message.as_deref(),
-            );
+            self.watcher.will_build(task_id, self.dry_run, 1, None);
+            self.watcher
+                .did_build(task_id, &Ok(BuildStatus::Unchanged), self.dry_run, None);
             Ok(BuildStatus::Unchanged)
         }
     }
@@ -498,25 +505,20 @@ impl Inner {
             None
         };
 
-        let pre_message = pre_message.as_ref();
-        if let Some(ref pre_message) = pre_message {
-            tracing::info!("{pre_message}");
-        }
-
-        self.watcher
-            .will_build(task_id, self.dry_run, shell_commands.len());
+        self.watcher.will_build(
+            task_id,
+            self.dry_run,
+            shell_commands.len(),
+            pre_message.as_deref(),
+        );
 
         let result = self
             .execute_recipe_commands(task_id, &mut shell_commands)
             .await
             .map(|_| BuildStatus::Rebuilt);
 
-        if let Some(ref post_message) = post_message {
-            tracing::info!("{post_message}");
-        }
-
         self.watcher
-            .did_build(task_id, &result, post_message.as_deref());
+            .did_build(task_id, &result, self.dry_run, post_message.as_deref());
         result
     }
 

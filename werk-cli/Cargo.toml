@@ -25,3 +25,5 @@ tracing.workspace = true
 werk-fs.workspace = true
 werk-parser.workspace = true
 werk-runner.workspace = true
+anstyle-query = "1.1.2"
+anstyle-wincon = "3.0.6"

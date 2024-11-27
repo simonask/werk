@@ -172,24 +172,44 @@ impl ShellCommandLineBuilder {
         self
     }
 
-    /// Set the `FORCE_COLOR` environment variable for this command. Also clears
-    /// the `NO_COLOR` environment variable.
+    /// Set the `CLICOLOR_FORCE` and `FORCE_COLOR` environment variable for this
+    /// command. Also clears the `NO_COLOR` environment variable.
     pub fn set_force_color(&mut self) -> &mut Self {
+        // Remove `NO_COLOR` if previously set.
         self.env.remove(OsStr::new("NO_COLOR"));
+
         // Prevent the inherited environment from setting `NO_COLOR`.
         self.env_remove
             .insert(OsStr::new("NO_COLOR").to_os_string());
+
+        // Remove earlier disablement of `FORCE_COLOR`.
         self.env_remove.remove(OsStr::new("FORCE_COLOR"));
+
         self.env("FORCE_COLOR", "1");
+        self.env("CLICOLOR", "1");
+        self.env("CLICOLOR_FORCE", "1");
         self
     }
 
+    /// Set the `NO_COLOR` environment variable for this command. Also clears
+    /// the `CLICOLOR_FORCE` and `CLICOLOR` environment variables.
     pub fn set_no_color(&mut self) -> &mut Self {
+        // Remove enablement from this command if previously set.
         self.env.remove(OsStr::new("FORCE_COLOR"));
-        // Prevent the inherited environment from settings `FORCE_COLOR`.
+        self.env.remove(OsStr::new("CLICOLOR"));
+        self.env.remove(OsStr::new("CLICOLOR_FORCE"));
+
+        // Prevent the inherited environment from setting `FORCE_COLOR`.
         self.env_remove
             .insert(OsStr::new("FORCE_COLOR").to_os_string());
+        self.env_remove
+            .insert(OsStr::new("CLICOLOR").to_os_string());
+        self.env_remove
+            .insert(OsStr::new("CLICOLOR_FORCE").to_os_string());
+
+        // Remove earlier disablement of `NO_COLOR`.
         self.env_remove.remove(OsStr::new("NO_COLOR"));
+
         self.env("NO_COLOR", "1");
         self
     }

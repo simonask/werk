@@ -345,7 +345,7 @@ impl<'a> Scope<'a> {
             .into());
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stdout = String::from_utf8_lossy(&output.stdout.trim_ascii());
         Ok(stdout.into_owned())
     }
 
