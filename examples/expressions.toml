@@ -1,0 +1,5 @@
+[config]
+target = "../target/werk-examples/expressions"
+
+[global]
+in-files = { glob = "*.c" }

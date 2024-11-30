@@ -1,4 +1,4 @@
-use crate::ast;
+use crate::{ast, ParseError};
 use winnow::{
     ascii::digit1,
     combinator::{alt, cut_err, delimited, opt, peek, preceded, repeat, separated, separated_pair},
@@ -10,34 +10,6 @@ use winnow::{
     PResult, Parser,
 };
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("empty identifier")]
-    EmptyIdentifier,
-    #[error("invalid char in identifier: {0}")]
-    InvalidIdentifier(char),
-    #[error(transparent)]
-    InvalidExpr(#[from] ParseError),
-}
-
-#[derive(Debug)]
-pub struct ParseError(pub winnow::error::ContextError);
-
-impl std::error::Error for ParseError {}
-
-impl std::fmt::Display for ParseError {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
-    }
-}
-impl From<winnow::error::ContextError> for ParseError {
-    #[inline]
-    fn from(err: winnow::error::ContextError) -> Self {
-        Self(err)
-    }
-}
-
 fn is_identifier_start(ch: char) -> bool {
     unicode_ident::is_xid_start(ch)
 }
@@ -47,35 +19,35 @@ fn is_identifier_continue(ch: char) -> bool {
     ch == '-' || unicode_ident::is_xid_continue(ch)
 }
 
-pub fn parse_ident(input: &str) -> Result<String, Error> {
+pub fn parse_ident(input: &str) -> Result<String, ParseError> {
     let mut chars = input.chars();
     let Some(first) = chars.next() else {
-        return Err(Error::EmptyIdentifier);
+        return Err(ParseError::EmptyIdentifier);
     };
 
     if !is_identifier_start(first) {
-        return Err(Error::InvalidIdentifier(first));
+        return Err(ParseError::InvalidIdentifier(first));
     }
 
     while let Some(ch) = chars.next() {
         if !is_identifier_continue(ch) {
-            return Err(Error::InvalidIdentifier(ch));
+            return Err(ParseError::InvalidIdentifier(ch));
         }
     }
 
     Ok(input.to_owned())
 }
 
-pub fn parse_string_expr(input: &str) -> Result<ast::StringExpr, Error> {
+pub fn parse_string_expr(input: &str) -> Result<ast::StringExpr, ParseError> {
     string_expr
         .parse(input)
-        .map_err(|e| Error::InvalidExpr(e.into_inner().into()))
+        .map_err(|e| ParseError::InvalidExpr(e.into_inner().into()))
 }
 
-pub fn parse_pattern_expr(input: &str) -> Result<ast::PatternExpr, Error> {
+pub fn parse_pattern_expr(input: &str) -> Result<ast::PatternExpr, ParseError> {
     pattern_expr
         .parse(input)
-        .map_err(|e| Error::InvalidExpr(e.into_inner().into()))
+        .map_err(|e| ParseError::InvalidExpr(e.into_inner().into()))
 }
 
 fn ident(input: &mut &str) -> PResult<String> {

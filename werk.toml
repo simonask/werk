@@ -12,36 +12,36 @@ command = "sleep 1"
 [command.clear]
 command = "rm -rf target/yikes.o target/src/test.o target/example"
 
-[out.'{profile}/werk']
+[build.'{profile}/werk']
 command = "cargo build -p werk-cli --profile={profile}"
 
-[out.'%.o']
+[build.'%.o']
 in = "{%}.c"
 depfile = "{%}.c.d"
 command = ["sleep 1", "clang -c -o <out> <in>", "sleep 1"]
 
-[out.'%.c.d']
+[build.'%.c.d']
 in = "{%}.c"
 command = "clang -MM -MT <out> -MF <out> <in>"
 
-[out.'example{EXE_SUFFIX}']
+[build.'example{EXE_SUFFIX}']
 in = [{ glob = "src/**/*.c", then = "{*:.c=.o}" }, "yikes.o"]
 command = ["clang -o <out> <in*>", "sleep 1"]
 
-[out.'%.(frag|vert|comp).spv']
+[build.'%.(frag|vert|comp).spv']
 in = "{%}.{0}"
 depfile = "{%}.{0}.d"
 command = "glslc -o <out> <in>"
 
-[out.'%.(frag|vert|comp).d']
+[build.'%.(frag|vert|comp).d']
 in = "{%}.{0}"
 command = "glslc -MM -MT <out> -MF <out> <in>"
 
-[out.'%.spv']
+[build.'%.spv']
 in = "{%}.slang"
 depfile = "{%}.slang.d"
 command = "slangc -o <out> <in>"
 
-[out.'%.slang.d']
+[build.'%.slang.d']
 in = "{%}.slang"
 command = "slangc -MM -MT <out> -MF <out> <in>"

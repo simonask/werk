@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use crate::{OwnedDependencyChain, Pattern, ShellCommandLine, TaskId, WhichError};
+use crate::{OwnedDependencyChain, Pattern, ShellCommandLine, TaskId};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     Io(#[from] Arc<std::io::Error>),
-    #[error(transparent)]
-    CommandNotFound(#[from] WhichError),
+    #[error("command not found: {0}: {1}")]
+    CommandNotFound(String, which::Error),
     #[error("no rule to build target: {0}")]
     NoRuleToBuildTarget(String),
     #[error("circular dependency: {0}")]
@@ -33,6 +33,8 @@ pub enum Error {
     /// `TrackRunner` interface.
     #[error("command failed: {0}")]
     CommandFailed(std::process::ExitStatus),
+    #[error("cannot convert abstract paths to native OS paths yet; output directory has not been set in the [global] scope")]
+    OutputDirectoryNotAvailable,
     #[error(transparent)]
     Custom(Arc<anyhow::Error>),
 }
@@ -156,8 +158,8 @@ pub enum EvalError {
     UnexpectedGlob,
     #[error("`which` expressions are only allowed in variables")]
     UnexpectedWhich,
-    #[error(transparent)]
-    CommandNotFound(#[from] WhichError),
+    #[error("command not found: {0}: {1}")]
+    CommandNotFound(String, which::Error),
     #[error(transparent)]
     Glob(Arc<globset::Error>),
     /// Shell command failed during evaluation. Note: This error is not reported

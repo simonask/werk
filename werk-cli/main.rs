@@ -1,10 +1,11 @@
+pub mod dry_run;
 mod watcher;
 
 use std::sync::Arc;
 
 use anyhow::Result;
 use clap::Parser;
-use werk_runner::{Project, Recipes, Runner, Settings};
+use werk_runner::{GlobSettings, LocalVariables, Recipes, RootScope, Runner, Workspace};
 
 #[derive(Debug, clap::Parser)]
 pub struct Args {
@@ -32,6 +33,10 @@ pub struct Args {
     /// Number of tasks to execute in parallel. Defaults to the number of CPU cores.
     #[clap(long, short)]
     pub jobs: Option<usize>,
+    /// Use the output directory instead of the default. In unspecified, uses
+    /// `target` next to the root werk.toml file.
+    #[clap(long)]
+    pub output_dir: Option<std::path::PathBuf>,
 }
 
 /// Color mode.
@@ -95,20 +100,44 @@ async fn try_main(args: Args) -> Result<()> {
     let project_dir = werkfile_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("{} has no parent directory", werkfile_path.display()))?;
-    let out_dir = project_dir.join("target");
+    let out_dir = args
+        .output_dir
+        .unwrap_or_else(|| project_dir.join("target"));
     tracing::debug!("Project directory: {}", project_dir.display());
     tracing::debug!("Output directory: {}", out_dir.display());
 
-    let project = Project::new(
+    let watcher: Arc<dyn werk_runner::Watcher> = Arc::new(watcher::StdoutWatcher::new(
+        args.color,
+        args.print_commands,
+        args.dry_run,
+    ));
+
+    let io: Arc<dyn werk_runner::Io>;
+    if args.dry_run || args.list {
+        io = Arc::new(dry_run::DryRun::new());
+    } else {
+        io = Arc::new(werk_runner::RealSystem);
+    }
+
+    let workspace = Workspace::new(
+        &*io,
         project_dir.to_owned(),
         out_dir,
-        Settings {
-            glob: Default::default(),
-            dry_run: args.dry_run,
-        },
-    )?;
+        &GlobSettings::default(),
+    )
+    .await?;
 
-    let recipes = Recipes::new(ast, &project).await?;
+    let mut globals = LocalVariables::new();
+    for (name, value) in &ast.global {
+        // Creating a new scope every time, because it's cheap, and it
+        // simplifies things because we don't need a `RootScopeMut` variant.
+        let scope = RootScope::new(&globals, &workspace);
+        let value = werk_runner::eval(&scope, &*io, value).await?;
+        globals.insert(name.to_owned(), value);
+    }
+
+    let root_scope = RootScope::new(&globals, &workspace);
+    let recipes = Recipes::new(ast, &root_scope).await?;
 
     if args.list {
         for (name, _) in &recipes.ast.commands {
@@ -124,11 +153,10 @@ async fn try_main(args: Args) -> Result<()> {
         anyhow::bail!("No target specified");
     };
 
-    let tracker: Arc<dyn werk_runner::Watcher> =
-        Arc::new(watcher::StdoutWatcher::new(args.color, args.print_commands));
-
-    let mut runner = Runner::new(&project, recipes, tracker, args.dry_run);
+    let mut runner = Runner::new(recipes, globals, io.clone(), workspace, watcher);
     runner.build_or_run(&target).await?;
+
+    runner.workspace().finalize(&*io).await;
 
     Ok(())
 }

@@ -3,29 +3,89 @@ use std::{
     ffi::{OsStr, OsString},
 };
 
-use crate::{EvalError, Value, WhichCache};
+use crate::{EvalError, Value};
 
 #[derive(Clone)]
 pub struct ShellCommandLine {
-    pub program: std::path::PathBuf,
+    /// The name of the program to run. This will be passed to `which`.
+    pub program: String,
     pub arguments: Vec<String>,
     pub env: BTreeMap<OsString, OsString>,
     /// Environment variables *not* to inherit from the parent process.
     pub env_remove: BTreeSet<OsString>,
 }
 
+impl ShellCommandLine {
+    pub fn env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Self {
+        self.env
+            .insert(key.as_ref().to_os_string(), value.as_ref().to_os_string());
+        self
+    }
+
+    pub fn env_remove(&mut self, key: impl AsRef<OsStr>) -> &mut Self {
+        self.env_remove.insert(key.as_ref().to_os_string());
+        self
+    }
+
+    pub fn envs<I, K, V>(&mut self, envs: I) -> &mut Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        self.env.extend(
+            envs.into_iter()
+                .map(|(k, v)| (k.as_ref().to_os_string(), v.as_ref().to_os_string())),
+        );
+        self
+    }
+
+    /// Set the `CLICOLOR_FORCE` and `FORCE_COLOR` environment variable for this
+    /// command. Also clears the `NO_COLOR` environment variable.
+    pub fn set_force_color(&mut self) -> &mut Self {
+        // Remove `NO_COLOR` if previously set.
+        self.env.remove(OsStr::new("NO_COLOR"));
+
+        // Prevent the inherited environment from setting `NO_COLOR`.
+        self.env_remove
+            .insert(OsStr::new("NO_COLOR").to_os_string());
+
+        // Remove earlier disablement of `FORCE_COLOR`.
+        self.env_remove.remove(OsStr::new("FORCE_COLOR"));
+
+        self.env("FORCE_COLOR", "1");
+        self.env("CLICOLOR", "1");
+        self.env("CLICOLOR_FORCE", "1");
+        self
+    }
+
+    /// Set the `NO_COLOR` environment variable for this command. Also clears
+    /// the `CLICOLOR_FORCE` and `CLICOLOR` environment variables.
+    pub fn set_no_color(&mut self) -> &mut Self {
+        // Remove enablement from this command if previously set.
+        self.env.remove(OsStr::new("FORCE_COLOR"));
+        self.env.remove(OsStr::new("CLICOLOR"));
+        self.env.remove(OsStr::new("CLICOLOR_FORCE"));
+
+        // Prevent the inherited environment from setting `FORCE_COLOR`.
+        self.env_remove
+            .insert(OsStr::new("FORCE_COLOR").to_os_string());
+        self.env_remove
+            .insert(OsStr::new("CLICOLOR").to_os_string());
+        self.env_remove
+            .insert(OsStr::new("CLICOLOR_FORCE").to_os_string());
+
+        // Remove earlier disablement of `NO_COLOR`.
+        self.env_remove.remove(OsStr::new("NO_COLOR"));
+
+        self.env("NO_COLOR", "1");
+        self
+    }
+}
+
 impl std::fmt::Display for ShellCommandLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            std::path::Path::new(
-                self.program
-                    .file_name()
-                    .unwrap_or(OsStr::new("<error: program name ends in ..>"))
-            )
-            .display()
-        )?;
+        write!(f, "{}", self.program)?;
         for arg in &self.arguments {
             // TODO: Don't escape Unicode sequences, just newlines, control chars, and quotes.
             if arg.contains(char::is_whitespace) {
@@ -40,9 +100,9 @@ impl std::fmt::Display for ShellCommandLine {
 
 impl std::fmt::Debug for ShellCommandLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.program.display())?;
+        write!(f, "\"{}\"", self.program.escape_debug())?;
         for arg in &self.arguments {
-            write!(f, " {}", arg.escape_debug())?;
+            write!(f, " \"{}\"", arg.escape_debug())?;
         }
         Ok(())
     }
@@ -148,73 +208,7 @@ impl ShellCommandLineBuilder {
         self
     }
 
-    pub fn env(&mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Self {
-        self.env
-            .insert(key.as_ref().to_os_string(), value.as_ref().to_os_string());
-        self
-    }
-
-    pub fn env_remove(&mut self, key: impl AsRef<OsStr>) -> &mut Self {
-        self.env_remove.insert(key.as_ref().to_os_string());
-        self
-    }
-
-    pub fn envs<I, K, V>(&mut self, envs: I) -> &mut Self
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: AsRef<OsStr>,
-        V: AsRef<OsStr>,
-    {
-        self.env.extend(
-            envs.into_iter()
-                .map(|(k, v)| (k.as_ref().to_os_string(), v.as_ref().to_os_string())),
-        );
-        self
-    }
-
-    /// Set the `CLICOLOR_FORCE` and `FORCE_COLOR` environment variable for this
-    /// command. Also clears the `NO_COLOR` environment variable.
-    pub fn set_force_color(&mut self) -> &mut Self {
-        // Remove `NO_COLOR` if previously set.
-        self.env.remove(OsStr::new("NO_COLOR"));
-
-        // Prevent the inherited environment from setting `NO_COLOR`.
-        self.env_remove
-            .insert(OsStr::new("NO_COLOR").to_os_string());
-
-        // Remove earlier disablement of `FORCE_COLOR`.
-        self.env_remove.remove(OsStr::new("FORCE_COLOR"));
-
-        self.env("FORCE_COLOR", "1");
-        self.env("CLICOLOR", "1");
-        self.env("CLICOLOR_FORCE", "1");
-        self
-    }
-
-    /// Set the `NO_COLOR` environment variable for this command. Also clears
-    /// the `CLICOLOR_FORCE` and `CLICOLOR` environment variables.
-    pub fn set_no_color(&mut self) -> &mut Self {
-        // Remove enablement from this command if previously set.
-        self.env.remove(OsStr::new("FORCE_COLOR"));
-        self.env.remove(OsStr::new("CLICOLOR"));
-        self.env.remove(OsStr::new("CLICOLOR_FORCE"));
-
-        // Prevent the inherited environment from setting `FORCE_COLOR`.
-        self.env_remove
-            .insert(OsStr::new("FORCE_COLOR").to_os_string());
-        self.env_remove
-            .insert(OsStr::new("CLICOLOR").to_os_string());
-        self.env_remove
-            .insert(OsStr::new("CLICOLOR_FORCE").to_os_string());
-
-        // Remove earlier disablement of `NO_COLOR`.
-        self.env_remove.remove(OsStr::new("NO_COLOR"));
-
-        self.env("NO_COLOR", "1");
-        self
-    }
-
-    pub fn build(&mut self, which: &WhichCache) -> Result<ShellCommandLine, EvalError> {
+    pub fn build(&mut self) -> Result<ShellCommandLine, EvalError> {
         if self.in_quotes {
             Err(EvalError::UnterminatedQuote.into())
         } else {
@@ -222,7 +216,6 @@ impl ShellCommandLineBuilder {
             let Some(program) = parts.next() else {
                 return Err(EvalError::EmptyCommand.into());
             };
-            let program = which.which(&program)?;
             Ok(ShellCommandLine {
                 program,
                 arguments: parts.collect(),

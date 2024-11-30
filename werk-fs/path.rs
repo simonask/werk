@@ -317,6 +317,9 @@ impl Path {
         Ok(PathBuf::new_unchecked(buf))
     }
 
+    /// Build a filesystem path from an abstract relative to `root`.
+    ///
+    /// This does not access the filesystem.
     pub fn resolve(&self, root: &std::path::Path) -> Result<std::path::PathBuf, PathError> {
         if !self.is_absolute() {
             return Err(PathError::ResolveRelative);

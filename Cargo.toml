@@ -15,5 +15,5 @@ tokio = { version = "1.41", default-features = false, features = [
     "fs",
 ] }
 tracing = "0.1.40"
-indexmap = "2.6.0"
+indexmap = { version = "2.6.0", features = ["serde"] }
 parking_lot = "0.12.3"

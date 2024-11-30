@@ -1,21 +1,23 @@
 mod error;
 mod eval;
-mod glob;
+mod io;
 mod pattern;
-mod project;
 mod recipes;
 mod runner;
+mod scope;
 mod shell;
 mod value;
-mod which;
+mod workspace;
 
 pub use error::*;
 pub use eval::*;
-pub use glob::*;
+pub use io::*;
 pub use pattern::*;
-pub use project::*;
 pub use recipes::*;
 pub use runner::*;
+pub use scope::*;
 pub use shell::*;
 pub use value::*;
-pub use which::*;
+pub use workspace::*;
+
+pub use which::Error as WhichError;

@@ -2,13 +2,12 @@ use werk_fs::Path;
 use werk_parser::ast;
 
 use crate::{
-    AmbiguousPatternError, Error, EvalError, Pattern, PatternMatch, PatternMatchData, Project,
-    Scope, TaskId,
+    eval_pattern, AmbiguousPatternError, Error, EvalError, Pattern, PatternMatch, PatternMatchData,
+    RootScope, TaskId,
 };
 
 pub struct Recipes {
     pub ast: ast::Root,
-    pub global: Scope<'static>,
     pub build_recipe_patterns: Vec<Pattern>,
 }
 
@@ -60,24 +59,16 @@ impl From<RecipeMatch<'_>> for RecipeMatchData {
 }
 
 impl Recipes {
-    pub async fn new(root: ast::Root, project: &Project) -> Result<Self, EvalError> {
-        // Evaluate global variables.
-        let mut global = Scope::root();
-        for (var, expr) in root.global.iter() {
-            let value = global.eval(expr, project).await?;
-            global.set(var.clone(), value);
-        }
-
+    pub async fn new(root: ast::Root, global_scope: &RootScope<'_>) -> Result<Self, EvalError> {
         // Compile patterns.
         let mut build_recipe_patterns = Vec::new();
         for (pattern_expr, _) in root.recipes.iter() {
-            let pattern = global.eval_pattern(pattern_expr)?;
+            let pattern = eval_pattern(global_scope, pattern_expr)?;
             build_recipe_patterns.push(pattern);
         }
 
         Ok(Self {
             ast: root,
-            global,
             build_recipe_patterns,
         })
     }

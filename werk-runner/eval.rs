@@ -1,306 +1,407 @@
 use std::sync::Arc;
 
-use indexmap::IndexMap;
 use werk_parser::ast;
 
 use crate::{
-    Error, EvalError, Pattern, PatternBuilder, PatternMatch, Project, ShellCommandLineBuilder,
-    ShellError, Value,
+    BuildStatus, Error, EvalError, Io, Pattern, PatternBuilder, RecipeScope, Scope,
+    ShellCommandLine, ShellCommandLineBuilder, ShellError, SubexprScope, Value, Workspace,
 };
 
-pub struct Scope<'a> {
-    parent: Option<&'a Scope<'a>>,
-    vars: IndexMap<String, Value>,
-    pattern_match: Option<&'a PatternMatch<'a>>,
-    implied_value: Option<Value>,
+/// Evaluated value, which keeps track of "outdatedness" with respect to cached
+/// build variables. Build recipes may use the outdatedness information to
+/// determine if some expression changed in a way that should cause a rebuild to
+/// occur, like the result of a glob pattern, or the result of a `which`
+/// expression (which is outdated if executable program path changed between
+/// runs).
+#[derive(Clone, Debug, Copy)]
+pub struct Eval<T = Value> {
+    pub value: T,
+    /// When the evaluated value can impact outdatedness (like a glob
+    /// expression), this is the detected build status. For expressions that
+    /// don't have an outdatedness, this is always `BuildStatus::Unchanged`.
+    pub status: BuildStatus,
 }
 
-#[derive(Debug, Clone)]
-pub enum StringEvalContext {
-    Literal,
-    Path,
-    Argument,
-}
-
-impl Scope<'static> {
-    pub fn root() -> Self {
-        let mut vars = IndexMap::new();
-
-        if cfg!(windows) {
-            vars.insert("EXE_SUFFIX".to_owned(), Value::String(".exe".to_owned()));
-        } else {
-            vars.insert("EXE_SUFFIX".to_owned(), Value::String("".to_owned()));
-        }
-
+impl<T> Eval<T> {
+    pub fn unchanged(value: T) -> Self {
         Self {
-            parent: None,
-            vars,
-            pattern_match: None,
-            implied_value: None,
+            value,
+            status: BuildStatus::Unchanged,
+        }
+    }
+
+    pub fn rebuilt(value: T) -> Self {
+        Self {
+            value,
+            status: BuildStatus::Rebuilt,
+        }
+    }
+
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Eval<U> {
+        Eval {
+            value: f(self.value),
+            status: self.status,
+        }
+    }
+
+    pub fn as_ref(&self) -> Eval<&T> {
+        Eval {
+            value: &self.value,
+            status: self.status,
+        }
+    }
+
+    pub fn as_deref(&self) -> &T::Target
+    where
+        T: std::ops::Deref,
+    {
+        self.value.deref()
+    }
+}
+
+impl<T: Default> Default for Eval<T> {
+    fn default() -> Self {
+        Self {
+            value: Default::default(),
+            status: BuildStatus::Unchanged,
         }
     }
 }
 
-impl<'a> Scope<'a> {
-    pub fn child<'b>(&'b self, pattern_match: Option<&'a PatternMatch<'a>>) -> Scope<'b> {
-        Scope {
-            parent: Some(self),
-            vars: IndexMap::new(),
-            pattern_match,
-            implied_value: None,
+impl<T> Eval<&T> {
+    pub fn cloned(&self) -> Eval<T>
+    where
+        T: Clone,
+    {
+        Eval {
+            value: self.value.clone(),
+            status: self.status,
         }
     }
+}
 
-    pub fn pattern_stem(&self) -> Option<&str> {
-        self.pattern_match
-            .and_then(|m| m.stem())
-            .or_else(|| self.parent.and_then(|p| p.pattern_stem()))
+impl<T> Eval<Option<T>> {
+    pub fn transpose(self) -> Option<Eval<T>> {
+        self.value.map(|value| Eval {
+            value,
+            status: self.status,
+        })
     }
+}
 
-    pub fn implied_value(&self) -> Option<&Value> {
-        self.implied_value
-            .as_ref()
-            .or_else(|| self.parent.and_then(|p| p.implied_value()))
+impl<T, E> Eval<Result<T, E>> {
+    pub fn transpose_result(self) -> Result<Eval<T>, E> {
+        self.value.map(|value| Eval {
+            value,
+            status: self.status,
+        })
     }
+}
 
-    pub fn capture_group(&self, group: usize) -> Option<&str> {
-        self.pattern_match
-            .and_then(|m| m.capture_group(group))
-            .or_else(|| self.parent.and_then(|p| p.capture_group(group)))
+impl<T> std::ops::Deref for Eval<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
     }
+}
 
-    pub fn get<'b>(&'b self, name: &str) -> Option<&'b Value> {
-        self.vars
-            .get(name)
-            .or_else(|| self.parent.and_then(|p| p.get(name)))
+impl<T> std::ops::DerefMut for Eval<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.value
     }
+}
 
-    pub fn set(&mut self, name: String, value: Value) {
-        self.vars.insert(name, value);
-    }
-
-    pub async fn eval(&self, expr: &ast::Expr, project: &Project) -> Result<Value, EvalError> {
-        match expr {
-            ast::Expr::StringExpr(s) => self
-                .eval_string_expr(s, project)
-                .map(Value::String)
-                .map_err(Into::into),
-            ast::Expr::Shell(s) => self.eval_shell(s, project).await.map(Value::String),
-            ast::Expr::Glob(g) => self.eval_glob(g, project).await.map(Value::List),
-            ast::Expr::Which(which) => {
-                let string = self.eval_string_expr(which, project)?;
-                project.which(&string).map_err(Into::into)
-            }
-            ast::Expr::List(list) => {
-                Box::pin(async {
-                    let mut exprs = Vec::with_capacity(list.len());
-                    for expr in list {
-                        exprs.push(self.eval(expr, project).await?);
-                    }
-                    Ok(Value::List(exprs))
+pub async fn eval(
+    scope: &dyn Scope,
+    io: &dyn Io,
+    expr: &ast::Expr,
+) -> Result<Eval<Value>, EvalError> {
+    match expr {
+        ast::Expr::StringExpr(expr) => Ok(eval_string_expr(scope, expr)?.map(Value::String)),
+        ast::Expr::Shell(expr) => Ok(eval_shell(scope, io, expr).await?.map(Value::String)),
+        ast::Expr::Glob(expr) => Ok(eval_glob(scope, io, expr).await?.map(Value::List)),
+        ast::Expr::Which(expr) => {
+            let string = eval_string_expr(scope, expr)?;
+            let (which, which_status) = scope
+                .workspace()
+                .which(io, &string.value)
+                .map_err(|e| EvalError::CommandNotFound(string.value.clone(), e))?;
+            let status = string.status | which_status;
+            Ok(Eval {
+                value: Value::String(which),
+                status,
+            })
+        }
+        ast::Expr::List(list_expr) => {
+            // Boxing for recursion.
+            Box::pin(async {
+                let mut items = Vec::with_capacity(list_expr.len());
+                let mut status = BuildStatus::Unchanged;
+                for expr in list_expr {
+                    let eval_item = eval(scope, io, expr).await?;
+                    status |= eval_item.status;
+                    items.push(eval_item.value);
+                }
+                Ok(Eval {
+                    value: Value::List(items),
+                    status,
                 })
-                .await
-            }
+            })
+            .await
         }
     }
+}
 
-    pub async fn eval_collect_strings(
-        &self,
-        expr: &ast::Expr,
-        project: &Project,
-    ) -> Result<Vec<String>, EvalError> {
-        self.eval(expr, project).await.map(Value::collect_strings)
-    }
+pub async fn eval_collect_strings<P: Scope>(
+    scope: &P,
+    io: &dyn Io,
+    expr: &ast::Expr,
+) -> Result<Eval<Vec<String>>, EvalError> {
+    let eval = eval(scope, io, expr).await?;
+    Ok(eval.map(|value| value.collect_strings()))
+}
 
-    pub fn eval_pattern(&self, expr: &ast::PatternExpr) -> Result<Pattern, EvalError> {
-        let mut pattern_builder = PatternBuilder::default();
+pub fn eval_pattern<P: Scope>(scope: &P, expr: &ast::PatternExpr) -> Result<Pattern, EvalError> {
+    let mut pattern_builder = PatternBuilder::default();
 
-        for fragment in &expr.fragments {
-            match fragment {
-                ast::PatternFragment::Literal(lit) => pattern_builder.push_str(lit),
-                ast::PatternFragment::PatternStem => pattern_builder.push_pattern_stem(),
-                ast::PatternFragment::OneOf(one_of) => pattern_builder.push_one_of(one_of.clone()),
-                ast::PatternFragment::Interpolation(interp) => {
-                    if let ast::StringInterpolationStem::PatternCapture = interp.stem {
-                        return Err(EvalError::PatternStemInterpolationInPattern.into());
+    for fragment in &expr.fragments {
+        match fragment {
+            ast::PatternFragment::Literal(lit) => pattern_builder.push_str(lit),
+            ast::PatternFragment::PatternStem => pattern_builder.push_pattern_stem(),
+            ast::PatternFragment::OneOf(one_of) => pattern_builder.push_one_of(one_of.clone()),
+            ast::PatternFragment::Interpolation(interp) => {
+                if let ast::StringInterpolationStem::PatternCapture = interp.stem {
+                    return Err(EvalError::PatternStemInterpolationInPattern.into());
+                }
+                if interp.interpolate_as_resolved_path {
+                    return Err(EvalError::ResolvePathInPattern.into());
+                }
+                if interp.join.is_some() {
+                    return Err(EvalError::JoinInPattern.into());
+                }
+
+                let mut value = eval_string_interpolation_stem(scope, &interp.stem)?;
+                if let Some(ref op) = interp.operation {
+                    value = eval_string_interpolation_map_operation(value, op)?;
+                }
+
+                // Note: Ignoring the build-status of the interpolation
+                // stem, because we are building a pattern - it can't itself
+                // be outdated.
+                match value.value {
+                    Value::String(string) => {
+                        pattern_builder.push_str(&string);
                     }
-                    if interp.interpolate_as_resolved_path {
-                        return Err(EvalError::ResolvePathInPattern.into());
-                    }
-                    if interp.join.is_some() {
-                        return Err(EvalError::JoinInPattern.into());
-                    }
-
-                    let mut value = self.eval_string_interpolation_stem(&interp.stem)?;
-                    if let Some(ref op) = interp.operation {
-                        value = self.eval_string_interpolation_map_operation(value, op)?;
-                    }
-
-                    match value {
-                        Value::String(string) => {
-                            pattern_builder.push_str(&string);
-                        }
-                        Value::List(_) => {
-                            return Err(EvalError::ListInPattern.into());
-                        }
+                    Value::List(_) => {
+                        return Err(EvalError::ListInPattern.into());
                     }
                 }
             }
         }
-
-        Ok(pattern_builder.build())
     }
 
-    pub fn eval_string_expr(
-        &self,
-        expr: &ast::StringExpr,
-        project: &Project,
-    ) -> Result<String, EvalError> {
-        let mut s = String::new();
+    Ok(pattern_builder.build())
+}
 
-        for fragment in &expr.fragments {
-            match fragment {
-                ast::StringFragment::Literal(lit) => s.push_str(lit),
-                ast::StringFragment::Interpolation(interp) => {
-                    let mut value = self.eval_string_interpolation_stem(&interp.stem)?;
+pub fn eval_string_expr<P: Scope + ?Sized>(
+    scope: &P,
+    expr: &ast::StringExpr,
+) -> Result<Eval<String>, EvalError> {
+    let mut s = String::new();
 
-                    if let Some(ref op) = interp.operation {
-                        value = self.eval_string_interpolation_map_operation(value, op)?;
-                    }
+    let mut status = BuildStatus::Unchanged;
 
-                    if interp.interpolate_as_resolved_path {
-                        value = recursive_resolve_path(value, werk_fs::Path::ROOT, project)?;
-                    }
+    for fragment in &expr.fragments {
+        match fragment {
+            ast::StringFragment::Literal(lit) => s.push_str(lit),
+            ast::StringFragment::Interpolation(interp) => {
+                let mut value = eval_string_interpolation_stem(scope, &interp.stem)?;
 
-                    if let Some(join) = interp.join {
-                        value = Value::String(recursive_join(value, join));
-                    }
+                if let Some(ref op) = interp.operation {
+                    value = eval_string_interpolation_map_operation(value, op)?;
+                }
 
-                    match value {
-                        Value::List(_) => return Err(EvalError::UnexpectedList.into()),
-                        Value::String(value) => {
-                            s.push_str(&value);
-                        }
+                if interp.interpolate_as_resolved_path {
+                    value.value = recursive_resolve_path(
+                        value.value,
+                        werk_fs::Path::ROOT,
+                        scope.workspace(),
+                    )?;
+                }
+
+                if let Some(join) = interp.join {
+                    value.value = Value::String(recursive_join(value.value, join));
+                }
+
+                match value.value {
+                    Value::List(_) => return Err(EvalError::UnexpectedList.into()),
+                    Value::String(value) => {
+                        s.push_str(&value);
                     }
                 }
+
+                status |= value.status;
             }
         }
-
-        Ok(s)
     }
 
-    pub fn eval_shell_command(
-        &self,
-        expr: &ast::StringExpr,
-        project: &Project,
-    ) -> Result<ShellCommandLineBuilder, EvalError> {
-        let mut builder = ShellCommandLineBuilder::default();
+    Ok(Eval { value: s, status })
+}
 
-        for fragment in &expr.fragments {
-            match fragment {
-                ast::StringFragment::Literal(lit) => {
-                    builder.push_lit(lit);
+pub fn eval_shell_command<P: Scope + ?Sized>(
+    scope: &P,
+    expr: &ast::StringExpr,
+) -> Result<Eval<ShellCommandLine>, EvalError> {
+    let mut builder = ShellCommandLineBuilder::default();
+
+    let mut status = BuildStatus::Unchanged;
+
+    for fragment in &expr.fragments {
+        match fragment {
+            ast::StringFragment::Literal(lit) => {
+                builder.push_lit(lit);
+            }
+            ast::StringFragment::Interpolation(interp) => {
+                let mut value = eval_string_interpolation_stem(scope, &interp.stem)?;
+
+                if let Some(ref op) = interp.operation {
+                    value = eval_string_interpolation_map_operation(value, op)?;
                 }
-                ast::StringFragment::Interpolation(interp) => {
-                    let mut value = self.eval_string_interpolation_stem(&interp.stem)?;
+                status |= value.status;
 
-                    if let Some(ref op) = interp.operation {
-                        value = self.eval_string_interpolation_map_operation(value, op)?;
-                    }
-
-                    if interp.interpolate_as_resolved_path {
-                        value = recursive_resolve_path(value, werk_fs::Path::ROOT, project)?;
-                        builder.push_all(value);
-                    } else {
-                        match value {
-                            Value::List(list) => match interp.join {
-                                Some(' ') => {
-                                    builder.push_all(Value::List(list));
-                                }
-                                Some(sep) => {
-                                    let s = recursive_join(Value::List(list), sep);
-                                    builder.push_arg(&s);
-                                }
-                                None => return Err(EvalError::UnexpectedList.into()),
-                            },
-                            Value::String(s) => {
-                                builder.push_str(&s);
+                if interp.interpolate_as_resolved_path {
+                    value.value = recursive_resolve_path(
+                        value.value,
+                        werk_fs::Path::ROOT,
+                        scope.workspace(),
+                    )?;
+                    builder.push_all(value.value);
+                } else {
+                    match value.value {
+                        Value::List(list) => match interp.join {
+                            Some(' ') => {
+                                builder.push_all(Value::List(list));
                             }
+                            Some(sep) => {
+                                let s = recursive_join(Value::List(list), sep);
+                                builder.push_arg(&s);
+                            }
+                            None => return Err(EvalError::UnexpectedList.into()),
+                        },
+                        Value::String(s) => {
+                            builder.push_str(&s);
                         }
                     }
                 }
             }
         }
-
-        Ok(builder)
     }
 
-    fn eval_shell_commands_into(
-        &self,
-        expr: &ast::Expr,
-        project: &Project,
-        cmds: &mut Vec<ShellCommandLineBuilder>,
-    ) -> Result<(), Error> {
-        match expr {
-            ast::Expr::StringExpr(string_expr) | ast::Expr::Shell(string_expr) => {
-                cmds.push(self.eval_shell_command(string_expr, project)?)
-            }
-            ast::Expr::Glob(_) => return Err(EvalError::UnexpectedGlob.into()),
-            ast::Expr::Which(_) => return Err(EvalError::UnexpectedWhich.into()),
-            ast::Expr::List(vec) => {
-                for expr in vec {
-                    self.eval_shell_commands_into(expr, project, cmds)?;
-                }
-            }
+    Ok(Eval {
+        value: builder.build()?,
+        status,
+    })
+}
+
+fn eval_shell_commands_into<P: Scope>(
+    scope: &P,
+    expr: &ast::Expr,
+    cmds: &mut Vec<ShellCommandLine>,
+) -> Result<BuildStatus, Error> {
+    match expr {
+        ast::Expr::StringExpr(string_expr) | ast::Expr::Shell(string_expr) => {
+            let command = eval_shell_command(scope, string_expr)?;
+            cmds.push(command.value);
+            Ok(command.status)
         }
+        ast::Expr::Glob(_) => return Err(EvalError::UnexpectedGlob.into()),
+        ast::Expr::Which(_) => return Err(EvalError::UnexpectedWhich.into()),
+        ast::Expr::List(vec) => {
+            let mut status = BuildStatus::Unchanged;
+            for expr in vec {
+                status |= eval_shell_commands_into(scope, expr, cmds)?;
+            }
+            Ok(status)
+        }
+    }
+}
 
-        Ok(())
+pub fn eval_shell_commands<P: Scope>(
+    scope: &P,
+    expr: &ast::Expr,
+) -> Result<Vec<ShellCommandLine>, Error> {
+    let mut cmds = Vec::new();
+    eval_shell_commands_into(scope, expr, &mut cmds)?;
+    Ok(cmds)
+}
+
+/// Evaluate shell commands, run `which` on all of them (changing the `program`
+/// member of the returned `ShellCommandLine`), and detect if the resolved
+/// command is different from the cached path in .werk-cache.toml.
+pub fn eval_shell_commands_run_which_and_detect_outdated(
+    scope: &RecipeScope<'_>,
+    io: &dyn Io,
+    expr: &ast::Expr,
+) -> Result<Eval<Vec<ShellCommandLine>>, Error> {
+    let mut cmds = Vec::new();
+    eval_shell_commands_into(scope, expr, &mut cmds)?;
+
+    let mut status = BuildStatus::Unchanged;
+    for cmd in cmds.iter_mut() {
+        let (program, which_status) = scope
+            .workspace()
+            .which(io, &cmd.program)
+            .map_err(|e| Error::CommandNotFound(cmd.program.clone(), e))?;
+        cmd.program = program;
+        status |= which_status;
     }
 
-    pub fn eval_shell_commands(
-        &self,
-        expr: &ast::Expr,
-        project: &Project,
-    ) -> Result<Vec<ShellCommandLineBuilder>, Error> {
-        let mut cmds = Vec::new();
-        self.eval_shell_commands_into(expr, project, &mut cmds)?;
-        Ok(cmds)
-    }
+    Ok(Eval {
+        value: cmds,
+        status,
+    })
+}
 
-    pub fn eval_string_interpolation_stem(
-        &self,
-        stem: &ast::StringInterpolationStem,
-    ) -> Result<Value, EvalError> {
-        Ok(match stem {
-            ast::StringInterpolationStem::Implied => self
-                .implied_value()
-                .ok_or(EvalError::NoImpliedValue)?
-                .clone(),
-            ast::StringInterpolationStem::PatternCapture => Value::String(
-                self.pattern_stem()
+pub fn eval_string_interpolation_stem<P: Scope + ?Sized>(
+    scope: &P,
+    stem: &ast::StringInterpolationStem,
+) -> Result<Eval<Value>, EvalError> {
+    Ok(match stem {
+        ast::StringInterpolationStem::Implied => scope
+            .implied_value()
+            .ok_or(EvalError::NoImpliedValue)?
+            .clone(),
+        ast::StringInterpolationStem::PatternCapture => Eval {
+            value: Value::String(
+                scope
+                    .pattern_stem()
                     .ok_or(EvalError::NoPatternStem)?
                     .to_owned()
                     .into(),
             ),
-            ast::StringInterpolationStem::CaptureGroup(group) => Value::String(
-                self.capture_group(*group)
-                    .ok_or(EvalError::NoSuchCaptureGroup(*group))?
-                    .to_owned()
-                    .into(),
-            ),
-            ast::StringInterpolationStem::Ident(ref ident) => self
-                .get(ident)
-                .ok_or_else(|| EvalError::NoSuchIdentifier(ident.clone()))?
-                .clone(),
-        })
-    }
+            status: BuildStatus::Unchanged,
+        },
+        ast::StringInterpolationStem::CaptureGroup(group) => Eval::unchanged(
+            scope
+                .capture_group(*group)
+                .ok_or(EvalError::NoSuchCaptureGroup(*group))?
+                .to_owned()
+                .into(),
+        ),
+        ast::StringInterpolationStem::Ident(ref ident) => scope
+            .get(ident)
+            .ok_or_else(|| EvalError::NoSuchIdentifier(ident.clone()))?
+            .cloned(),
+    })
+}
 
-    pub fn eval_string_interpolation_map_operation(
-        &self,
-        value: Value,
-        op: &ast::StringInterpolationOperation,
-    ) -> Result<Value, EvalError> {
-        match op {
+pub fn eval_string_interpolation_map_operation(
+    value: Eval<Value>,
+    op: &ast::StringInterpolationOperation,
+) -> Result<Eval<Value>, EvalError> {
+    value
+        .map(|value| match op {
             ast::StringInterpolationOperation::ReplaceExtension(from, to) => {
                 recursive_replace_extension(value, from, to)
             }
@@ -310,65 +411,103 @@ impl<'a> Scope<'a> {
             ast::StringInterpolationOperation::AppendEach(suffix) => {
                 recursive_append_each(value, suffix)
             }
-        }
-    }
+        })
+        .transpose_result()
+}
 
-    pub async fn eval_shell(
-        &self,
-        expr: &ast::StringExpr,
-        project: &Project,
-    ) -> Result<String, EvalError> {
-        let mut builder = self.eval_shell_command(expr, project)?;
+pub async fn eval_shell<P: Scope + ?Sized>(
+    scope: &P,
+    io: &dyn Io,
+    expr: &ast::StringExpr,
+) -> Result<Eval<String>, EvalError> {
+    let mut command = eval_shell_command(scope, expr)?;
 
-        // Unconditionally disable color output when the command supports it,
-        // because we are capturing the output as a string.
-        let command = builder.set_no_color().build(&project.inner.which)?;
+    // Unconditionally disable color output when the command supports it,
+    // because we are capturing the output as a string.
+    command.set_no_color();
 
-        let output = match project.run(&command).await {
-            Ok(output) => output,
-            Err(e) => {
-                // Spawning the command failed.
-                return Err(ShellError {
-                    command,
-                    result: Arc::new(Err(e)),
-                }
-                .into());
-            }
-        };
+    // Resolve the program path up front, in order to detect if it changed.
+    let (which_program, which_status) = scope
+        .workspace()
+        .which(io, &command.program)
+        .map_err(|e| EvalError::CommandNotFound(command.program.clone(), e))?;
+    command.program = which_program;
 
-        if !output.status.success() {
-            // The command itself failed.
+    let output = match io
+        .run_during_eval(&command, scope.workspace().project_root())
+        .await
+    {
+        Ok(output) => output,
+        Err(e) => {
+            // Spawning the command failed.
             return Err(ShellError {
-                command,
-                result: Arc::new(Ok(output)),
+                command: command.value,
+                result: Arc::new(Err(e)),
             }
             .into());
         }
+    };
 
-        let stdout = String::from_utf8_lossy(&output.stdout.trim_ascii());
-        Ok(stdout.into_owned())
+    if !output.status.success() {
+        // The command itself failed.
+        return Err(ShellError {
+            command: command.value,
+            result: Arc::new(Ok(output)),
+        }
+        .into());
     }
 
-    pub async fn eval_glob(
-        &self,
-        expr: &ast::Glob,
-        project: &Project,
-    ) -> Result<Vec<Value>, EvalError> {
-        let mut glob_pattern_string = self.eval_string_expr(&expr.pattern, project)?;
-        if !glob_pattern_string.starts_with('/') {
-            glob_pattern_string.insert(0, '/');
-        }
-        let result = project.glob(&glob_pattern_string)?;
-        if let Some(then) = expr.then.as_ref() {
-            let mut scope = self.child(None);
-            scope.implied_value = Some(Value::List(result));
-            Ok(match Box::pin(scope.eval(then, project)).await? {
+    let stdout = String::from_utf8_lossy(&output.stdout.trim_ascii());
+    Ok(Eval {
+        value: stdout.into_owned(),
+        status: command.status | which_status,
+    })
+}
+
+pub async fn eval_glob(
+    scope: &dyn Scope,
+    io: &dyn Io,
+    expr: &ast::Glob,
+) -> Result<Eval<Vec<Value>>, EvalError> {
+    let Eval {
+        value: mut glob_pattern_string,
+        status: string_status,
+    } = eval_string_expr(scope, &expr.pattern)?;
+
+    if !glob_pattern_string.starts_with('/') {
+        glob_pattern_string.insert(0, '/');
+    }
+    let (matches, glob_status) = scope
+        .workspace()
+        .glob_workspace_files(&glob_pattern_string)?;
+    let matches = matches
+        .into_iter()
+        .map(|p| Value::String(p.into()))
+        .collect();
+
+    if let Some(then) = expr.then.as_ref() {
+        let scope = SubexprScope::new(
+            scope,
+            Some(Eval {
+                value: Value::List(matches),
+                status: glob_status,
+            }),
+        );
+        let then_value = Box::pin(eval(&scope, io, then))
+            .await?
+            .map(|value| match value {
                 Value::List(list) => list,
                 value => vec![value],
-            })
-        } else {
-            Ok(result)
-        }
+            });
+        Ok(Eval {
+            value: then_value.value,
+            status: then_value.status | glob_status | string_status,
+        })
+    } else {
+        Ok(Eval {
+            value: matches,
+            status: glob_status | string_status,
+        })
     }
 }
 
@@ -396,7 +535,7 @@ fn flat_join(values: &[Value], sep: &str) -> String {
 
 fn recursive_join(value: Value, sep: char) -> String {
     match value {
-        Value::String(s) => s,
+        Value::String(string) => string,
         Value::List(values) => flat_join(&values, &sep.to_string()),
     }
 }
@@ -404,12 +543,12 @@ fn recursive_join(value: Value, sep: char) -> String {
 fn recursive_resolve_path(
     mut value: Value,
     working_dir: &werk_fs::Path,
-    project: &Project,
+    workspace: &Workspace,
 ) -> Result<Value, EvalError> {
     value.try_recursive_modify(|string| {
         let path = werk_fs::Path::new(&string)?;
         let path = path.absolutize(working_dir)?;
-        let path = project.resolve_path(&path)?;
+        let path = workspace.resolve_path(&path)?;
         match path.to_str() {
             Some(path) => *string = path.to_owned(),
             None => panic!("Path resolution produced a non-UTF8 path; probably the project root path is non-UTF8"),

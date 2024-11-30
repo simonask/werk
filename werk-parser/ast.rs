@@ -7,6 +7,12 @@ pub struct Root {
     pub recipes: IndexMap<PatternExpr, Recipe>,
 }
 
+pub enum ConfigKey {
+    Edition,
+    OutDir,
+    Jobs,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Expr {
     StringExpr(StringExpr),

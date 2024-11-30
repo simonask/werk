@@ -23,7 +23,9 @@ availability.
   the box.
 - **Declarative:** Werk files are simple TOML documents, and human-friendly.
   They are designed to be written by hand.
-- **Commands:** Real support for executing project scrips. No `.PHONY` targets.
+- **Commands:** Real support for executing project scrips, similar to `just`
+  recipes or `.PHONY` Make targets. A command recipe will be run at most once
+  per `werk` invocation.
 - **Build recipes:** Files can be built from Make-like patterns, and rebuilt
   according to modification time.
 - **Autoclean:** Werk is aware of which files it has generated, and can
@@ -336,6 +338,8 @@ In TOML, expressions are tables with special keys:
   This also implicitly creates a cache entry for the glob pattern, so recipes
   deriving their input from the glob pattern will be outdated when files are
   added/removed. *Note: The output directory is not included!*
+- `{ with: "input", then: expr }`: Given an input variable, chain it through
+  `expr` to produce an output value.
 
 ### Chaining expressions
 
