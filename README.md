@@ -3,7 +3,8 @@
 `werk` is a simplistic and opinionated command runner, similar to `just`, and
 also a simplistic build system, similar to `make`.
 
-> [!CAUTION] Werk is in an early alpha stage. Use at your own risk. It may eat
+> [!CAUTION]
+> Werk is in an early alpha stage. Use at your own risk. It may eat
 > your files, so run `git commit` before trying it out.
 
 # Why?
@@ -468,7 +469,8 @@ match.'%' = { error = "unrecognized build configuration: {%}" }
 else = ""
 ```
 
-> [!TIP] The expressions that make up a recipe are evaluated in full before any
+> [!TIP]
+> The expressions that make up a recipe are evaluated in full before any
 > commands are executed for that recipe. This means that a recipe doesn't fail
 > halfway when its expressions fail to evaluate, but it also means that
 > informational expressions (`info` and `warn`) will not be interleaved with
