@@ -27,8 +27,6 @@ struct Inner {
     state: Mutex<State>,
 }
 
-pub static NULL_RUN_TRACKER: &'static dyn Watcher = &();
-
 pub trait Watcher: Send + Sync {
     /// Build task is about to start.
     fn will_build(&self, task_id: &TaskId, num_steps: usize, pre_message: Option<&str>);
@@ -61,36 +59,9 @@ pub trait Watcher: Send + Sync {
         step: usize,
         num_steps: usize,
     );
-    fn echo(&self, task_id: &TaskId, message: &str);
-}
 
-impl Watcher for () {
-    fn will_build(&self, _task_id: &TaskId, _num_steps: usize, _pre_message: Option<&str>) {}
-    fn did_build(
-        &self,
-        _task_id: &TaskId,
-        _result: &Result<BuildStatus, Error>,
-        _post_message: Option<&str>,
-    ) {
-    }
-    fn will_execute(
-        &self,
-        _task_id: &TaskId,
-        _command: &ShellCommandLine,
-        _step: usize,
-        _num_steps: usize,
-    ) {
-    }
-    fn did_execute(
-        &self,
-        _task_id: &TaskId,
-        _command: &ShellCommandLine,
-        _result: &Result<std::process::Output, Error>,
-        _step: usize,
-        _num_steps: usize,
-    ) {
-    }
-    fn echo(&self, _task_id: &TaskId, _message: &str) {}
+    fn message(&self, task_id: Option<&TaskId>, message: &str);
+    fn warning(&self, task_id: Option<&TaskId>, message: &str);
 }
 
 #[derive(Clone, Default)]
@@ -346,8 +317,8 @@ impl Inner {
         target_file: &werk_fs::Path,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
-        let global_scope = RootScope::new(&self.globals, &self.workspace);
-        let mut scope = RecipeScope::new(&global_scope, Some(pattern_match));
+        let global_scope = RootScope::new(&self.globals, &self.workspace, &*self.watcher);
+        let mut scope = RecipeScope::new(&global_scope, task_id, Some(pattern_match));
         scope.set(
             "out".to_owned(),
             Eval::unchanged(Value::String(target_file.to_string())),
@@ -463,8 +434,8 @@ impl Inner {
         recipe: &ast::CommandRecipe,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
-        let global_scope = RootScope::new(&self.globals, &self.workspace);
-        let scope = RecipeScope::new(&global_scope, None);
+        let global_scope = RootScope::new(&self.globals, &self.workspace, &*self.watcher);
+        let scope = RecipeScope::new(&global_scope, task_id, None);
 
         // Evaluate dependencies (`out` is not available in commands).
         let mut deps = Vec::new();

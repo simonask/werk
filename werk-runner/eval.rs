@@ -120,7 +120,7 @@ pub async fn eval(
     match expr {
         ast::Expr::StringExpr(expr) => Ok(eval_string_expr(scope, expr)?.map(Value::String)),
         ast::Expr::Shell(expr) => Ok(eval_shell(scope, io, expr).await?.map(Value::String)),
-        ast::Expr::Glob(expr) => Ok(eval_glob(scope, io, expr).await?.map(Value::List)),
+        ast::Expr::Glob(expr) => Ok(eval_glob(scope, expr)?.map(Value::List)),
         ast::Expr::Which(expr) => {
             let string = eval_string_expr(scope, expr)?;
             let (which, which_status) = scope
@@ -133,6 +133,17 @@ pub async fn eval(
                 status,
             })
         }
+        ast::Expr::Env(expr) => {
+            let name = eval_string_expr(scope, expr)?;
+            let (env, env_status) = scope.workspace().env(io, &name.value);
+            let status = name.status | env_status;
+            Ok(Eval {
+                value: Value::String(env),
+                status,
+            })
+        }
+        ast::Expr::Patsubst(_) => todo!(),
+        ast::Expr::Match(_) => todo!(),
         ast::Expr::List(list_expr) => {
             // Boxing for recursion.
             Box::pin(async {
@@ -149,6 +160,31 @@ pub async fn eval(
                 })
             })
             .await
+        }
+        ast::Expr::Ident(ident) => scope
+            .get(ident)
+            .as_ref()
+            .map(Eval::cloned)
+            .ok_or_else(|| EvalError::NoSuchIdentifier(ident.clone())),
+        ast::Expr::Then(expr, string_expr) => {
+            // Boxing for recursion.
+            let value = Box::pin(async { eval(scope, io, expr).await }).await?;
+            let scope = scope.subexpr(Some(value));
+            eval_string_expr(&scope, string_expr).map(|string| string.map(Value::String))
+        }
+        ast::Expr::Message(message_expr) => {
+            let value = Box::pin(async { eval(scope, io, &message_expr.inner).await }).await?;
+            let message_scope = scope.subexpr(Some(value));
+            let message = eval_string_expr(&message_scope, &message_expr.message)?;
+            match message_expr.message_type {
+                ast::MessageType::Info => scope.watcher().message(scope.task_id(), &message),
+                ast::MessageType::Warning => scope.watcher().warning(scope.task_id(), &message),
+            }
+            Ok(message_scope.implied_value.unwrap())
+        }
+        ast::Expr::Error(string_expr) => {
+            let string = eval_string_expr(scope, string_expr)?;
+            Err(EvalError::ErrorExpression(string.value))
         }
     }
 }
@@ -304,8 +340,8 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
     })
 }
 
-fn eval_shell_commands_into<P: Scope>(
-    scope: &P,
+fn eval_shell_commands_into(
+    scope: &RecipeScope<'_>,
     expr: &ast::Expr,
     cmds: &mut Vec<ShellCommandLine>,
 ) -> Result<BuildStatus, Error> {
@@ -315,8 +351,13 @@ fn eval_shell_commands_into<P: Scope>(
             cmds.push(command.value);
             Ok(command.status)
         }
-        ast::Expr::Glob(_) => return Err(EvalError::UnexpectedGlob.into()),
-        ast::Expr::Which(_) => return Err(EvalError::UnexpectedWhich.into()),
+        ast::Expr::Glob(_) => return Err(EvalError::UnexpectedExpressionType("glob").into()),
+        ast::Expr::Which(_) => return Err(EvalError::UnexpectedExpressionType("which").into()),
+        ast::Expr::Patsubst(_) => {
+            return Err(EvalError::UnexpectedExpressionType("patsubst").into())
+        }
+        ast::Expr::Match(_) => return Err(EvalError::UnexpectedExpressionType("match").into()),
+        ast::Expr::Env(_) => return Err(EvalError::UnexpectedExpressionType("env").into()),
         ast::Expr::List(vec) => {
             let mut status = BuildStatus::Unchanged;
             for expr in vec {
@@ -324,11 +365,27 @@ fn eval_shell_commands_into<P: Scope>(
             }
             Ok(status)
         }
+        ast::Expr::Ident(_) => return Err(EvalError::UnexpectedExpressionType("from").into()),
+        ast::Expr::Then(_, _) => return Err(EvalError::UnexpectedExpressionType("then").into()),
+        ast::Expr::Message(message_expr) => {
+            let status = eval_shell_commands_into(scope, &message_expr.inner, cmds)?;
+            let message_scope = (scope as &dyn Scope).subexpr(None);
+            let message = eval_string_expr(&message_scope, &message_expr.message)?;
+            match message_expr.message_type {
+                ast::MessageType::Warning => scope.watcher().warning(scope.task_id(), &message),
+                ast::MessageType::Info => scope.watcher().message(scope.task_id(), &message),
+            }
+            Ok(status)
+        }
+        ast::Expr::Error(string_expr) => {
+            let message = eval_string_expr(scope, string_expr)?;
+            return Err(EvalError::ErrorExpression(message.value).into());
+        }
     }
 }
 
-pub fn eval_shell_commands<P: Scope>(
-    scope: &P,
+pub fn eval_shell_commands(
+    scope: &RecipeScope<'_>,
     expr: &ast::Expr,
 ) -> Result<Vec<ShellCommandLine>, Error> {
     let mut cmds = Vec::new();
@@ -464,15 +521,11 @@ pub async fn eval_shell<P: Scope + ?Sized>(
     })
 }
 
-pub async fn eval_glob(
-    scope: &dyn Scope,
-    io: &dyn Io,
-    expr: &ast::Glob,
-) -> Result<Eval<Vec<Value>>, EvalError> {
+pub fn eval_glob(scope: &dyn Scope, expr: &ast::StringExpr) -> Result<Eval<Vec<Value>>, EvalError> {
     let Eval {
         value: mut glob_pattern_string,
         status: string_status,
-    } = eval_string_expr(scope, &expr.pattern)?;
+    } = eval_string_expr(scope, expr)?;
 
     if !glob_pattern_string.starts_with('/') {
         glob_pattern_string.insert(0, '/');
@@ -485,30 +538,10 @@ pub async fn eval_glob(
         .map(|p| Value::String(p.into()))
         .collect();
 
-    if let Some(then) = expr.then.as_ref() {
-        let scope = SubexprScope::new(
-            scope,
-            Some(Eval {
-                value: Value::List(matches),
-                status: glob_status,
-            }),
-        );
-        let then_value = Box::pin(eval(&scope, io, then))
-            .await?
-            .map(|value| match value {
-                Value::List(list) => list,
-                value => vec![value],
-            });
-        Ok(Eval {
-            value: then_value.value,
-            status: then_value.status | glob_status | string_status,
-        })
-    } else {
-        Ok(Eval {
-            value: matches,
-            status: glob_status | string_status,
-        })
-    }
+    Ok(Eval {
+        value: matches,
+        status: glob_status | string_status,
+    })
 }
 
 fn flat_join(values: &[Value], sep: &str) -> String {

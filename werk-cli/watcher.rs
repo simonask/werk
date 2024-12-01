@@ -7,9 +7,9 @@ use anstream::stream::{AsLockedWrite, IsTerminal};
 use indexmap::IndexMap;
 use owo_colors::OwoColorize;
 use parking_lot::{Mutex, MutexGuard};
-use werk_runner::{BuildStatus, ShellCommandLine, ShellCommandLineBuilder, TaskId};
+use werk_runner::{BuildStatus, ShellCommandLine, TaskId};
 
-use crate::{dry_run, ColorChoice};
+use crate::ColorChoice;
 
 #[cfg(not(windows))]
 trait ConWrite: Write + AsLockedWrite {}
@@ -371,9 +371,23 @@ impl<'a> StdioLock<'a> {
         }
     }
 
-    fn echo(&mut self, task_id: &TaskId, message: &str) {
+    fn message(&mut self, task_id: Option<&TaskId>, message: &str) {
         self.clear_current_line();
-        _ = writeln!(self.stdout, "{}: {}", task_id.cyan(), message);
+        if let Some(task_id) = task_id {
+            _ = writeln!(self.stdout, "{} {}", Bracketed(task_id).cyan(), message);
+        } else {
+            _ = writeln!(self.stdout, "{} {}", "[INFO]".cyan(), message);
+        }
+        self.render();
+    }
+
+    fn warning(&mut self, task_id: Option<&TaskId>, message: &str) {
+        self.clear_current_line();
+        if let Some(task_id) = task_id {
+            _ = writeln!(self.stdout, "{} {}", Bracketed(task_id).yellow(), message);
+        } else {
+            _ = writeln!(self.stdout, "{} {}", "[WARN]".yellow(), message);
+        }
         self.render();
     }
 }
@@ -414,8 +428,12 @@ impl werk_runner::Watcher for StdoutWatcher {
             .did_execute(task_id, command, result, step, num_steps);
     }
 
-    fn echo(&self, task_id: &TaskId, message: &str) {
-        self.lock().echo(task_id, message);
+    fn message(&self, task_id: Option<&TaskId>, message: &str) {
+        self.lock().message(task_id, message)
+    }
+
+    fn warning(&self, task_id: Option<&TaskId>, message: &str) {
+        self.lock().warning(task_id, message)
     }
 }
 

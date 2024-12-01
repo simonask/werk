@@ -10,6 +10,7 @@ pub fn parse_toml(input: &str) -> Result<ast::Root, Error> {
 pub fn parse_toml_document(toml: &toml_edit::DocumentMut) -> Result<ast::Root, Error> {
     let root = toml.as_table();
 
+    let mut config = ast::Config::default();
     let mut global = IndexMap::new();
     let mut command_rules = IndexMap::new();
     let mut out_rules = IndexMap::new();
@@ -21,6 +22,12 @@ pub fn parse_toml_document(toml: &toml_edit::DocumentMut) -> Result<ast::Root, E
         };
 
         match key {
+            "config" => {
+                let config_table = value
+                    .as_table()
+                    .ok_or_else(|| Error::ExpectedTable("config".to_owned()))?;
+                parse_config_table(&path, config_table, &mut config)?;
+            }
             "global" => {
                 let global_table = value
                     .as_table()
@@ -59,10 +66,47 @@ pub fn parse_toml_document(toml: &toml_edit::DocumentMut) -> Result<ast::Root, E
     }
 
     Ok(ast::Root {
+        config,
         global,
         commands: command_rules,
         recipes: out_rules,
     })
+}
+
+fn parse_config_table(
+    path: &TomlPath,
+    table: &toml_edit::Table,
+    config: &mut ast::Config,
+) -> Result<(), Error> {
+    for (key, value) in table.iter() {
+        match key {
+            "out-dir" => {
+                let Some(value) = value.as_str() else {
+                    return Err(Error::ExpectedString(path.ident("out-dir").to_string()));
+                };
+                config.output_directory = Some(value.to_owned());
+            }
+            "edition" => {
+                let Some(value) = value.as_str() else {
+                    return Err(Error::ExpectedString(path.ident("edition").to_string()));
+                };
+                config.edition = Some(value.to_owned());
+            }
+            "print-commands" => {
+                let Some(value) = value.as_bool() else {
+                    return Err(Error::ExpectedString(
+                        path.ident("print-commands").to_string(),
+                    ));
+                };
+                config.print_commands = Some(value);
+            }
+            _ => {
+                return Err(Error::UnknownConfigKey(key.to_owned()));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn parse_ident(path: &TomlPath, s: &str) -> Result<String, Error> {
@@ -77,52 +121,193 @@ fn parse_pattern_expr(path: &TomlPath, s: &str) -> Result<ast::PatternExpr, Erro
     parse_string::parse_pattern_expr(s).map_err(|e| Error::InvalidPatternExpr(path.to_string(), e))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ExprType {
+    String,
+    From,
+    Env,
+    Shell,
+    Which,
+    Glob,
+    Error,
+}
+
+impl ExprType {
+    pub fn all_strs() -> &'static [&'static str] {
+        &["env", "shell", "which", "glob", "from", "error"]
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "string" => Some(Self::String),
+            "env" => Some(Self::Env),
+            "shell" => Some(Self::Shell),
+            "which" => Some(Self::Which),
+            "glob" => Some(Self::Glob),
+            "from" => Some(Self::From),
+            "error" => Some(Self::Error),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ExprType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ExprType::String => "string",
+            ExprType::From => "from",
+            ExprType::Env => "env",
+            ExprType::Shell => "shell",
+            ExprType::Which => "which",
+            ExprType::Glob => "glob",
+            ExprType::Error => "error",
+        })
+    }
+}
+
+fn find_main_expression_type<'a, I>(keys: I) -> Result<(ExprType, &'a toml_edit::Item), Error>
+where
+    I: IntoIterator<Item = (&'a str, &'a toml_edit::Item)>,
+{
+    let mut found = None;
+    let mut iter = keys.into_iter();
+    while let Some((key, item)) = iter.next() {
+        if let Some(ty) = ExprType::from_str(key) {
+            found = Some((ty, item));
+            break;
+        }
+    }
+
+    let Some(found) = found else {
+        return Err(Error::ExpectedMainExpression);
+    };
+
+    while let Some((tail, _)) = iter.next() {
+        if let Some(duplicate) = ExprType::from_str(&tail) {
+            return Err(Error::AmbiguousMainExpression(found.0, duplicate));
+        }
+    }
+
+    Ok(found)
+}
+
 fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
     path: &TomlPath,
     table: &T,
 ) -> Result<ast::Expr, Error> {
-    if let Some(shell) = table.get("shell") {
-        if table.len() != 1 {
-            return Err(Error::InvalidExprTable(path.to_string()));
+    let expr_ty = find_main_expression_type(table.iter())?;
+    let mut expr = match expr_ty {
+        (ExprType::String, item) => {
+            parse_item_string_expr(&path.ident("string"), item).map(ast::Expr::StringExpr)?
         }
-        let path = path.ident("shell");
-        if let Some(shell) = shell.as_str() {
-            Ok(ast::Expr::Shell(parse_string_expr(&path, shell)?))
-        } else {
-            Err(Error::ExpectedString(path.to_string()))
+        (ExprType::From, toml_edit::Item::Value(toml_edit::Value::String(s))) => {
+            let ident = parse_ident(&path.ident("from"), s.value())?;
+            ast::Expr::Ident(ident)
         }
-    } else if let Some(string) = table.get("string") {
-        if table.len() != 1 {
-            return Err(Error::InvalidExprTable(path.to_string()));
+        (ExprType::From, item) => parse_item_expr(&path.ident("from"), item)?,
+        (ExprType::Env, item) => {
+            parse_item_string_expr(&path.ident("env"), item).map(ast::Expr::Env)?
         }
-        let path = path.ident("string");
-        if let Some(string) = string.as_str() {
-            Ok(ast::Expr::StringExpr(parse_string_expr(&path, string)?))
-        } else {
-            Err(Error::ExpectedString(path.to_string()))
+        (ExprType::Shell, item) => {
+            parse_item_string_expr(&path.ident("shell"), item).map(ast::Expr::Shell)?
         }
-    } else if let Some(glob) = table.get("glob") {
-        let then = if let Some(then) = table.get("then") {
-            if table.len() != 2 {
-                return Err(Error::InvalidExprTable(path.to_string()));
-            }
-            Some(Box::new(parse_item_expr(&path.ident("then"), then)?))
-        } else {
-            None
-        };
+        (ExprType::Which, item) => {
+            parse_item_string_expr(&path.ident("which"), item).map(ast::Expr::Which)?
+        }
+        (ExprType::Glob, item) => {
+            parse_item_string_expr(&path.ident("glob"), item).map(ast::Expr::Glob)?
+        }
+        (ExprType::Error, item) => parse_item_string_expr(&path, item).map(ast::Expr::Error)?,
+    };
 
-        let path = path.ident("glob");
-        if let Some(glob) = glob.as_str() {
-            Ok(ast::Expr::Glob(ast::Glob {
-                pattern: parse_string_expr(&path, glob)?,
-                then,
-            }))
-        } else {
-            Err(Error::ExpectedString(path.to_string()))
+    // Chaining expressions
+    for (key, item) in table.iter() {
+        // Skip the main expression - note that duplicates and ambiguous
+        // expressions have already been detected.
+        if let Some(_ty) = ExprType::from_str(key) {
+            continue;
         }
-    } else {
-        return Err(Error::InvalidExprTable(path.to_string()));
+
+        let path = path.ident(key);
+        match key {
+            "then" => {
+                let then = parse_item_string_expr(&path, item)?;
+                expr = ast::Expr::Then(Box::new(expr), Box::new(then));
+            }
+            "match" => {
+                let Some(table) = item.as_table_like() else {
+                    return Err(Error::ExpectedTable(path.to_string()));
+                };
+
+                let mut patterns = IndexMap::new();
+                for (pattern, value) in table.iter() {
+                    let path = path.ident(pattern);
+                    let pattern = parse_pattern_expr(&path, pattern)?;
+                    let value = parse_item_expr(&path, value)?;
+                    if patterns.insert(pattern, value).is_some() {
+                        return Err(Error::DuplicatePatternExpr(path.to_string()));
+                    }
+                }
+
+                expr = ast::Expr::Match(Box::new(ast::MatchExpr {
+                    input: expr,
+                    when: patterns,
+                }));
+            }
+            "warn" => {
+                let message = parse_item_string_expr(&path, item)?;
+                expr = ast::Expr::Message(Box::new(ast::MessageExpr {
+                    inner: expr,
+                    message,
+                    message_type: ast::MessageType::Warning,
+                }));
+            }
+            "info" => {
+                let message = parse_item_string_expr(&path, item)?;
+                expr = ast::Expr::Message(Box::new(ast::MessageExpr {
+                    inner: expr,
+                    message,
+                    message_type: ast::MessageType::Info,
+                }));
+            }
+            "patsubst" => {
+                let Some(table) = item.as_table_like() else {
+                    return Err(Error::ExpectedTable(path.to_string()));
+                };
+
+                let mut pattern = None;
+                let mut replacement = None;
+
+                for (key, item) in table.iter() {
+                    let path = path.ident(key);
+                    match key {
+                        "pattern" => pattern = Some(parse_item_pattern_expr(&path, item)?),
+                        "replacement" => replacement = Some(parse_item_string_expr(&path, item)?),
+                        _ => return Err(Error::InvalidKey(path.to_string())),
+                    }
+                }
+
+                let Some(pattern) = pattern else {
+                    return Err(Error::ExpectedKey(path.to_string(), "pattern".to_owned()));
+                };
+                let Some(replacement) = replacement else {
+                    return Err(Error::ExpectedKey(
+                        path.to_string(),
+                        "replacement".to_owned(),
+                    ));
+                };
+
+                expr = ast::Expr::Patsubst(Box::new(ast::PatsubstExpr {
+                    input: expr,
+                    pattern,
+                    replacement,
+                }))
+            }
+            _ => return Err(Error::UnknownExpressionChain(path.to_string())),
+        }
     }
+
+    Ok(expr)
 }
 
 fn parse_value_expr(path: &TomlPath, toml: &toml_edit::Value) -> Result<ast::Expr, Error> {
@@ -159,6 +344,26 @@ fn parse_item_expr(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Expr,
             }
             Ok(ast::Expr::List(exprs))
         }
+    }
+}
+
+fn parse_item_string_expr(
+    path: &TomlPath,
+    toml: &toml_edit::Item,
+) -> Result<ast::StringExpr, Error> {
+    match toml {
+        toml_edit::Item::Value(toml_edit::Value::String(s)) => parse_string_expr(path, s.value()),
+        _ => Err(Error::ExpectedString(path.to_string())),
+    }
+}
+
+fn parse_item_pattern_expr(
+    path: &TomlPath,
+    toml: &toml_edit::Item,
+) -> Result<ast::PatternExpr, Error> {
+    match toml {
+        toml_edit::Item::Value(toml_edit::Value::String(s)) => parse_pattern_expr(path, s.value()),
+        _ => Err(Error::ExpectedString(path.to_string())),
     }
 }
 

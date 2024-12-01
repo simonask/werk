@@ -1,0 +1,40 @@
+# Configuration value for the werk executable.
+config out-dir: "target"
+config edition: "1"
+
+command build:
+    build: "example{EXE_SUFFIX}"
+
+build "example{EXE_SUFFIX}":
+    in:
+        - glob: "src/**/*.c"
+        - "yikes.o"
+    command:
+        - "clang -o <out> <in*>"
+        - "sleep 1"
+
+build "%.o":
+    in: "{%}.c"
+    depfile: "{%}.c.d"
+    command:
+        - "sleep 1"
+        - "clang -c -o <out> <in>"
+        - "sleep 1"
+
+build "%.c.d":
+    in: "{%}.c"
+    command: "clang -MM -MT <out> -MF <out> <in>"
+
+build "%.(frag|vert|comp).spv":
+    in: "{%}.slang"
+    depfile: "{%}.slang.d"
+    command: "slangc -o <out> <in>"
+
+build "%.(frag|vert|comp).d":
+    in: "{%}.slang"
+    command: "slangc -MM -MT <out> -MF <out> <in>"
+
+build "%.spv":
+    in: "{%}.slang"
+    depfile: "{%}.slang.d"
+    command: "slangc -o <out> <in>"

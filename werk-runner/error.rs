@@ -154,10 +154,8 @@ pub enum EvalError {
     EmptyCommand,
     #[error("unterminated quote")]
     UnterminatedQuote,
-    #[error("`glob` expressions are only allowed in variables")]
-    UnexpectedGlob,
-    #[error("`which` expressions are only allowed in variables")]
-    UnexpectedWhich,
+    #[error("`{0}` expressions are not allowed in this context")]
+    UnexpectedExpressionType(&'static str),
     #[error("command not found: {0}: {1}")]
     CommandNotFound(String, which::Error),
     #[error(transparent)]
@@ -169,6 +167,8 @@ pub enum EvalError {
     Shell(Arc<ShellError>),
     #[error(transparent)]
     Path(#[from] werk_fs::PathError),
+    #[error("{0}")]
+    ErrorExpression(String),
 }
 
 impl From<ShellError> for EvalError {

@@ -78,4 +78,8 @@ impl werk_runner::Io for DryRun {
         );
         Box::pin(std::future::ready(Ok(())))
     }
+
+    fn read_env(&self, name: &str) -> Option<String> {
+        self.0.read_env(name)
+    }
 }

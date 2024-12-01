@@ -1,8 +1,7 @@
-use std::collections::hash_map;
-
 use ahash::HashMap;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
+use std::collections::hash_map;
 use werk_fs::PathError;
 
 use crate::{BuildStatus, DirEntry, Error, Io};
@@ -45,6 +44,7 @@ pub struct Workspace {
 struct Caches {
     glob_cache: HashMap<String, (Vec<werk_fs::PathBuf>, BuildStatus, Hash128)>,
     which_cache: HashMap<String, Result<(String, BuildStatus), which::Error>>,
+    env_cache: HashMap<String, (String, BuildStatus, Hash128)>,
 }
 
 /// Persisted workspace cache, i.e. the contents of `<out-dir>/.werk-cache`.
@@ -57,6 +57,9 @@ struct PersistedCache {
     /// `which` expression results in a different path, the result is considered
     /// outdated.
     pub which: IndexMap<String, String>,
+    /// Env cache, mapping used environment variables to their last known hash.
+    /// Using a hash here just avoid potentially leaking secrets.
+    pub env: IndexMap<String, Hash128>,
 }
 
 pub const WERK_CACHE_FILENAME: &str = ".werk-cache";
@@ -97,6 +100,7 @@ impl Workspace {
             runtime_caches: Mutex::new(Caches {
                 glob_cache: HashMap::default(),
                 which_cache: HashMap::default(),
+                env_cache: HashMap::default(),
             }),
         })
     }
@@ -120,6 +124,11 @@ impl Workspace {
                         None
                     }
                 })
+                .collect(),
+            env: caches
+                .env_cache
+                .iter()
+                .map(|(k, (_, _, hash))| (k.clone(), *hash))
                 .collect(),
         };
 
@@ -282,16 +291,44 @@ impl Workspace {
             }
         }
     }
+
+    pub fn env(&self, io: &dyn Io, name: &str) -> (String, BuildStatus) {
+        let mut state = self.runtime_caches.lock();
+        let state = &mut *state;
+        match state.env_cache.entry(name.to_owned()) {
+            hash_map::Entry::Occupied(entry) => {
+                let (value, build_status, _hash) = entry.get();
+                (value.clone(), *build_status)
+            }
+            hash_map::Entry::Vacant(entry) => {
+                let result = io.read_env(name).unwrap_or_default();
+                let hash = compute_stable_hash(&result);
+                let build_status = if self
+                    .werk_cache
+                    .env
+                    .get(name)
+                    .is_some_and(|existing_value| *existing_value == hash)
+                {
+                    BuildStatus::Unchanged
+                } else {
+                    BuildStatus::Rebuilt
+                };
+
+                entry.insert((result.clone(), build_status, hash));
+                (result, build_status)
+            }
+        }
+    }
+}
+
+fn compute_stable_hash<T: std::hash::Hash + ?Sized>(value: &T) -> Hash128 {
+    let mut hasher = rustc_stable_hash::StableSipHasher128::new();
+    value.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn compute_glob_hash(files: &[werk_fs::PathBuf]) -> Hash128 {
-    use std::hash::Hash;
-
-    let mut hasher = rustc_stable_hash::StableSipHasher128::new();
-    for file in files {
-        file.hash(&mut hasher);
-    }
-    hasher.finish()
+    compute_stable_hash(files)
 }
 
 async fn read_workspace_cache(io: &dyn Io, output_dir: &std::path::Path) -> PersistedCache {

@@ -54,6 +54,8 @@ pub trait Io: Send + Sync + 'static {
         data: &'a [u8],
     ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
     fn create_parent_dirs<'a>(&'a self, path: &'a Path) -> PinBoxFut<'a, Result<(), Error>>;
+
+    fn read_env(&self, name: &str) -> Option<String>;
 }
 
 #[derive(Debug, Clone)]
@@ -185,5 +187,9 @@ impl Io for RealSystem {
             }
             Ok(())
         })
+    }
+
+    fn read_env(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok()
     }
 }

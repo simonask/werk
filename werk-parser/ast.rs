@@ -2,24 +2,35 @@ use indexmap::IndexMap;
 
 #[derive(Debug, PartialEq)]
 pub struct Root {
+    pub config: Config,
     pub global: IndexMap<String, Expr>,
     pub commands: IndexMap<String, CommandRecipe>,
     pub recipes: IndexMap<PatternExpr, Recipe>,
 }
 
-pub enum ConfigKey {
-    Edition,
-    OutDir,
-    Jobs,
+/// The `[config]` section of werk.toml.
+#[derive(Debug, Default, PartialEq)]
+pub struct Config {
+    pub edition: Option<String>,
+    pub output_directory: Option<String>,
+    pub print_commands: Option<bool>,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Expr {
+    // Look up variable in scope.
+    Ident(String),
     StringExpr(StringExpr),
     Shell(StringExpr),
-    Glob(Glob),
+    Glob(StringExpr),
     Which(StringExpr),
+    Env(StringExpr),
     List(Vec<Expr>),
+    Patsubst(Box<PatsubstExpr>),
+    Match(Box<MatchExpr>),
+    Then(Box<Expr>, Box<StringExpr>),
+    Message(Box<MessageExpr>),
+    Error(StringExpr),
 }
 
 impl Expr {
@@ -30,6 +41,32 @@ impl Expr {
     pub fn shell(s: impl Into<String>) -> Self {
         Self::Shell(StringExpr::literal(s))
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct MessageExpr {
+    pub inner: Expr,
+    pub message: StringExpr,
+    pub message_type: MessageType,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct PatsubstExpr {
+    pub input: Expr,
+    pub pattern: PatternExpr,
+    pub replacement: StringExpr,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct MatchExpr {
+    pub input: Expr,
+    pub when: IndexMap<PatternExpr, Expr>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MessageType {
+    Info,
+    Warning,
 }
 
 #[derive(Debug, PartialEq)]
@@ -123,10 +160,4 @@ pub enum StringInterpolationOperation {
     ReplaceExtension(String, String),
     PrependEach(String),
     AppendEach(String),
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Glob {
-    pub pattern: StringExpr,
-    pub then: Option<Box<Expr>>,
 }

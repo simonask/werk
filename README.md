@@ -3,6 +3,9 @@
 `werk` is a simplistic and opinionated command runner, similar to `just`, and
 also a simplistic build system, similar to `make`.
 
+> [!CAUTION] Werk is in an early alpha stage. Use at your own risk. It may eat
+> your files, so run `git commit` before trying it out.
+
 # Why?
 
 GNU make is extremely useful, but very hard to use correctly, especially if you
@@ -426,7 +429,7 @@ tables, and keys in TOML tables must be unique).
 - `{ ..., then = "format" }`: Pipe the result through a string expression format
   operation. The formatting operation is applied recursively if the input is a
   list.
-- `{ ..., match = { 'foo' = "...", 'bar' = "..." } }`: Match expression. See
+- `{ ..., match = { 'foo' = "...", 'bar' = "..." } }`: Match patterns. See
   below.
 - `{ ..., warning = "message" }`: Emit a warning and pass the value unaltered.
 - `{ ..., info = "message" }`: Emit an informational message and pass the value
@@ -446,6 +449,12 @@ More complicated expressions are best represented as block tables:
 
 ### `match` expression
 
+`match` matches the input expression against a list of patterns (using recipe
+pattern syntax and logic), and passes the input through unaltered when none of
+the patterns match the input. When the input is a list, the match expression is
+applied recursively. The catch-all pattern '%' can be used as a fallback, which
+may then generate an error.
+
 ```toml
 [global]
 # Can be overridden on the command-line by passing `-Dbuild-type=release`.
@@ -455,8 +464,16 @@ build-type = "debug"
 from = "build-type"
 match.'debug' = "-g -O0"
 match.'release' = "-O3"
+match.'%' = { error = "unrecognized build configuration: {%}" }
 else = ""
 ```
+
+> [!TIP] The expressions that make up a recipe are evaluated in full before any
+> commands are executed for that recipe. This means that a recipe doesn't fail
+> halfway when its expressions fail to evaluate, but it also means that
+> informational expressions (`info` and `warn`) will not be interleaved with
+> running commands, even if they are present within the `command` body of a
+> recipe.
 
 # Design rationales
 

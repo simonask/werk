@@ -37,6 +37,10 @@ pub struct Args {
     /// `target` next to the root werk.toml file.
     #[clap(long)]
     pub output_dir: Option<std::path::PathBuf>,
+    /// Override variable in the werk.toml's `[global]` section. This takes the
+    /// form `name=value`.
+    #[clap(long, short = 'D')]
+    pub define: Vec<String>,
 }
 
 /// Color mode.
@@ -102,6 +106,12 @@ async fn try_main(args: Args) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("{} has no parent directory", werkfile_path.display()))?;
     let out_dir = args
         .output_dir
+        .or_else(|| {
+            ast.config
+                .output_directory
+                .clone()
+                .map(std::path::PathBuf::from)
+        })
         .unwrap_or_else(|| project_dir.join("target"));
     tracing::debug!("Project directory: {}", project_dir.display());
     tracing::debug!("Output directory: {}", out_dir.display());
@@ -131,12 +141,12 @@ async fn try_main(args: Args) -> Result<()> {
     for (name, value) in &ast.global {
         // Creating a new scope every time, because it's cheap, and it
         // simplifies things because we don't need a `RootScopeMut` variant.
-        let scope = RootScope::new(&globals, &workspace);
+        let scope = RootScope::new(&globals, &workspace, &*watcher);
         let value = werk_runner::eval(&scope, &*io, value).await?;
         globals.insert(name.to_owned(), value);
     }
 
-    let root_scope = RootScope::new(&globals, &workspace);
+    let root_scope = RootScope::new(&globals, &workspace, &*watcher);
     let recipes = Recipes::new(ast, &root_scope).await?;
 
     if args.list {

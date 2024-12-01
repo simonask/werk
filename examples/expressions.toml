@@ -1,5 +1,26 @@
 [config]
-target = "../target/werk-examples/expressions"
+out-dir = "../target/werk-examples/expressions"
 
 [global]
-in-files = { glob = "*.c" }
+# Glob expression
+source-files = { glob = "*.c" }
+profile = { env = "PROFILE" }
+
+# Patsubst is a function that replaces the pattern with the replacement.
+[global.object-files]
+# Read the local variable `source-files`, and use it as the "implied" value in
+# the rest of the expression (in this case patsubst).
+from = "source-files"
+# Note that the pattern has the pattern-syntax used in build recipe names, while
+# the replacement uses the string interpolation syntax. If the input is a list,
+# the substitution is applied recursively to all strings that match the pattern.
+patsubst = { pattern = "%.c", replacement = "{%}.o" }
+
+# Match expression; Note that the presence of `when` makes this a match
+# expression. If `else` has not been specified, the matched value will pass
+# through unchanged.
+[global.cargo-profile]
+from = "profile"
+match.'debug' = "dev"
+match.'release' = "release"
+else = { error = "invalid profile '{profile}'; expected \"debug\" or \"release\"" }

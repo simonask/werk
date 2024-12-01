@@ -1,23 +1,25 @@
 use ahash::HashMap;
 
-use crate::{Eval, PatternMatch, Value, Workspace};
+use crate::{Eval, PatternMatch, TaskId, Value, Watcher, Workspace};
 
 pub type LocalVariables = indexmap::IndexMap<String, Eval<Value>>;
+
+pub struct RootScope<'a> {
+    globals: &'a LocalVariables,
+    pub workspace: &'a Workspace,
+    pub watcher: &'a dyn Watcher,
+}
 
 pub struct RecipeScope<'a> {
     parent: &'a RootScope<'a>,
     vars: LocalVariables,
     pattern_match: Option<&'a PatternMatch<'a>>,
-}
-
-pub struct RootScope<'a> {
-    globals: &'a LocalVariables,
-    pub workspace: &'a Workspace,
+    task_id: &'a TaskId,
 }
 
 pub struct SubexprScope<'a> {
     parent: &'a dyn Scope,
-    implied_value: Option<Eval<Value>>,
+    pub implied_value: Option<Eval<Value>>,
 }
 
 pub trait Scope: Send + Sync {
@@ -33,21 +35,46 @@ pub trait Scope: Send + Sync {
     fn capture_group(&self, group: usize) -> Option<&str> {
         self.pattern_match().and_then(|pm| pm.capture_group(group))
     }
+
+    fn task_id(&self) -> Option<&TaskId>;
+    fn watcher(&self) -> &dyn Watcher;
+}
+
+impl dyn Scope + '_ {
+    pub fn subexpr(&self, implied_value: Option<Eval<Value>>) -> SubexprScope<'_> {
+        SubexprScope {
+            parent: self,
+            implied_value,
+        }
+    }
 }
 
 impl<'a> RootScope<'a> {
     #[inline]
-    pub fn new(globals: &'a LocalVariables, workspace: &'a Workspace) -> Self {
-        Self { globals, workspace }
+    pub fn new(
+        globals: &'a LocalVariables,
+        workspace: &'a Workspace,
+        watcher: &'a dyn Watcher,
+    ) -> Self {
+        Self {
+            globals,
+            workspace,
+            watcher,
+        }
     }
 }
 
 impl<'a> RecipeScope<'a> {
     #[inline]
-    pub fn new(root: &'a RootScope<'a>, pattern_match: Option<&'a PatternMatch<'a>>) -> Self {
+    pub fn new(
+        root: &'a RootScope<'a>,
+        task_id: &'a TaskId,
+        pattern_match: Option<&'a PatternMatch<'a>>,
+    ) -> Self {
         RecipeScope {
             parent: root,
             vars: LocalVariables::new(),
+            task_id,
             pattern_match,
         }
     }
@@ -106,6 +133,16 @@ impl Scope for RootScope<'_> {
     fn workspace(&self) -> &Workspace {
         self.workspace
     }
+
+    #[inline]
+    fn task_id(&self) -> Option<&TaskId> {
+        None
+    }
+
+    #[inline]
+    fn watcher(&self) -> &dyn Watcher {
+        self.watcher
+    }
 }
 
 impl Scope for RecipeScope<'_> {
@@ -131,6 +168,16 @@ impl Scope for RecipeScope<'_> {
     fn workspace(&self) -> &Workspace {
         self.parent.workspace
     }
+
+    #[inline]
+    fn task_id(&self) -> Option<&TaskId> {
+        Some(self.task_id)
+    }
+
+    #[inline]
+    fn watcher(&self) -> &dyn Watcher {
+        self.parent.watcher
+    }
 }
 
 impl Scope for SubexprScope<'_> {
@@ -154,5 +201,15 @@ impl Scope for SubexprScope<'_> {
     #[inline]
     fn workspace(&self) -> &Workspace {
         self.parent.workspace()
+    }
+
+    #[inline]
+    fn task_id(&self) -> Option<&TaskId> {
+        self.parent.task_id()
+    }
+
+    #[inline]
+    fn watcher(&self) -> &dyn Watcher {
+        self.parent.watcher()
     }
 }

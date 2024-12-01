@@ -3,6 +3,7 @@ out-dir = "target"
 profile = "debug"
 sha1.shell = "git rev-parse HEAD"
 version.shell = "toml get werk-cli/Cargo.toml package.version"
+version.info = "Version from Cargo.toml: {}"
 
 [command.build]
 build = ["example{EXE_SUFFIX}"]
@@ -18,7 +19,11 @@ command = "cargo build -p werk-cli --profile={profile}"
 [build.'%.o']
 in = "{%}.c"
 depfile = "{%}.c.d"
-command = ["sleep 1", "clang -c -o <out> <in>", "sleep 1"]
+command = [
+    "sleep 1",
+    "clang -c -o <out> <in>",
+    { string = "sleep 1", info = "would sleep while compiling <in>" },
+]
 
 [build.'%.c.d']
 in = "{%}.c"
