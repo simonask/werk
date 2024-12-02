@@ -14,6 +14,7 @@ pub struct WorkspaceSettings {
     pub git_ignore_from_parents: bool,
     pub ignore_hidden: bool,
     pub ignore: Vec<std::path::PathBuf>,
+    pub defines: HashMap<String, String>,
 }
 
 impl Default for WorkspaceSettings {
@@ -25,7 +26,16 @@ impl Default for WorkspaceSettings {
             git_ignore_from_parents: false,
             ignore_hidden: false,
             ignore: Vec::new(),
+            defines: HashMap::default(),
         }
+    }
+}
+
+impl WorkspaceSettings {
+    /// Override a global variable in the root scope.
+    pub fn define(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
+        self.defines.insert(key.into(), value.into());
+        self
     }
 }
 
@@ -42,6 +52,8 @@ pub struct Workspace {
     werk_cache: PersistedCache,
     /// Caches of expensive runtime values (glob, which, env).
     runtime_caches: Mutex<Caches>,
+    /// Overridden global variables from the command line.
+    pub defines: HashMap<String, String>,
 }
 
 #[derive(Default)]
@@ -73,14 +85,14 @@ impl Workspace {
         io: &dyn Io,
         project_root: std::path::PathBuf,
         output_directory: std::path::PathBuf,
-        settings: &WorkspaceSettings,
+        settings: WorkspaceSettings,
     ) -> Result<Self, Error> {
         let werk_cache = read_workspace_cache(io, &output_directory).await;
 
         let mut workspace_files =
             IndexMap::with_capacity_and_hasher(1024, ahash::RandomState::default());
 
-        for entry in io.walk_directory(&project_root, settings, &[&output_directory])? {
+        for entry in io.walk_directory(&project_root, &settings, &[&output_directory])? {
             let entry = entry?;
 
             if entry.path.file_name() == Some(WERK_CACHE_FILENAME.as_ref()) {
@@ -111,6 +123,7 @@ impl Workspace {
                 which_cache: HashMap::default(),
                 env_cache: HashMap::default(),
             }),
+            defines: settings.defines,
         })
     }
 

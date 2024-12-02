@@ -96,7 +96,7 @@ async fn expressions() -> anyhow::Result<()> {
             .with_envs([("PROFILE", "debug")]),
     );
     let workspace =
-        werk_runner::Workspace::new(&*io, "/".into(), "target".into(), &Default::default()).await?;
+        werk_runner::Workspace::new(&*io, "/".into(), "target".into(), Default::default()).await?;
     let runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher).await?;
 
     let globals = runner.globals();
@@ -129,7 +129,7 @@ async fn fail_which() -> anyhow::Result<()> {
             .with_envs([("PROFILE", "debug")]),
     );
     let workspace =
-        werk_runner::Workspace::new(&*io, "/".into(), "target".into(), &Default::default()).await?;
+        werk_runner::Workspace::new(&*io, "/".into(), "target".into(), Default::default()).await?;
     let Err(err) = werk_runner::Runner::new(ast, io.clone(), workspace, watcher).await else {
         panic!("expected error")
     };
@@ -174,7 +174,7 @@ async fn fail_custom_err() -> anyhow::Result<()> {
             .with_envs([("PROFILE", "nonexistent profile")]),
     );
     let workspace =
-        werk_runner::Workspace::new(&*io, "/".into(), "target".into(), &Default::default()).await?;
+        werk_runner::Workspace::new(&*io, "/".into(), "target".into(), Default::default()).await?;
     let Err(err) = werk_runner::Runner::new(ast, io.clone(), workspace, watcher).await else {
         panic!("expected error")
     };

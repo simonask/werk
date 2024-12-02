@@ -171,11 +171,23 @@ impl<'a> Runner<'a> {
     ) -> Result<Self, Error> {
         let mut globals = LocalVariables::new();
         for (name, value) in &ast.global {
+            if let Some(def) = workspace.defines.get(name) {
+                globals.insert(name.to_owned(), Eval::unchanged(Value::String(def.clone())));
+                continue;
+            }
+
             // Creating a new scope every time, because it's cheap, and it
             // simplifies things because we don't need a `RootScopeMut` variant.
             let scope = RootScope::new(&globals, &workspace, &*watcher);
             let value = eval(&scope, &*io, value).await?;
             globals.insert(name.to_owned(), value);
+        }
+
+        // Warn about defines set on the command-line that have no effect.
+        for (key, _) in &workspace.defines {
+            if !globals.contains_key(key) {
+                watcher.warning(None, &format!("Unused define: {key}"));
+            }
         }
 
         let scope = RootScope::new(&globals, &workspace, &*watcher);

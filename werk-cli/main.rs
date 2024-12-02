@@ -118,6 +118,17 @@ async fn try_main(args: Args) -> Result<()> {
     tracing::debug!("Project directory: {}", project_dir.display());
     tracing::debug!("Output directory: {}", out_dir.display());
 
+    let mut settings = WorkspaceSettings::default();
+    for def in &args.define {
+        let Some((key, value)) = def.split_once('=') else {
+            return Err(anyhow::anyhow!(
+                "Invalid variable definition (must take the form 'key=value'): {}",
+                def
+            ));
+        };
+        settings.define(key, value);
+    }
+
     let watcher: Arc<dyn werk_runner::Watcher> = Arc::new(watcher::StdoutWatcher::new(
         args.color,
         args.print_commands,
@@ -131,13 +142,7 @@ async fn try_main(args: Args) -> Result<()> {
         io = Arc::new(werk_runner::RealSystem);
     }
 
-    let workspace = Workspace::new(
-        &*io,
-        project_dir.to_owned(),
-        out_dir,
-        &WorkspaceSettings::default(),
-    )
-    .await?;
+    let workspace = Workspace::new(&*io, project_dir.to_owned(), out_dir, settings).await?;
 
     let mut runner = Runner::new(ast, io.clone(), workspace, watcher).await?;
     if args.list {
