@@ -48,15 +48,14 @@ pub struct Args {
 pub enum ColorChoice {
     /// Probe the current terminal and environment variables for color support.
     /// If the command is not running in a terminal, color is disabled. If the
-    /// command is running in a terminal, color is enabled if the `FORCE_COLOR`
-    /// environment variable is set, or disabled if the `NO_COLOR` environment
-    /// variable is set.
+    /// command is running in a terminal color is enabled for `werk` and all
+    /// subcommands or disabled if the `NO_COLOR` environment variable is set.
     #[default]
     Auto,
     /// Force color output, even if the command is not running in a terminal.
     /// Equivalent to settings the `FORCE_COLOR` environment variable. Note:
-    /// Setting this does not implicitly set `FORCE_COLOR` for executed shell
-    /// commands.
+    /// Setting this also sets `FORCE_COLOR` and `CLICOLOR_FORCE` for executed
+    /// shell commands.
     Always,
     /// Do not use color output, regardless of whether the command is running in
     /// a terminal. Equivalent to setting the `NO_COLOR` environment variable.
@@ -118,6 +117,12 @@ async fn try_main(args: Args) -> Result<()> {
     tracing::debug!("Project directory: {}", project_dir.display());
     tracing::debug!("Output directory: {}", out_dir.display());
 
+    let watcher = Arc::new(watcher::StdoutWatcher::new(
+        args.color,
+        args.print_commands,
+        args.dry_run,
+    ));
+
     let mut settings = WorkspaceSettings::default();
     for def in &args.define {
         let Some((key, value)) = def.split_once('=') else {
@@ -128,18 +133,13 @@ async fn try_main(args: Args) -> Result<()> {
         };
         settings.define(key, value);
     }
-
-    let watcher: Arc<dyn werk_runner::Watcher> = Arc::new(watcher::StdoutWatcher::new(
-        args.color,
-        args.print_commands,
-        args.dry_run,
-    ));
+    settings.force_color = watcher.enable_color();
 
     let io: Arc<dyn werk_runner::Io>;
     if args.dry_run || args.list {
         io = Arc::new(dry_run::DryRun::new());
     } else {
-        io = Arc::new(werk_runner::RealSystem);
+        io = Arc::new(werk_runner::RealSystem::new());
     }
 
     let workspace = Workspace::new(&*io, project_dir.to_owned(), out_dir, settings).await?;

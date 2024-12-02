@@ -393,6 +393,7 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
 pub fn eval_shell_command<P: Scope + ?Sized>(
     scope: &P,
     expr: &ast::StringExpr,
+    force_color: bool,
 ) -> Result<Eval<ShellCommandLine>, EvalError> {
     let mut builder = ShellCommandLineBuilder::default();
 
@@ -439,8 +440,13 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
         }
     }
 
+    let mut command_line = builder.build()?;
+    if force_color {
+        command_line.set_force_color();
+    }
+
     Ok(Eval {
-        value: builder.build()?,
+        value: command_line,
         status,
     })
 }
@@ -449,10 +455,11 @@ fn eval_shell_commands_into(
     scope: &RecipeScope<'_>,
     expr: &ast::Expr,
     cmds: &mut Vec<ShellCommandLine>,
+    force_color: bool,
 ) -> Result<BuildStatus, Error> {
     match expr {
         ast::Expr::StringExpr(string_expr) | ast::Expr::Shell(string_expr) => {
-            let command = eval_shell_command(scope, string_expr)?;
+            let command = eval_shell_command(scope, string_expr, force_color)?;
             cmds.push(command.value);
             Ok(command.status)
         }
@@ -466,14 +473,14 @@ fn eval_shell_commands_into(
         ast::Expr::List(vec) => {
             let mut status = BuildStatus::Unchanged;
             for expr in vec {
-                status |= eval_shell_commands_into(scope, expr, cmds)?;
+                status |= eval_shell_commands_into(scope, expr, cmds, force_color)?;
             }
             Ok(status)
         }
         ast::Expr::Ident(_) => return Err(EvalError::UnexpectedExpressionType("from").into()),
         ast::Expr::Then(_, _) => return Err(EvalError::UnexpectedExpressionType("then").into()),
         ast::Expr::Message(message_expr) => {
-            let status = eval_shell_commands_into(scope, &message_expr.inner, cmds)?;
+            let status = eval_shell_commands_into(scope, &message_expr.inner, cmds, force_color)?;
             let message_scope = (scope as &dyn Scope).subexpr(None);
             let message = eval_string_expr(&message_scope, &message_expr.message)?;
             match message_expr.message_type {
@@ -492,9 +499,10 @@ fn eval_shell_commands_into(
 pub fn eval_shell_commands(
     scope: &RecipeScope<'_>,
     expr: &ast::Expr,
+    force_color: bool,
 ) -> Result<Vec<ShellCommandLine>, Error> {
     let mut cmds = Vec::new();
-    eval_shell_commands_into(scope, expr, &mut cmds)?;
+    eval_shell_commands_into(scope, expr, &mut cmds, force_color)?;
     Ok(cmds)
 }
 
@@ -505,9 +513,10 @@ pub fn eval_shell_commands_run_which_and_detect_outdated(
     scope: &RecipeScope<'_>,
     io: &dyn Io,
     expr: &ast::Expr,
+    force_color: bool,
 ) -> Result<Eval<Vec<ShellCommandLine>>, Error> {
     let mut cmds = Vec::new();
-    eval_shell_commands_into(scope, expr, &mut cmds)?;
+    eval_shell_commands_into(scope, expr, &mut cmds, force_color)?;
 
     let mut status = BuildStatus::Unchanged;
     for cmd in cmds.iter_mut() {
@@ -582,7 +591,7 @@ pub async fn eval_shell<P: Scope + ?Sized>(
     io: &dyn Io,
     expr: &ast::StringExpr,
 ) -> Result<Eval<String>, EvalError> {
-    let mut command = eval_shell_command(scope, expr)?;
+    let mut command = eval_shell_command(scope, expr, false)?;
 
     // Unconditionally disable color output when the command supports it,
     // because we are capturing the output as a string.

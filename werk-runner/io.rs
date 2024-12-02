@@ -95,7 +95,15 @@ impl TryFrom<std::fs::Metadata> for Metadata {
     }
 }
 
-pub struct RealSystem;
+pub struct RealSystem(());
+
+impl RealSystem {
+    #[inline]
+    pub fn new() -> Self {
+        Self(())
+    }
+}
+
 impl Io for RealSystem {
     fn run_build_command<'a>(
         &'a self,

@@ -487,7 +487,12 @@ impl Inner {
 
         // Figure out what to run.
         let mut shell_commands = if let Some(commands) = &recipe.command {
-            eval_shell_commands_run_which_and_detect_outdated(&scope, &*self.io, commands)?
+            eval_shell_commands_run_which_and_detect_outdated(
+                &scope,
+                &*self.io,
+                commands,
+                self.workspace.force_color,
+            )?
         } else {
             Default::default()
         };
@@ -557,7 +562,7 @@ impl Inner {
 
         // Figure out what to run.
         let mut shell_commands = if let Some(commands) = &recipe.command {
-            eval_shell_commands(&scope, commands)?
+            eval_shell_commands(&scope, commands, self.workspace.force_color)?
         } else {
             Vec::new()
         };

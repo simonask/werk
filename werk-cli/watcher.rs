@@ -172,6 +172,11 @@ impl StdoutWatcher {
         }
     }
 
+    #[inline]
+    pub fn enable_color(&self) -> bool {
+        !matches!(self.kind, AutoStreamKind::Strip)
+    }
+
     fn lock(&self) -> StdioLock {
         StdioLock {
             inner: self.inner.lock(),

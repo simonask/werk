@@ -15,6 +15,10 @@ pub struct WorkspaceSettings {
     pub ignore_hidden: bool,
     pub ignore: Vec<std::path::PathBuf>,
     pub defines: HashMap<String, String>,
+    /// When true, the [`Runner`](crate::Runner) sets the `FORCE_COLOR` and
+    /// `CLICOLOR_FORCE` environment variables to "1" when executing recipe
+    /// commands (not when capturing their output in variables).
+    pub force_color: bool,
 }
 
 impl Default for WorkspaceSettings {
@@ -27,6 +31,7 @@ impl Default for WorkspaceSettings {
             ignore_hidden: false,
             ignore: Vec::new(),
             defines: HashMap::default(),
+            force_color: false,
         }
     }
 }
@@ -54,6 +59,7 @@ pub struct Workspace {
     runtime_caches: Mutex<Caches>,
     /// Overridden global variables from the command line.
     pub defines: HashMap<String, String>,
+    pub force_color: bool,
 }
 
 #[derive(Default)]
@@ -124,6 +130,7 @@ impl Workspace {
                 env_cache: HashMap::default(),
             }),
             defines: settings.defines,
+            force_color: settings.force_color,
         })
     }
 

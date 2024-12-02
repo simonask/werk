@@ -4,7 +4,7 @@ pub struct DryRun(werk_runner::RealSystem);
 
 impl DryRun {
     pub fn new() -> Self {
-        Self(werk_runner::RealSystem)
+        Self(werk_runner::RealSystem::new())
     }
 }
 
