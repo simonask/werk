@@ -7,7 +7,7 @@ use werk_fs::PathError;
 use crate::{BuildStatus, DirEntry, Error, Io};
 
 #[derive(Clone)]
-pub struct GlobSettings {
+pub struct WorkspaceSettings {
     pub git_ignore: bool,
     pub git_ignore_global: bool,
     pub git_ignore_exclude: bool,
@@ -16,7 +16,7 @@ pub struct GlobSettings {
     pub ignore: Vec<std::path::PathBuf>,
 }
 
-impl Default for GlobSettings {
+impl Default for WorkspaceSettings {
     fn default() -> Self {
         Self {
             git_ignore: true,
@@ -30,13 +30,17 @@ impl Default for GlobSettings {
 }
 
 pub struct Workspace {
+    // Project root - note that the workspace only accesses this directory
+    // through the `Io` trait, and never directly.
     project_root: std::path::PathBuf,
+    // Project root - note that the workspace only accesses this directory
+    // through the `Io` trait, and never directly.
     output_directory: std::path::PathBuf,
     // Using IndexMap to ensure that the ordering of glob results is well-defined.
     workspace_files: IndexMap<werk_fs::PathBuf, DirEntry, ahash::RandomState>,
     /// The contents of `<out-dir>/.werk-cache.toml`.
     werk_cache: PersistedCache,
-    /// Caches of expensive runtime class (glob and which).
+    /// Caches of expensive runtime values (glob, which, env).
     runtime_caches: Mutex<Caches>,
 }
 
@@ -69,7 +73,7 @@ impl Workspace {
         io: &dyn Io,
         project_root: std::path::PathBuf,
         output_directory: std::path::PathBuf,
-        settings: &GlobSettings,
+        settings: &WorkspaceSettings,
     ) -> Result<Self, Error> {
         let werk_cache = read_workspace_cache(io, &output_directory).await;
 
@@ -78,6 +82,11 @@ impl Workspace {
 
         for entry in io.walk_directory(&project_root, settings, &[&output_directory])? {
             let entry = entry?;
+
+            if entry.path.file_name() == Some(WERK_CACHE_FILENAME.as_ref()) {
+                return Err(Error::ClobberedWorkspace(entry.path));
+            }
+
             let path_in_project = match werk_fs::Path::unresolve(&entry.path, &project_root) {
                 Ok(path_in_project) => path_in_project,
                 // This should not be possible.

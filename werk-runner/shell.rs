@@ -5,7 +5,7 @@ use std::{
 
 use crate::{EvalError, Value};
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct ShellCommandLine {
     /// The name of the program to run. This will be passed to `which`.
     pub program: String,

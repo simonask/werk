@@ -35,6 +35,8 @@ pub enum Error {
     CommandFailed(std::process::ExitStatus),
     #[error("cannot convert abstract paths to native OS paths yet; output directory has not been set in the [global] scope")]
     OutputDirectoryNotAvailable,
+    #[error(".werk-cache file found in workspace; please add its directory to .gitignore")]
+    ClobberedWorkspace(std::path::PathBuf),
     #[error(transparent)]
     Custom(Arc<anyhow::Error>),
 }
@@ -42,6 +44,31 @@ pub enum Error {
 impl Error {
     pub fn custom<E: std::error::Error + Send + Sync + 'static>(err: E) -> Self {
         Self::Custom(Arc::new(anyhow::Error::new(err)))
+    }
+}
+
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Io(l0), Self::Io(r0)) => l0.kind() == r0.kind(),
+            (Self::CommandNotFound(l0, l1), Self::CommandNotFound(r0, r1)) => l0 == r0 && l1 == r1,
+            (Self::NoRuleToBuildTarget(l0), Self::NoRuleToBuildTarget(r0)) => l0 == r0,
+            (Self::CircularDependency(l0), Self::CircularDependency(r0)) => l0 == r0,
+            (Self::DependencyFailed(l0, l1), Self::DependencyFailed(r0, r1)) => {
+                l0 == r0 && l1 == r1
+            }
+            (Self::Cancelled(l0), Self::Cancelled(r0)) => l0 == r0,
+            (Self::Eval(l0), Self::Eval(r0)) => l0 == r0,
+            (Self::Walk(l0), Self::Walk(r0)) => l0.to_string() == r0.to_string(),
+            (Self::Glob(l0), Self::Glob(r0)) => l0 == r0,
+            (Self::DuplicateCommand(l0), Self::DuplicateCommand(r0)) => l0 == r0,
+            (Self::DuplicateTarget(l0), Self::DuplicateTarget(r0)) => l0 == r0,
+            (Self::AmbiguousPattern(l0), Self::AmbiguousPattern(r0)) => l0 == r0,
+            (Self::CommandFailed(l0), Self::CommandFailed(r0)) => l0 == r0,
+            (Self::ClobberedWorkspace(l0), Self::ClobberedWorkspace(r0)) => l0 == r0,
+            (Self::Custom(l0), Self::Custom(r0)) => l0.to_string() == r0.to_string(),
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
     }
 }
 
@@ -94,7 +121,7 @@ impl From<werk_fs::PathError> for Error {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, PartialEq)]
 #[error("ambiguous pattern; both `{pattern1}` and `{pattern2}` would match `{path}`")]
 pub struct AmbiguousPatternError {
     pub pattern1: String,
@@ -106,6 +133,17 @@ pub struct AmbiguousPatternError {
 pub struct ShellError {
     pub command: ShellCommandLine,
     pub result: Arc<std::io::Result<std::process::Output>>,
+}
+
+impl PartialEq for ShellError {
+    fn eq(&self, other: &Self) -> bool {
+        self.command == other.command
+            && match (&*self.result, &*other.result) {
+                (Ok(ref l), Ok(ref r)) => l == r,
+                (Err(ref l), Err(ref r)) => l.kind() == r.kind(),
+                _ => false,
+            }
+    }
 }
 
 impl std::error::Error for ShellError {}
@@ -126,7 +164,7 @@ impl std::fmt::Display for ShellError {
     }
 }
 
-#[derive(Debug, Clone, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 pub enum EvalError {
     #[error("no pattern stem in this rule")]
     NoPatternStem,

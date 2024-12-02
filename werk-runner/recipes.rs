@@ -2,8 +2,8 @@ use werk_fs::Path;
 use werk_parser::ast;
 
 use crate::{
-    eval_pattern, AmbiguousPatternError, Error, EvalError, Pattern, PatternMatch, PatternMatchData,
-    RootScope, TaskId,
+    eval_pattern_builder, AmbiguousPatternError, Error, EvalError, Pattern, PatternMatch,
+    PatternMatchData, RootScope, TaskId,
 };
 
 pub struct Recipes {
@@ -63,8 +63,10 @@ impl Recipes {
         // Compile patterns.
         let mut build_recipe_patterns = Vec::new();
         for (pattern_expr, _) in root.recipes.iter() {
-            let pattern = eval_pattern(global_scope, pattern_expr)?;
-            build_recipe_patterns.push(pattern);
+            let mut pattern_builder = eval_pattern_builder(global_scope, pattern_expr)?;
+            // Ensure that build recipe patterns are absolute paths.
+            pattern_builder.ensure_absolute_path();
+            build_recipe_patterns.push(pattern_builder.build());
         }
 
         Ok(Self {

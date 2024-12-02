@@ -8,7 +8,7 @@ name = "werk"
 path = "main.rs"
 
 [dependencies]
-ahash = "0.8.11"
+ahash.workspace = true
 anstream = "0.6.18"
 anyhow = "1.0.93"
 clap = { version = "4.5.20", features = ["derive"] }

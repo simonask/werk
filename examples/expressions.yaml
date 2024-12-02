@@ -1,8 +1,0 @@
-config out-dir: "../target/werk-examples/expressions"
-
-let source-files: { glob: "*.c" }
-let object-files:
-  from: "source-files"
-  patsubst:
-    pattern: "%.c"
-    replacement: "%.o"

@@ -1,3 +1,5 @@
+use std::future::Future;
+
 #[derive(Debug, Clone)]
 pub enum Value {
     List(Vec<Value>),
@@ -105,6 +107,66 @@ impl Value {
         try_for_each_string_recursive(self, &mut f)
     }
 
+    pub fn try_recursive_map_strings<F, E>(&mut self, mut f: F) -> Result<(), E>
+    where
+        F: FnMut(String) -> Result<String, E>,
+    {
+        fn try_recursive_map<F, E>(this: &mut Value, f: &mut F) -> Result<(), E>
+        where
+            F: FnMut(String) -> Result<String, E>,
+        {
+            match this {
+                Value::List(v) => {
+                    for item in v {
+                        try_recursive_map(item, f)?;
+                    }
+                    Ok(())
+                }
+                Value::String(s) => {
+                    let value = std::mem::replace(s, String::new());
+                    *s = f(value)?;
+                    Ok(())
+                }
+            }
+        }
+
+        try_recursive_map(self, &mut f)
+    }
+
+    pub async fn try_recursive_map_strings_async<'a, F, E, Fut>(
+        &mut self,
+        mut f: F,
+    ) -> Result<(), E>
+    where
+        F: FnMut(String) -> Fut + 'a,
+        Fut: Future<Output = Result<String, E>> + 'a,
+    {
+        async fn try_recursive_map<'a, F, E, Fut>(this: &mut Value, f: &mut F) -> Result<(), E>
+        where
+            F: FnMut(String) -> Fut + 'a,
+            Fut: Future<Output = Result<String, E>>,
+        {
+            match this {
+                Value::List(v) => {
+                    Box::pin(async move {
+                        for item in v {
+                            try_recursive_map(item, f).await?;
+                        }
+                        Ok(())
+                    })
+                    .await
+                }
+                Value::String(s) => {
+                    let value = std::mem::replace(s, String::new());
+                    *s = f(value).await?;
+                    Ok(())
+                }
+            }
+        }
+
+        try_recursive_map(self, &mut f).await
+    }
+
     pub fn try_recursive_modify<F, E>(&mut self, mut f: F) -> Result<(), E>
     where
         F: FnMut(&mut String) -> Result<(), E>,
@@ -146,5 +208,45 @@ impl Value {
         }
 
         recursive_modify(self, &mut f);
+    }
+}
+
+impl PartialEq<str> for Value {
+    #[inline]
+    fn eq(&self, other: &str) -> bool {
+        match self {
+            Value::String(s) => s == other,
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<&str> for Value {
+    #[inline]
+    fn eq(&self, other: &&str) -> bool {
+        self == *other
+    }
+}
+
+impl<T> PartialEq<[T]> for Value
+where
+    Value: PartialEq<T>,
+{
+    #[inline]
+    fn eq(&self, other: &[T]) -> bool {
+        match self {
+            Value::List(v) => v.iter().zip(other.iter()).all(|(a, b)| a == b),
+            _ => false,
+        }
+    }
+}
+
+impl<T, const N: usize> PartialEq<[T; N]> for Value
+where
+    Value: PartialEq<T>,
+{
+    #[inline]
+    fn eq(&self, other: &[T; N]) -> bool {
+        self == other as &[T]
     }
 }

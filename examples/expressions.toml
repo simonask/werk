@@ -2,9 +2,9 @@
 out-dir = "../target/werk-examples/expressions"
 
 [global]
-# Glob expression
 source-files = { glob = "*.c" }
-profile = { env = "PROFILE" }
+profile.env = "PROFILE"
+cc.which = "clang"
 
 # Patsubst is a function that replaces the pattern with the replacement.
 [global.object-files]
@@ -23,4 +23,4 @@ patsubst = { pattern = "%.c", replacement = "{%}.o" }
 from = "profile"
 match.'debug' = "dev"
 match.'release' = "release"
-else = { error = "invalid profile '{profile}'; expected \"debug\" or \"release\"" }
+match.'%' = { error = "invalid profile '{profile}'; expected \"debug\" or \"release\"" }

@@ -8,8 +8,8 @@ use werk_parser::ast;
 
 use crate::{
     eval, eval_shell_commands, eval_shell_commands_run_which_and_detect_outdated, eval_string_expr,
-    Error, Eval, GlobSettings, Io, LocalVariables, PatternMatch, RecipeMatch, RecipeMatchData,
-    RecipeScope, Recipes, RootScope, Scope as _, ShellCommandLine, Value, Workspace,
+    Error, Eval, Io, LocalVariables, PatternMatch, RecipeMatch, RecipeMatchData, RecipeScope,
+    Recipes, RootScope, Scope as _, ShellCommandLine, Value, Workspace, WorkspaceSettings,
 };
 
 pub struct Runner<'a> {
@@ -66,7 +66,7 @@ pub trait Watcher: Send + Sync {
 
 #[derive(Clone, Default)]
 pub struct Settings {
-    pub glob: GlobSettings,
+    pub glob: WorkspaceSettings,
     pub dry_run: bool,
 }
 
@@ -127,6 +127,16 @@ pub enum TaskId {
     Build(PathBuf),
 }
 
+impl TaskId {
+    pub fn command(s: impl Into<String>) -> Self {
+        TaskId::Command(s.into())
+    }
+
+    pub fn build(p: impl Into<PathBuf>) -> Self {
+        TaskId::Build(p.into())
+    }
+}
+
 impl std::fmt::Display for TaskId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -151,13 +161,24 @@ impl TaskSpec {
 }
 
 impl<'a> Runner<'a> {
-    pub fn new(
-        recipes: Recipes,
-        globals: LocalVariables,
+    pub async fn new(
+        ast: ast::Root,
         io: Arc<dyn Io>,
         workspace: Workspace,
         watcher: Arc<dyn Watcher>,
-    ) -> Self {
+    ) -> Result<Self, Error> {
+        let mut globals = LocalVariables::new();
+        for (name, value) in &ast.global {
+            // Creating a new scope every time, because it's cheap, and it
+            // simplifies things because we don't need a `RootScopeMut` variant.
+            let scope = RootScope::new(&globals, &workspace, &*watcher);
+            let value = eval(&scope, &*io, value).await?;
+            globals.insert(name.to_owned(), value);
+        }
+
+        let scope = RootScope::new(&globals, &workspace, &*watcher);
+        let recipes = Recipes::new(ast, &scope).await?;
+
         let inner = Inner {
             io,
             recipes,
@@ -166,15 +187,25 @@ impl<'a> Runner<'a> {
             watcher,
             state: Mutex::new(State::default()),
         };
-        Self {
+        Ok(Self {
             inner: Arc::new(inner),
             _marker: PhantomData,
-        }
+        })
+    }
+
+    #[inline]
+    pub fn recipes(&self) -> &Recipes {
+        &self.inner.recipes
     }
 
     #[inline]
     pub fn workspace(&self) -> &Workspace {
         &self.inner.workspace
+    }
+
+    #[inline]
+    pub fn globals(&self) -> &LocalVariables {
+        &self.inner.globals
     }
 
     pub async fn build_file(&mut self, target: &Path) -> Result<BuildStatus, Error> {
@@ -671,7 +702,7 @@ impl<'a> DepChainEntry<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnedDependencyChain {
     vec: Vec<TaskId>,
 }

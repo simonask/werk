@@ -60,7 +60,7 @@ pub struct PatsubstExpr {
 #[derive(Debug, PartialEq)]
 pub struct MatchExpr {
     pub input: Expr,
-    pub when: IndexMap<PatternExpr, Expr>,
+    pub patterns: IndexMap<PatternExpr, Expr>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

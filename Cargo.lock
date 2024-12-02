@@ -1111,6 +1111,10 @@ dependencies = [
 name = "tests"
 version = "0.1.0"
 dependencies = [
+ "ahash",
+ "anyhow",
+ "parking_lot",
+ "tokio",
  "werk-fs",
  "werk-parser",
  "werk-runner",

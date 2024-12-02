@@ -4,7 +4,7 @@ use std::{
     time::SystemTime,
 };
 
-use crate::{Error, GlobSettings, ShellCommandLine};
+use crate::{Error, ShellCommandLine, WorkspaceSettings};
 
 /// Convenience type alias.
 pub type PinBox<T> = std::pin::Pin<Box<T>>;
@@ -43,7 +43,7 @@ pub trait Io: Send + Sync + 'static {
     fn walk_directory<'a>(
         &'a self,
         path: &'a Path,
-        settings: &'a GlobSettings,
+        settings: &'a WorkspaceSettings,
         ignore_subdirs: &'a [&Path],
     ) -> Result<BoxIter<'a, Result<DirEntry, Error>>, Error>;
     fn metadata(&self, path: &Path) -> Result<Metadata, Error>;
@@ -69,6 +69,13 @@ pub struct Metadata {
     pub mtime: SystemTime,
     pub is_file: bool,
     pub is_symlink: bool,
+}
+
+impl Metadata {
+    #[inline]
+    pub fn is_dir(&self) -> bool {
+        !self.is_file
+    }
 }
 
 impl TryFrom<std::fs::Metadata> for Metadata {
@@ -132,7 +139,7 @@ impl Io for RealSystem {
     fn walk_directory<'a>(
         &'a self,
         path: &'a Path,
-        settings: &'a GlobSettings,
+        settings: &'a WorkspaceSettings,
         ignore_subdirs: &'a [&'a Path],
     ) -> Result<BoxIter<'a, Result<DirEntry, Error>>, Error> {
         let mut walker = ignore::WalkBuilder::new(path);

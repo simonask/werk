@@ -3,6 +3,7 @@ members = ["werk-parser", "werk-cli", "werk-runner", "werk-fs", "tests"]
 resolver = "2"
 
 [workspace.dependencies]
+ahash = "0.8.11"
 werk-runner.path = "werk-runner"
 werk-parser.path = "werk-parser"
 werk-fs.path = "werk-fs"

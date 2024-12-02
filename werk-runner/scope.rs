@@ -22,6 +22,11 @@ pub struct SubexprScope<'a> {
     pub implied_value: Option<Eval<Value>>,
 }
 
+pub struct PatsubstScope<'a> {
+    parent: &'a dyn Scope,
+    pattern_match: &'a PatternMatch<'a>,
+}
+
 pub trait Scope: Send + Sync {
     fn implied_value(&self) -> Option<&Eval<Value>>;
     fn pattern_match(&self) -> Option<&PatternMatch<'_>>;
@@ -45,6 +50,13 @@ impl dyn Scope + '_ {
         SubexprScope {
             parent: self,
             implied_value,
+        }
+    }
+
+    pub fn patsubst<'a>(&'a self, pattern_match: &'a PatternMatch<'a>) -> PatsubstScope<'a> {
+        PatsubstScope {
+            parent: self,
+            pattern_match,
         }
     }
 }
@@ -106,6 +118,7 @@ pub fn default_global_constants() -> &'static HashMap<String, Value> {
             "EXE_SUFFIX".to_owned(),
             Value::String(if cfg!(windows) { ".exe" } else { "" }.to_owned()),
         );
+        map.insert("EMPTY".to_owned(), Value::String(String::new()));
         map
     })
 }
@@ -191,6 +204,38 @@ impl Scope for SubexprScope<'_> {
     #[inline]
     fn pattern_match(&self) -> Option<&PatternMatch<'_>> {
         self.parent.pattern_match()
+    }
+
+    #[inline]
+    fn get<'b>(&'b self, name: &str) -> Option<Eval<&'b Value>> {
+        self.parent.get(name)
+    }
+
+    #[inline]
+    fn workspace(&self) -> &Workspace {
+        self.parent.workspace()
+    }
+
+    #[inline]
+    fn task_id(&self) -> Option<&TaskId> {
+        self.parent.task_id()
+    }
+
+    #[inline]
+    fn watcher(&self) -> &dyn Watcher {
+        self.parent.watcher()
+    }
+}
+
+impl Scope for PatsubstScope<'_> {
+    #[inline]
+    fn implied_value(&self) -> Option<&Eval<Value>> {
+        self.parent.implied_value()
+    }
+
+    #[inline]
+    fn pattern_match(&self) -> Option<&PatternMatch<'_>> {
+        Some(self.pattern_match)
     }
 
     #[inline]

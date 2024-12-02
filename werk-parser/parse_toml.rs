@@ -251,7 +251,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
 
                 expr = ast::Expr::Match(Box::new(ast::MatchExpr {
                     input: expr,
-                    when: patterns,
+                    patterns,
                 }));
             }
             "warn" => {

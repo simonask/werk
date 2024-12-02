@@ -3,8 +3,8 @@ use std::sync::Arc;
 use werk_parser::ast;
 
 use crate::{
-    BuildStatus, Error, EvalError, Io, Pattern, PatternBuilder, RecipeScope, Scope,
-    ShellCommandLine, ShellCommandLineBuilder, ShellError, SubexprScope, Value, Workspace,
+    BuildStatus, Error, EvalError, Io, Pattern, PatternBuilder, PatternMatch, RecipeScope, Scope,
+    ShellCommandLine, ShellCommandLineBuilder, ShellError, Value, Workspace,
 };
 
 /// Evaluated value, which keeps track of "outdatedness" with respect to cached
@@ -142,8 +142,14 @@ pub async fn eval(
                 status,
             })
         }
-        ast::Expr::Patsubst(_) => todo!(),
-        ast::Expr::Match(_) => todo!(),
+        ast::Expr::Patsubst(patsubst) => {
+            // Boxing for recursion.
+            Box::pin(eval_patsubst(scope, io, patsubst)).await
+        }
+        ast::Expr::Match(match_expr) => {
+            // Boxing for recursion.
+            Box::pin(eval_match_expr(scope, io, match_expr)).await
+        }
         ast::Expr::List(list_expr) => {
             // Boxing for recursion.
             Box::pin(async {
@@ -189,6 +195,93 @@ pub async fn eval(
     }
 }
 
+pub async fn eval_patsubst(
+    scope: &dyn Scope,
+    io: &dyn Io,
+    expr: &ast::PatsubstExpr,
+) -> Result<Eval<Value>, EvalError> {
+    let mut value = eval(scope, io, &expr.input).await?;
+    // TODO: Cache the pattern instead of compiling a regex on every evaluation.
+    let pattern = eval_pattern(scope, &expr.pattern)?;
+    value.value.try_recursive_map_strings(|s| {
+        let Some(match_data) = pattern.match_string(&s) else {
+            // Pattern does not match, ignore the string.
+            return Ok::<_, EvalError>(s);
+        };
+
+        let pattern_match = PatternMatch::from_pattern_and_data(&pattern, match_data);
+        let scope = scope.patsubst(&pattern_match);
+        let new_value = eval_string_expr(&scope, &expr.replacement)?;
+        Ok(new_value.value)
+    })?;
+    Ok(value)
+}
+
+pub fn will_evaluate_to_string<P: Scope + ?Sized>(scope: &P, expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Ident(ident) => match scope.get(ident) {
+            Some(value) => matches!(value.value, Value::String(_)),
+            None => true,
+        },
+        ast::Expr::StringExpr(_)
+        | ast::Expr::Shell(_)
+        | ast::Expr::Which(_)
+        | ast::Expr::Env(_)
+        | ast::Expr::Then(_, _) => true,
+        ast::Expr::List(_) | ast::Expr::Glob(_) => false,
+        ast::Expr::Patsubst(patsubst_expr) => will_evaluate_to_string(scope, &patsubst_expr.input),
+        ast::Expr::Match(match_expr) => match_expr
+            .patterns
+            .iter()
+            .all(|(_, replacement)| will_evaluate_to_string(scope, replacement)),
+        ast::Expr::Message(message_expr) => will_evaluate_to_string(scope, &message_expr.inner),
+        ast::Expr::Error(_) => true,
+    }
+}
+
+pub async fn eval_match_expr(
+    scope: &dyn Scope,
+    io: &dyn Io,
+    expr: &ast::MatchExpr,
+) -> Result<Eval<Value>, EvalError> {
+    let mut value = eval(scope, io, &expr.input).await?;
+
+    let patterns = expr
+        .patterns
+        .iter()
+        .map(|(pattern, replacement)| {
+            let pattern = eval_pattern(scope, pattern)?;
+            Ok((pattern, replacement))
+        })
+        .collect::<Result<Vec<_>, EvalError>>()?;
+
+    // Apply the match recursively to the input.
+    value
+        .value
+        .try_recursive_map_strings_async(|input_string| async {
+            for (pattern, replacement_expr) in &patterns {
+                tracing::trace!("trying match '{:?}' against '{}'", pattern, input_string);
+                let Some(pattern_match) = pattern.match_string(&input_string) else {
+                    continue;
+                };
+
+                let pattern_match = PatternMatch::from_pattern_and_data(&pattern, pattern_match);
+                let scope = scope.patsubst(&pattern_match);
+                let new_value = eval(&scope, io, replacement_expr).await?;
+                return match new_value.value {
+                    Value::List(_) => return Err(EvalError::UnexpectedList),
+                    Value::String(s) => Ok::<_, EvalError>(s),
+                };
+            }
+
+            // Unmodified.
+            Ok::<_, EvalError>(input_string)
+        })
+        .await?;
+
+    Ok(value)
+}
+
 pub async fn eval_collect_strings<P: Scope>(
     scope: &P,
     io: &dyn Io,
@@ -198,7 +291,10 @@ pub async fn eval_collect_strings<P: Scope>(
     Ok(eval.map(|value| value.collect_strings()))
 }
 
-pub fn eval_pattern<P: Scope>(scope: &P, expr: &ast::PatternExpr) -> Result<Pattern, EvalError> {
+pub fn eval_pattern_builder<P: Scope + ?Sized>(
+    scope: &P,
+    expr: &ast::PatternExpr,
+) -> Result<PatternBuilder, EvalError> {
     let mut pattern_builder = PatternBuilder::default();
 
     for fragment in &expr.fragments {
@@ -237,7 +333,14 @@ pub fn eval_pattern<P: Scope>(scope: &P, expr: &ast::PatternExpr) -> Result<Patt
         }
     }
 
-    Ok(pattern_builder.build())
+    Ok(pattern_builder)
+}
+
+pub fn eval_pattern<P: Scope + ?Sized>(
+    scope: &P,
+    expr: &ast::PatternExpr,
+) -> Result<Pattern, EvalError> {
+    eval_pattern_builder(scope, expr).map(PatternBuilder::build)
 }
 
 pub fn eval_string_expr<P: Scope + ?Sized>(

@@ -38,7 +38,7 @@ impl werk_runner::Io for DryRun {
     fn walk_directory<'a>(
         &'a self,
         path: &'a std::path::Path,
-        settings: &'a werk_runner::GlobSettings,
+        settings: &'a werk_runner::WorkspaceSettings,
         ignore_subdirs: &'a [&std::path::Path],
     ) -> Result<BoxIter<'a, Result<werk_runner::DirEntry, Error>>, Error> {
         self.0.walk_directory(path, settings, ignore_subdirs)

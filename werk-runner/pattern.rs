@@ -2,9 +2,11 @@ use std::fmt::Write as _;
 
 #[derive(Debug, Clone)]
 pub struct Pattern {
-    fragments: Box<[PatternFragment]>,
-    regex: Box<regex::Regex>,
-    stem_capture_index: usize,
+    pub fragments: Box<[PatternFragment]>,
+    /// The regular expression used to match this pattern.
+    pub regex: Box<regex::Regex>,
+    /// The index of the regex capture group that represents the pattern stem.
+    pub stem_capture_index: usize,
 }
 
 impl PartialEq for Pattern {
@@ -64,21 +66,21 @@ impl PatternBuilder {
         self.fragments.push(PatternFragment::PatternStem);
     }
 
-    fn ensure_absolute(&mut self) {
-        if let Some(PatternFragment::Literal(s)) = self.fragments.first() {
-            if !s.starts_with('/') {
-                self.fragments
-                    .insert(0, PatternFragment::Literal("/".to_owned()));
+    /// Ensure that the pattern starts with `/`. This should be used in build
+    /// recipe patterns, where output paths are always "absolutized" before
+    /// matching.
+    pub fn ensure_absolute_path(&mut self) {
+        if let Some(PatternFragment::Literal(first)) = self.fragments.first_mut() {
+            if !first.starts_with('/') {
+                first.insert(0, '/');
             }
         } else {
             self.fragments
-                .insert(0, PatternFragment::Literal("/".to_owned()));
+                .insert(0, PatternFragment::Literal(String::from("/")));
         }
     }
 
-    pub fn build(mut self) -> Pattern {
-        self.ensure_absolute();
-
+    pub fn build(self) -> Pattern {
         let mut regex_pattern = String::from("^");
         let mut capture_count = 0;
         let mut stem_capture_index = 0;
@@ -86,7 +88,7 @@ impl PatternBuilder {
             match fragment {
                 PatternFragment::Literal(lit) => regex_pattern.push_str(&regex::escape(lit)),
                 PatternFragment::PatternStem => {
-                    regex_pattern.push_str(r"(.+?)");
+                    regex_pattern.push_str(r"(.*)");
                     stem_capture_index = capture_count;
                     capture_count += 1;
                 }
@@ -119,9 +121,8 @@ impl PatternBuilder {
 }
 
 impl Pattern {
-    pub fn match_path(&self, path: &werk_fs::Path) -> Option<PatternMatchData> {
-        tracing::trace!("Matching '{path}' against {:?}", self.regex);
-        let m = self.regex.captures_iter(path.as_str()).next()?;
+    pub fn match_string(&self, string: &str) -> Option<PatternMatchData> {
+        let m = self.regex.captures_iter(string).next()?;
         let mut capture_groups = Vec::new();
         let mut stem = None;
 
@@ -142,6 +143,10 @@ impl Pattern {
             stem: stem.map(Into::into),
             captures: capture_groups.into(),
         })
+    }
+    pub fn match_path(&self, path: &werk_fs::Path) -> Option<PatternMatchData> {
+        tracing::trace!("Matching '{path}' against {:?}", self.regex);
+        self.match_string(path.as_str())
     }
 }
 
@@ -260,5 +265,39 @@ impl PatternMatchData {
     #[inline]
     pub fn capture_group(&self, group: usize) -> Option<&str> {
         self.captures.get(group).map(|s| &**s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn match_stem() {
+        let pattern_expr = werk_parser::parse_string::parse_pattern_expr("%.c").unwrap();
+        let mut builder = PatternBuilder::default();
+        for fragment in pattern_expr.fragments {
+            match fragment {
+                werk_parser::ast::PatternFragment::Literal(lit) => builder.push_str(&lit),
+                werk_parser::ast::PatternFragment::PatternStem => builder.push_pattern_stem(),
+                werk_parser::ast::PatternFragment::OneOf(vec) => builder.push_one_of(vec),
+                werk_parser::ast::PatternFragment::Interpolation(_) => {
+                    panic!("unexpected interpolation")
+                }
+            }
+        }
+        let pattern = builder.build();
+
+        assert_eq!(
+            &*pattern.fragments,
+            &[
+                PatternFragment::PatternStem,
+                PatternFragment::Literal(String::from(".c"))
+            ] as &[_]
+        );
+
+        let pattern_match = pattern.match_string("/main.c").unwrap();
+        assert_eq!(pattern_match.stem(), Some("/main"));
+        assert!(pattern_match.captures.is_empty());
     }
 }

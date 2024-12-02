@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use clap::Parser;
-use werk_runner::{GlobSettings, LocalVariables, Recipes, RootScope, Runner, Workspace};
+use werk_runner::{LocalVariables, Recipes, RootScope, Runner, Workspace, WorkspaceSettings};
 
 #[derive(Debug, clap::Parser)]
 pub struct Args {
@@ -133,23 +133,14 @@ async fn try_main(args: Args) -> Result<()> {
         &*io,
         project_dir.to_owned(),
         out_dir,
-        &GlobSettings::default(),
+        &WorkspaceSettings::default(),
     )
     .await?;
 
-    let mut globals = LocalVariables::new();
-    for (name, value) in &ast.global {
-        // Creating a new scope every time, because it's cheap, and it
-        // simplifies things because we don't need a `RootScopeMut` variant.
-        let scope = RootScope::new(&globals, &workspace, &*watcher);
-        let value = werk_runner::eval(&scope, &*io, value).await?;
-        globals.insert(name.to_owned(), value);
-    }
-
-    let root_scope = RootScope::new(&globals, &workspace, &*watcher);
-    let recipes = Recipes::new(ast, &root_scope).await?;
-
+    let mut runner = Runner::new(ast, io.clone(), workspace, watcher).await?;
     if args.list {
+        let recipes = runner.recipes();
+        // TODO: Print doc comments from the TOML as well.
         for (name, _) in &recipes.ast.commands {
             println!("{name}");
         }
@@ -163,9 +154,7 @@ async fn try_main(args: Args) -> Result<()> {
         anyhow::bail!("No target specified");
     };
 
-    let mut runner = Runner::new(recipes, globals, io.clone(), workspace, watcher);
     runner.build_or_run(&target).await?;
-
     runner.workspace().finalize(&*io).await;
 
     Ok(())

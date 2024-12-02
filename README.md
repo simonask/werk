@@ -253,7 +253,8 @@ outdated.
 - **Results of `which` expressions:** If the `PATH` environment variable changes
   between runs in such a way that the executable path is different, or if the
   modification time of the resolved executable changes, any recipes and
-  variables using the path are considered outdated.
+  variables using the path are considered outdated. Note that command names that
+  appear as part of the `command` body of recipes are implicitly be-whiched.
 
 - **Modification time of `werk.toml`:** All build recipes are considered
   outdated if their output file exists, but is older than `werk.toml`.
@@ -353,6 +354,8 @@ By convention, built-in constants are UPPER_SNAKE_CASE.
 - `{ARCH_FAMILY}`:
     - `x86`
     - `arm`
+- `{EMPTY}`: The empty string. This exists because TOML does not support empty
+  strings in some contexts, like keys in tables.
 
 ## Build Recipe Pattern Syntax
 
@@ -566,3 +569,4 @@ cc = { which = "clang" }
 - [ ] Specialized alternative to TOML, with less verbose expressions? This is
   complicated because we would also want an LSP implementation for IDE support.
 - [ ] IDE integration to run individual tasks.
+- [ ] WASM host support for the runner.
