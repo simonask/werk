@@ -220,6 +220,17 @@ impl Workspace {
         }
     }
 
+    pub fn unresolve_path(&self, path: &std::path::Path) -> Result<werk_fs::PathBuf, PathError> {
+        match werk_fs::Path::unresolve(path, &self.output_directory) {
+            Ok(path) => return Ok(path),
+            // The path is not in the output directory, try the project root.
+            Err(werk_fs::PathError::UnresolveBeyondRoot) => {}
+            Err(err) => return Err(err),
+        }
+
+        werk_fs::Path::unresolve(path, &self.project_root)
+    }
+
     pub fn glob_workspace_files(
         &self,
         pattern: &str,

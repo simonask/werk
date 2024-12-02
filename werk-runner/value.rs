@@ -139,12 +139,12 @@ impl Value {
     ) -> Result<(), E>
     where
         F: FnMut(String) -> Fut + 'a,
-        Fut: Future<Output = Result<String, E>> + 'a,
+        Fut: Future<Output = Result<Value, E>> + 'a,
     {
         async fn try_recursive_map<'a, F, E, Fut>(this: &mut Value, f: &mut F) -> Result<(), E>
         where
             F: FnMut(String) -> Fut + 'a,
-            Fut: Future<Output = Result<String, E>>,
+            Fut: Future<Output = Result<Value, E>>,
         {
             match this {
                 Value::List(v) => {
@@ -158,7 +158,7 @@ impl Value {
                 }
                 Value::String(s) => {
                     let value = std::mem::replace(s, String::new());
-                    *s = f(value).await?;
+                    *this = f(value).await?;
                     Ok(())
                 }
             }

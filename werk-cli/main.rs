@@ -96,6 +96,7 @@ async fn try_main(args: Args) -> Result<()> {
     } else {
         find_werkfile()?
     };
+    let werkfile_path = std::path::absolute(werkfile_path)?;
     tracing::debug!("Using werkfile: {}", werkfile_path.display());
 
     let werkfile_contents = std::fs::read_to_string(&werkfile_path)?;
@@ -109,10 +110,11 @@ async fn try_main(args: Args) -> Result<()> {
         .or_else(|| {
             ast.config
                 .output_directory
-                .clone()
-                .map(std::path::PathBuf::from)
+                .as_ref()
+                .map(|s| project_dir.join(s))
         })
         .unwrap_or_else(|| project_dir.join("target"));
+    let out_dir = std::path::absolute(out_dir)?;
     tracing::debug!("Project directory: {}", project_dir.display());
     tracing::debug!("Output directory: {}", out_dir.display());
 

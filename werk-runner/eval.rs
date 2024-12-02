@@ -174,9 +174,14 @@ pub async fn eval(
             .ok_or_else(|| EvalError::NoSuchIdentifier(ident.clone())),
         ast::Expr::Then(expr, string_expr) => {
             // Boxing for recursion.
-            let value = Box::pin(async { eval(scope, io, expr).await }).await?;
-            let scope = scope.subexpr(Some(value));
-            eval_string_expr(&scope, string_expr).map(|string| string.map(Value::String))
+            let mut value = Box::pin(async { eval(scope, io, expr).await }).await?;
+
+            // Map the strings through the expression recursively.
+            value.value.try_recursive_map_strings(|s| {
+                let scope = scope.subexpr(Some(Eval::unchanged(Value::String(s))));
+                eval_string_expr(&scope, string_expr).map(|string| string.value)
+            })?;
+            Ok(value)
         }
         ast::Expr::Message(message_expr) => {
             let value = Box::pin(async { eval(scope, io, &message_expr.inner).await }).await?;
@@ -268,14 +273,11 @@ pub async fn eval_match_expr(
                 let pattern_match = PatternMatch::from_pattern_and_data(&pattern, pattern_match);
                 let scope = scope.patsubst(&pattern_match);
                 let new_value = eval(&scope, io, replacement_expr).await?;
-                return match new_value.value {
-                    Value::List(_) => return Err(EvalError::UnexpectedList),
-                    Value::String(s) => Ok::<_, EvalError>(s),
-                };
+                return Ok(new_value.value);
             }
 
             // Unmodified.
-            Ok::<_, EvalError>(input_string)
+            Ok::<_, EvalError>(Value::String(input_string))
         })
         .await?;
 

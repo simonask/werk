@@ -178,10 +178,13 @@ impl ShellCommandLineBuilder {
         self
     }
 
-    /// Append string to the last current argument, passing quotes and
-    /// whitespace verbatim. This should be used for interpolated arguments.
-    /// When inside quotes, the value is appended to the quoted part. Otherwise,
-    /// the value is treated as a separate argument.
+    /// Append a string representing arguments.
+    ///
+    /// 1. If currently inside quotes, the string is appended to the last
+    ///    argument verbatim (including whichspace and quotes, which will not
+    ///    terminate the current quotation).
+    /// 2. Otherwise, split the string by whitespace and pass each part as a
+    ///    separate argument.
     pub fn push_arg(&mut self, s: &str) -> &mut Self {
         if self.in_quotes {
             if let Some(last) = self.parts.last_mut() {

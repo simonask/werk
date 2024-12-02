@@ -1,3 +1,4 @@
+pub mod depfile;
 mod error;
 mod eval;
 mod io;

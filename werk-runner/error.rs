@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{OwnedDependencyChain, Pattern, ShellCommandLine, TaskId};
+use crate::{depfile::DepfileError, OwnedDependencyChain, Pattern, ShellCommandLine, TaskId};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
@@ -35,6 +35,10 @@ pub enum Error {
     CommandFailed(std::process::ExitStatus),
     #[error("cannot convert abstract paths to native OS paths yet; output directory has not been set in the [global] scope")]
     OutputDirectoryNotAvailable,
+    #[error("depfile was not found: '{0}'; perhaps the rule to generate it writes to the wrong location?")]
+    DepfileNotFound(werk_fs::PathBuf),
+    #[error(transparent)]
+    DepfileError(#[from] DepfileError),
     #[error(".werk-cache file found in workspace; please add its directory to .gitignore")]
     ClobberedWorkspace(std::path::PathBuf),
     #[error(transparent)]

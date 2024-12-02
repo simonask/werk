@@ -1,5 +1,6 @@
 use std::{future::Future, marker::PhantomData, pin::Pin, sync::Arc, time::SystemTime};
 
+use ahash::HashSet;
 use futures::channel::oneshot;
 use indexmap::{map::Entry, IndexMap};
 use parking_lot::Mutex;
@@ -7,9 +8,10 @@ use werk_fs::{Path, PathBuf};
 use werk_parser::ast;
 
 use crate::{
-    eval, eval_shell_commands, eval_shell_commands_run_which_and_detect_outdated, eval_string_expr,
-    Error, Eval, Io, LocalVariables, PatternMatch, RecipeMatch, RecipeMatchData, RecipeScope,
-    Recipes, RootScope, Scope as _, ShellCommandLine, Value, Workspace, WorkspaceSettings,
+    depfile::Depfile, eval, eval_shell_commands, eval_shell_commands_run_which_and_detect_outdated,
+    eval_string_expr, Error, Eval, Io, LocalVariables, PatternMatch, RecipeMatch, RecipeMatchData,
+    RecipeScope, Recipes, RootScope, Scope as _, ShellCommandLine, Value, Workspace,
+    WorkspaceSettings,
 };
 
 pub struct Runner<'a> {
@@ -256,6 +258,28 @@ impl Inner {
         }
     }
 
+    async fn parse_depfile_build_specs<'a>(
+        &'a self,
+        depfile_path: &werk_fs::Path,
+    ) -> Result<Vec<TaskSpec>, Error> {
+        let dir_entry = self
+            .workspace
+            .get_existing_output_file(&*self.io, depfile_path)?
+            .ok_or_else(|| Error::DepfileNotFound(depfile_path.to_path_buf()))?;
+        tracing::debug!("Parsing depfile: {}", dir_entry.path.display());
+        let depfile_contents = self.io.read_file(&dir_entry.path).await?;
+        let depfile = Depfile::parse(&depfile_contents)?;
+        let mut specs = Vec::new();
+        for dep in &depfile.deps {
+            // Translate the filesystem path produced by the compiler into an
+            // abstract path within the workspace. Normally this will be a file
+            // inside the output directory.
+            let abstract_path = self.workspace.unresolve_path(dep)?;
+            specs.push(self.get_build_spec(&abstract_path)?);
+        }
+        Ok(specs)
+    }
+
     /// Build the task, coordinating dependencies and rebuilds. The `invoker`
     /// is the chain of dependencies that triggered this build, not including
     /// this task.
@@ -366,7 +390,8 @@ impl Inner {
             })?;
         }
 
-        // Determine the value of the `in` special variable.
+        // Determine the value of the `in` special variable (before evaluating
+        // depfile dependencies).
         let in_values = deps
             .iter()
             .filter_map(|dep| match dep {
@@ -385,7 +410,29 @@ impl Inner {
         tracing::debug!("in = {in_values:?}");
         scope.set(String::from("in"), Eval::unchanged(in_values));
 
-        let dep_status = self.build_dependencies(deps, dep_chain).await?;
+        let mut depfile_deps = Vec::new();
+        let mut depfile_paths = HashSet::default();
+        if let Some(ref depfiles) = recipe.depfiles {
+            let depfile_deps_eval = eval(&scope, &*self.io, depfiles).await?;
+            depfile_deps_eval.value.try_collect_strings_recursive(|s| {
+                let depfile_path = werk_fs::Path::new(&s)?;
+                let dep = self.get_build_spec(depfile_path)?;
+                depfile_deps.push(dep);
+                depfile_paths.insert(depfile_path.to_path_buf());
+                Ok::<_, Error>(())
+            })?;
+        }
+
+        // Build depfiles, if any.
+        let depfile_dep_status = self.build_dependencies(depfile_deps, dep_chain).await?;
+
+        // Parse depfiles and add them to the dependency list.
+        for depfile_path in &depfile_paths {
+            let depfile_deps = self.parse_depfile_build_specs(depfile_path).await?;
+            deps.extend(depfile_deps);
+        }
+
+        let dep_status = self.build_dependencies(deps, dep_chain).await? | depfile_dep_status;
 
         // Check whether we need to rebuild the target.
         let out_mtime = scope
@@ -634,12 +681,13 @@ impl Inner {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 struct DepChainEntry<'a> {
     parent: DepChain<'a>,
     this: &'a TaskId,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum DepChain<'a> {
     Empty,
     Owned(&'a OwnedDependencyChain),

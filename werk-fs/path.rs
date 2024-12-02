@@ -78,8 +78,8 @@ pub enum PathError {
     ReservedStem(&'static &'static str),
     #[error("invalid UTF-8 byte: {0}")]
     InvalidUtf8(u8),
-    #[error("cannot resolve a relative path to an OS path")]
-    ResolveRelative,
+    #[error("cannot resolve a relative path to an OS path: {0}")]
+    ResolveRelative(PathBuf),
 }
 
 impl Path {
@@ -322,7 +322,7 @@ impl Path {
     /// This does not access the filesystem.
     pub fn resolve(&self, root: &std::path::Path) -> Result<std::path::PathBuf, PathError> {
         if !self.is_absolute() {
-            return Err(PathError::ResolveRelative);
+            return Err(PathError::ResolveRelative(self.to_path_buf()));
         }
 
         let mut buf = root.to_path_buf();

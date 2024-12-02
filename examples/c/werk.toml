@@ -1,0 +1,34 @@
+[config]
+out-dir = "../../target/examples/c"
+
+[global]
+cc.which = "clang"
+ld = "{cc}"
+profile = "debug"
+
+[global.cflags]
+from = "profile"
+match.'debug' = ["-g", "-O0"]
+match.'release' = ["-O3"]
+match.'%' = { error = "Unknown profile; valid options are 'debug' and 'release'" }
+
+[build.'{profile}/%.o']
+in = "{%}.c"
+depfile = "/{profile}/{%}.c.d"
+command = "{cc} -c {cflags*} -o <out> <in>"
+
+[build.'{profile}/%.c.d']
+in = "{%}.c"
+# Note: For werk to understand the depfile, it must be in the format of a
+# Makefile, and the paths mentioned inside must be absolute and native OS paths.
+# Werk automatically interprets its contents and re-translates it back into
+# workspace-relative or out-dir-relative abstract paths.
+command = "{cc} -MM -MT <in> -MF <out> <in>"
+
+[build.'{profile}/example{EXE_SUFFIX}']
+in = { glob = "*.c", then = "/{profile}{:.c=.o}" }
+command = "{ld} -o <out> <in*>"
+
+[command.build]
+build = ["{profile}/example{EXE_SUFFIX}"]
+post-message = "Build done for profile '{profile}'"
