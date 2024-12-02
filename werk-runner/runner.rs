@@ -272,12 +272,24 @@ impl Inner {
 
     async fn parse_depfile_build_specs<'a>(
         &'a self,
+        task_id: &TaskId,
         depfile_path: &werk_fs::Path,
     ) -> Result<Vec<TaskSpec>, Error> {
-        let dir_entry = self
+        let Some(dir_entry) = self
             .workspace
             .get_existing_output_file(&*self.io, depfile_path)?
-            .ok_or_else(|| Error::DepfileNotFound(depfile_path.to_path_buf()))?;
+        else {
+            if self.io.is_dry_run() {
+                self.watcher.warning(
+                    Some(task_id),
+                    "Depfile does not exist, and was not generated, because this is a dry run",
+                );
+                return Ok(vec![]);
+            } else {
+                return Err(Error::DepfileNotFound(depfile_path.to_path_buf()));
+            }
+        };
+
         tracing::debug!("Parsing depfile: {}", dir_entry.path.display());
         let depfile_contents = self.io.read_file(&dir_entry.path).await?;
         let depfile = Depfile::parse(&depfile_contents)?;
@@ -440,7 +452,9 @@ impl Inner {
 
         // Parse depfiles and add them to the dependency list.
         for depfile_path in &depfile_paths {
-            let depfile_deps = self.parse_depfile_build_specs(depfile_path).await?;
+            let depfile_deps = self
+                .parse_depfile_build_specs(task_id, depfile_path)
+                .await?;
             deps.extend(depfile_deps);
         }
 

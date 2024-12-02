@@ -413,4 +413,8 @@ impl werk_runner::Io for MockIo {
         self.oplog.lock().push(MockIoOp::ReadEnv(name.to_string()));
         self.env.get(name).cloned()
     }
+
+    fn is_dry_run(&self) -> bool {
+        false
+    }
 }

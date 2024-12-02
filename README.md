@@ -50,6 +50,8 @@ availability.
   recipe contains a `depfile` dependency, it is automatically built and included
   when evaluating the dependencies of that recipe.
 - **.gitignore support:** The `ignore` crate is used to hide files from `werk`.
+- **Dry-run:** Pass `--dry-run` to diagnose the build process without generating
+  any output.
 - Of course, build recipes and commands run in parallel when possible.
 
 # Limitations

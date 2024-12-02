@@ -82,4 +82,8 @@ impl werk_runner::Io for DryRun {
     fn read_env(&self, name: &str) -> Option<String> {
         self.0.read_env(name)
     }
+
+    fn is_dry_run(&self) -> bool {
+        true
+    }
 }

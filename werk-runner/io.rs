@@ -56,6 +56,11 @@ pub trait Io: Send + Sync + 'static {
     fn create_parent_dirs<'a>(&'a self, path: &'a Path) -> PinBoxFut<'a, Result<(), Error>>;
 
     fn read_env(&self, name: &str) -> Option<String>;
+
+    /// Is this object actually executing commands or not? The return value
+    /// should be used for diagnostic purposes only, because the actual behavior
+    /// of the runner is not affected by this.
+    fn is_dry_run(&self) -> bool;
 }
 
 #[derive(Debug, Clone)]
@@ -198,5 +203,9 @@ impl Io for RealSystem {
 
     fn read_env(&self, name: &str) -> Option<String> {
         std::env::var(name).ok()
+    }
+
+    fn is_dry_run(&self) -> bool {
+        false
     }
 }
