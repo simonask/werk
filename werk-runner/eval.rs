@@ -3,8 +3,8 @@ use std::sync::Arc;
 use werk_parser::ast;
 
 use crate::{
-    BuildStatus, Error, EvalError, Io, Pattern, PatternBuilder, PatternMatch, RecipeScope, Scope,
-    ShellCommandLine, ShellCommandLineBuilder, ShellError, Value, Workspace,
+    BuildStatus, Error, EvalError, Io, Outdatedness, Pattern, PatternBuilder, PatternMatch, Reason,
+    RecipeScope, Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError, Value, Workspace,
 };
 
 /// Evaluated value, which keeps track of "outdatedness" with respect to cached
@@ -13,42 +13,39 @@ use crate::{
 /// occur, like the result of a glob pattern, or the result of a `which`
 /// expression (which is outdated if executable program path changed between
 /// runs).
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug)]
 pub struct Eval<T = Value> {
     pub value: T,
     /// When the evaluated value can impact outdatedness (like a glob
     /// expression), this is the detected build status. For expressions that
     /// don't have an outdatedness, this is always `BuildStatus::Unchanged`.
-    pub status: BuildStatus,
+    pub outdatedness: Outdatedness,
 }
 
 impl<T> Eval<T> {
     pub fn unchanged(value: T) -> Self {
         Self {
             value,
-            status: BuildStatus::Unchanged,
+            outdatedness: Outdatedness::unchanged(),
         }
     }
 
-    pub fn rebuilt(value: T) -> Self {
+    pub fn outdated(value: T, reason: Reason) -> Self {
         Self {
             value,
-            status: BuildStatus::Rebuilt,
+            outdatedness: Outdatedness::outdated(reason),
         }
     }
 
     pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Eval<U> {
         Eval {
             value: f(self.value),
-            status: self.status,
+            outdatedness: self.outdatedness,
         }
     }
 
-    pub fn as_ref(&self) -> Eval<&T> {
-        Eval {
-            value: &self.value,
-            status: self.status,
-        }
+    pub fn as_ref(&self) -> &T {
+        &self.value
     }
 
     pub fn as_deref(&self) -> &T::Target
@@ -63,7 +60,7 @@ impl<T: Default> Default for Eval<T> {
     fn default() -> Self {
         Self {
             value: Default::default(),
-            status: BuildStatus::Unchanged,
+            outdatedness: Outdatedness::unchanged(),
         }
     }
 }
@@ -75,7 +72,7 @@ impl<T> Eval<&T> {
     {
         Eval {
             value: self.value.clone(),
-            status: self.status,
+            outdatedness: self.outdatedness.clone(),
         }
     }
 }
@@ -84,7 +81,7 @@ impl<T> Eval<Option<T>> {
     pub fn transpose(self) -> Option<Eval<T>> {
         self.value.map(|value| Eval {
             value,
-            status: self.status,
+            outdatedness: self.outdatedness,
         })
     }
 }
@@ -93,7 +90,7 @@ impl<T, E> Eval<Result<T, E>> {
     pub fn transpose_result(self) -> Result<Eval<T>, E> {
         self.value.map(|value| Eval {
             value,
-            status: self.status,
+            outdatedness: self.outdatedness,
         })
     }
 }
@@ -127,19 +124,19 @@ pub async fn eval(
                 .workspace()
                 .which(io, &string.value)
                 .map_err(|e| EvalError::CommandNotFound(string.value.clone(), e))?;
-            let status = string.status | which_status;
+            let status = string.outdatedness | which_status;
             Ok(Eval {
                 value: Value::String(which),
-                status,
+                outdatedness: status,
             })
         }
         ast::Expr::Env(expr) => {
             let name = eval_string_expr(scope, expr)?;
             let (env, env_status) = scope.workspace().env(io, &name.value);
-            let status = name.status | env_status;
+            let status = name.outdatedness | env_status;
             Ok(Eval {
                 value: Value::String(env),
-                status,
+                outdatedness: status,
             })
         }
         ast::Expr::Patsubst(patsubst) => {
@@ -154,15 +151,15 @@ pub async fn eval(
             // Boxing for recursion.
             Box::pin(async {
                 let mut items = Vec::with_capacity(list_expr.len());
-                let mut status = BuildStatus::Unchanged;
+                let mut status = Outdatedness::unchanged();
                 for expr in list_expr {
                     let eval_item = eval(scope, io, expr).await?;
-                    status |= eval_item.status;
+                    status |= eval_item.outdatedness;
                     items.push(eval_item.value);
                 }
                 Ok(Eval {
                     value: Value::List(items),
-                    status,
+                    outdatedness: status,
                 })
             })
             .await
@@ -351,7 +348,7 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
 ) -> Result<Eval<String>, EvalError> {
     let mut s = String::new();
 
-    let mut status = BuildStatus::Unchanged;
+    let mut outdated = Outdatedness::unchanged();
 
     for fragment in &expr.fragments {
         match fragment {
@@ -382,12 +379,15 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
                     }
                 }
 
-                status |= value.status;
+                outdated |= value.outdatedness;
             }
         }
     }
 
-    Ok(Eval { value: s, status })
+    Ok(Eval {
+        value: s,
+        outdatedness: outdated,
+    })
 }
 
 pub fn eval_shell_command<P: Scope + ?Sized>(
@@ -397,7 +397,7 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
 ) -> Result<Eval<ShellCommandLine>, EvalError> {
     let mut builder = ShellCommandLineBuilder::default();
 
-    let mut status = BuildStatus::Unchanged;
+    let mut outdated = Outdatedness::unchanged();
 
     for fragment in &expr.fragments {
         match fragment {
@@ -410,7 +410,7 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
                 if let Some(ref op) = interp.operation {
                     value = eval_string_interpolation_map_operation(value, op)?;
                 }
-                status |= value.status;
+                outdated |= value.outdatedness;
 
                 if interp.interpolate_as_resolved_path {
                     value.value = recursive_resolve_path(
@@ -447,7 +447,7 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
 
     Ok(Eval {
         value: command_line,
-        status,
+        outdatedness: outdated,
     })
 }
 
@@ -456,12 +456,12 @@ fn eval_shell_commands_into(
     expr: &ast::Expr,
     cmds: &mut Vec<ShellCommandLine>,
     force_color: bool,
-) -> Result<BuildStatus, Error> {
+) -> Result<Outdatedness, Error> {
     match expr {
         ast::Expr::StringExpr(string_expr) | ast::Expr::Shell(string_expr) => {
             let command = eval_shell_command(scope, string_expr, force_color)?;
             cmds.push(command.value);
-            Ok(command.status)
+            Ok(command.outdatedness)
         }
         ast::Expr::Glob(_) => return Err(EvalError::UnexpectedExpressionType("glob").into()),
         ast::Expr::Which(_) => return Err(EvalError::UnexpectedExpressionType("which").into()),
@@ -471,7 +471,7 @@ fn eval_shell_commands_into(
         ast::Expr::Match(_) => return Err(EvalError::UnexpectedExpressionType("match").into()),
         ast::Expr::Env(_) => return Err(EvalError::UnexpectedExpressionType("env").into()),
         ast::Expr::List(vec) => {
-            let mut status = BuildStatus::Unchanged;
+            let mut status = Outdatedness::unchanged();
             for expr in vec {
                 status |= eval_shell_commands_into(scope, expr, cmds, force_color)?;
             }
@@ -518,19 +518,19 @@ pub fn eval_shell_commands_run_which_and_detect_outdated(
     let mut cmds = Vec::new();
     eval_shell_commands_into(scope, expr, &mut cmds, force_color)?;
 
-    let mut status = BuildStatus::Unchanged;
+    let mut outdated = Outdatedness::unchanged();
     for cmd in cmds.iter_mut() {
-        let (program, which_status) = scope
+        let (program, which_outdated) = scope
             .workspace()
             .which(io, &cmd.program)
             .map_err(|e| Error::CommandNotFound(cmd.program.clone(), e))?;
         cmd.program = program;
-        status |= which_status;
+        outdated |= which_outdated;
     }
 
     Ok(Eval {
         value: cmds,
-        status,
+        outdatedness: outdated,
     })
 }
 
@@ -551,7 +551,7 @@ pub fn eval_string_interpolation_stem<P: Scope + ?Sized>(
                     .to_owned()
                     .into(),
             ),
-            status: BuildStatus::Unchanged,
+            outdatedness: Outdatedness::unchanged(),
         },
         ast::StringInterpolationStem::CaptureGroup(group) => Eval::unchanged(
             scope
@@ -631,14 +631,14 @@ pub async fn eval_shell<P: Scope + ?Sized>(
     let stdout = String::from_utf8_lossy(&output.stdout.trim_ascii());
     Ok(Eval {
         value: stdout.into_owned(),
-        status: command.status | which_status,
+        outdatedness: command.outdatedness | which_status,
     })
 }
 
 pub fn eval_glob(scope: &dyn Scope, expr: &ast::StringExpr) -> Result<Eval<Vec<Value>>, EvalError> {
     let Eval {
         value: mut glob_pattern_string,
-        status: string_status,
+        outdatedness: string_status,
     } = eval_string_expr(scope, expr)?;
 
     if !glob_pattern_string.starts_with('/') {
@@ -654,7 +654,7 @@ pub fn eval_glob(scope: &dyn Scope, expr: &ast::StringExpr) -> Result<Eval<Vec<V
 
     Ok(Eval {
         value: matches,
-        status: glob_status | string_status,
+        outdatedness: glob_status | string_status,
     })
 }
 

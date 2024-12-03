@@ -9,9 +9,9 @@ use werk_parser::ast;
 
 use crate::{
     depfile::Depfile, eval, eval_shell_commands, eval_shell_commands_run_which_and_detect_outdated,
-    eval_string_expr, Error, Eval, Io, LocalVariables, PatternMatch, RecipeMatch, RecipeMatchData,
-    RecipeScope, Recipes, RootScope, Scope as _, ShellCommandLine, Value, Workspace,
-    WorkspaceSettings,
+    eval_string_expr, Error, Eval, Io, LocalVariables, Outdatedness, PatternMatch, Reason,
+    RecipeMatch, RecipeMatchData, RecipeScope, Recipes, RootScope, Scope as _, ShellCommandLine,
+    Value, Workspace, WorkspaceSettings,
 };
 
 pub struct Runner<'a> {
@@ -31,7 +31,14 @@ struct Inner {
 
 pub trait Watcher: Send + Sync {
     /// Build task is about to start.
-    fn will_build(&self, task_id: &TaskId, num_steps: usize, pre_message: Option<&str>);
+    fn will_build(
+        &self,
+        task_id: &TaskId,
+        num_steps: usize,
+        pre_message: Option<&str>,
+        outdatedness: &Outdatedness,
+    );
+
     /// Build task finished (all steps have been completed).
     fn did_build(
         &self,
@@ -83,39 +90,35 @@ struct TaskState {
     triggered_by: OwnedDependencyChain,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuildStatus {
-    /// Target was up to date; no build action required.
-    Unchanged,
-    /// Target was outdated, so build actions were executed. This triggers all
-    /// dependents to rebuild.
-    Rebuilt,
-    /// Target is a file that exists in the filesystem, and its last modification time.
-    Exists(SystemTime),
+    /// Target was built, along with the outdatedness. If the outdatedness is
+    /// empty, the target was determined to be up-to-date.
+    Complete(Outdatedness),
+    /// Target is a dependency that exists in the filesystem, along with its
+    /// last modification time.
+    Exists(werk_fs::PathBuf, SystemTime),
 }
 
-impl std::ops::BitOr for BuildStatus {
-    type Output = Self;
+impl BuildStatus {
+    /// Given an output file modification time, return the outdatedness of the
+    /// target. If the target is up-to-date, the outdatedness will be empty. If
+    /// an output mtime is not available, returns empty outdatedness.
+    pub fn into_output_outdatedness(self, output_mtime: Option<SystemTime>) -> Outdatedness {
+        match self {
+            BuildStatus::Complete(outdatedness) => outdatedness,
+            BuildStatus::Exists(path_buf, system_time) => {
+                let Some(output_mtime) = output_mtime else {
+                    return Outdatedness::unchanged();
+                };
 
-    #[inline]
-    fn bitor(self, rhs: Self) -> Self {
-        match (self, rhs) {
-            (BuildStatus::Unchanged, BuildStatus::Unchanged) => BuildStatus::Unchanged,
-            (BuildStatus::Unchanged, rhs) => rhs,
-            (lhs, BuildStatus::Unchanged) => lhs,
-            (BuildStatus::Rebuilt, _) => BuildStatus::Rebuilt,
-            (_, BuildStatus::Rebuilt) => BuildStatus::Rebuilt,
-            (BuildStatus::Exists(mtime1), BuildStatus::Exists(mtime2)) => {
-                BuildStatus::Exists(mtime1.max(mtime2))
+                if output_mtime <= system_time {
+                    Outdatedness::outdated(Reason::Modified(path_buf, system_time))
+                } else {
+                    Outdatedness::unchanged()
+                }
             }
         }
-    }
-}
-
-impl std::ops::BitOrAssign for BuildStatus {
-    #[inline]
-    fn bitor_assign(&mut self, rhs: Self) {
-        *self = *self | rhs;
     }
 }
 
@@ -124,7 +127,7 @@ enum TaskStatus {
     Pending(Vec<oneshot::Sender<Result<BuildStatus, Error>>>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TaskId {
     Command(String),
     Build(PathBuf),
@@ -386,7 +389,7 @@ impl Inner {
         };
         let mtime = entry.metadata.mtime;
         tracing::debug!("Check file mtime `{path}`: {mtime:?}");
-        Ok(BuildStatus::Exists(mtime))
+        Ok(BuildStatus::Exists(path.to_path_buf(), mtime))
     }
 
     async fn execute_build_recipe(
@@ -404,10 +407,13 @@ impl Inner {
             Eval::unchanged(Value::String(target_file.to_string())),
         );
 
-        // Evaluate dependencies (`out` is available).
+        let mut outdated = Outdatedness::unchanged();
+
+        // Evaluate direct dependencies (`out` is available).
         let mut deps = Vec::new();
         if let Some(ref build_deps) = recipe.in_files {
             let build_deps = eval(&scope, &*self.io, build_deps).await?;
+            outdated |= build_deps.outdatedness;
             build_deps.value.try_collect_strings_recursive(|s| {
                 let dep = self.get_build_or_command_spec(&s)?;
                 deps.push(dep);
@@ -439,6 +445,7 @@ impl Inner {
         let mut depfile_paths = HashSet::default();
         if let Some(ref depfiles) = recipe.depfiles {
             let depfile_deps_eval = eval(&scope, &*self.io, depfiles).await?;
+            outdated |= depfile_deps_eval.outdatedness;
             depfile_deps_eval.value.try_collect_strings_recursive(|s| {
                 let depfile_path = werk_fs::Path::new(&s)?;
                 let dep = self.get_build_spec(depfile_path)?;
@@ -448,8 +455,21 @@ impl Inner {
             })?;
         }
 
+        // Check the target's mtime.
+        let out_mtime = scope
+            .workspace()
+            .get_existing_output_file(&*self.io, target_file)?
+            .map(|entry| entry.metadata.mtime);
+
+        // Rebuild if the target does not exist.
+        if out_mtime.is_none() {
+            outdated.insert(Reason::Missing(target_file.to_path_buf()));
+        }
+
         // Build depfiles, if any.
-        let depfile_dep_status = self.build_dependencies(depfile_deps, dep_chain).await?;
+        outdated |= self
+            .build_dependencies(depfile_deps, dep_chain, out_mtime)
+            .await?;
 
         // Parse depfiles and add them to the dependency list.
         for depfile_path in &depfile_paths {
@@ -459,32 +479,7 @@ impl Inner {
             deps.extend(depfile_deps);
         }
 
-        let dep_status = self.build_dependencies(deps, dep_chain).await? | depfile_dep_status;
-
-        // Check whether we need to rebuild the target.
-        let out_mtime = scope
-            .workspace()
-            .get_existing_output_file(&*self.io, target_file)?
-            .map(|entry| entry.metadata.mtime);
-        // Now we know enough to determine the build status.
-        let mut build_status = match (out_mtime, dep_status) {
-            // Output file does not exist; rebuild.
-            (None, _) => BuildStatus::Rebuilt,
-            // Check the modification time of the output file against the
-            // mtime of its dependencies.
-            (Some(out_mtime), BuildStatus::Exists(max_dep_mtime)) => {
-                if out_mtime <= max_dep_mtime {
-                    BuildStatus::Rebuilt
-                } else {
-                    BuildStatus::Unchanged
-                }
-            }
-            // If any dependency was rebuilt, rebuild this.
-            (Some(_), BuildStatus::Rebuilt) => BuildStatus::Rebuilt,
-            // The file exists and the dependencies are unchanged, so do
-            // nothing.
-            (Some(_), BuildStatus::Unchanged) => BuildStatus::Unchanged,
-        };
+        outdated |= self.build_dependencies(deps, dep_chain, out_mtime).await?;
 
         // Figure out what to run.
         let mut shell_commands = if let Some(commands) = &recipe.command {
@@ -497,8 +492,7 @@ impl Inner {
         } else {
             Default::default()
         };
-
-        build_status |= shell_commands.status;
+        outdated |= shell_commands.outdatedness;
 
         let pre_message = if let Some(pre_message) = &recipe.pre_message {
             Some(eval_string_expr(&scope, pre_message)?.value)
@@ -517,25 +511,28 @@ impl Inner {
             .create_output_parent_dirs(&*self.io, target_file)
             .await?;
 
-        if let BuildStatus::Rebuilt = build_status {
-            self.watcher
-                .will_build(task_id, shell_commands.len(), pre_message.as_deref());
+        self.watcher.will_build(
+            task_id,
+            shell_commands.value.len(),
+            pre_message.as_deref(),
+            &outdated,
+        );
 
-            let result = self
-                .execute_recipe_commands(task_id, &mut shell_commands, &scope, false)
+        let result = if outdated.is_outdated() {
+            tracing::debug!("Rebuilding: {task_id}");
+            self.execute_recipe_commands(task_id, &mut shell_commands.value, &scope, false)
                 .await
-                .map(|_| build_status);
-
-            self.watcher
-                .did_build(task_id, &result, post_message.as_deref());
-            result
+                .map(|_| {
+                    BuildStatus::Complete(Outdatedness::outdated(Reason::Rebuilt(task_id.clone())))
+                })
         } else {
             tracing::debug!("Up to date: {task_id}");
-            self.watcher.will_build(task_id, 1, None);
-            self.watcher
-                .did_build(task_id, &Ok(BuildStatus::Unchanged), None);
-            Ok(BuildStatus::Unchanged)
-        }
+            Ok(BuildStatus::Complete(Outdatedness::unchanged()))
+        };
+
+        self.watcher
+            .did_build(task_id, &result, post_message.as_deref());
+        result
     }
 
     async fn execute_command_recipe(
@@ -559,7 +556,7 @@ impl Inner {
         }
 
         // Note: We don't care about the status of dependencies.
-        self.build_dependencies(deps, dep_chain).await?;
+        self.build_dependencies(deps, dep_chain, None).await?;
 
         // Figure out what to run.
         let mut shell_commands = if let Some(commands) = &recipe.command {
@@ -578,8 +575,13 @@ impl Inner {
             None
         };
 
-        self.watcher
-            .will_build(task_id, shell_commands.len(), pre_message.as_deref());
+        let outdated = Outdatedness::outdated(Reason::Rebuilt(task_id.clone()));
+        self.watcher.will_build(
+            task_id,
+            shell_commands.len(),
+            pre_message.as_deref(),
+            &outdated,
+        );
 
         let result = self
             .execute_recipe_commands(
@@ -589,7 +591,7 @@ impl Inner {
                 recipe.capture.is_some_and(|c| !c),
             )
             .await
-            .map(|_| BuildStatus::Rebuilt);
+            .map(|_| BuildStatus::Complete(outdated));
 
         self.watcher
             .did_build(task_id, &result, post_message.as_deref());
@@ -644,12 +646,14 @@ impl Inner {
         self: &'a Arc<Self>,
         mut dependencies: Vec<TaskSpec>,
         dependent: DepChainEntry<'a>,
-    ) -> Pin<Box<dyn Future<Output = Result<BuildStatus, Error>> + Send + 'a>> {
+        output_mtime: Option<SystemTime>,
+    ) -> Pin<Box<dyn Future<Output = Result<Outdatedness, Error>> + Send + 'a>> {
         if dependencies.len() == 1 {
             // Boxing because of recursion.
             return Box::pin(async move {
                 self.run_task(dependencies.pop().unwrap(), DepChain::Ref(&dependent))
                     .await
+                    .map(|status| status.into_output_outdatedness(output_mtime))
             });
         } else if !dependencies.is_empty() {
             let parent = dependent.collect();
@@ -662,12 +666,12 @@ impl Inner {
                     tasks.spawn(async move { this.run_task(dep, DepChain::Owned(&parent)).await });
                 }
 
-                let mut dep_status = BuildStatus::Unchanged;
+                let mut outdated = Outdatedness::unchanged();
                 let mut first_error = None;
                 while let Some(status) = tasks.join_next().await {
                     match status.unwrap() {
-                        Ok(s) => {
-                            dep_status |= s;
+                        Ok(status) => {
+                            outdated |= status.into_output_outdatedness(output_mtime);
                         }
                         Err(err) => {
                             // Don't interrupt other tasks if one fails.
@@ -678,11 +682,11 @@ impl Inner {
                 if let Some(first_error) = first_error {
                     Err(first_error)
                 } else {
-                    Ok(dep_status)
+                    Ok(outdated)
                 }
             });
         } else {
-            return Box::pin(futures::future::ready(Ok(BuildStatus::Unchanged)));
+            return Box::pin(futures::future::ready(Ok(Outdatedness::unchanged())));
         }
     }
 

@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::collections::hash_map;
 use werk_fs::PathError;
 
-use crate::{BuildStatus, DirEntry, Error, Io};
+use crate::{BuildStatus, DirEntry, Error, Io, Outdatedness, Reason};
 
 #[derive(Clone)]
 pub struct WorkspaceSettings {
@@ -64,9 +64,9 @@ pub struct Workspace {
 
 #[derive(Default)]
 struct Caches {
-    glob_cache: HashMap<String, (Vec<werk_fs::PathBuf>, BuildStatus, Hash128)>,
-    which_cache: HashMap<String, Result<(String, BuildStatus), which::Error>>,
-    env_cache: HashMap<String, (String, BuildStatus, Hash128)>,
+    glob_cache: HashMap<String, (Vec<werk_fs::PathBuf>, Outdatedness, Hash128)>,
+    which_cache: HashMap<String, Result<(String, Outdatedness), which::Error>>,
+    env_cache: HashMap<String, (String, Outdatedness, Hash128)>,
 }
 
 /// Persisted workspace cache, i.e. the contents of `<out-dir>/.werk-cache`.
@@ -254,13 +254,13 @@ impl Workspace {
     pub fn glob_workspace_files(
         &self,
         pattern: &str,
-    ) -> Result<(Vec<werk_fs::PathBuf>, BuildStatus), globset::Error> {
+    ) -> Result<(Vec<werk_fs::PathBuf>, Outdatedness), globset::Error> {
         let mut state = self.runtime_caches.lock();
         let state = &mut *state;
         match state.glob_cache.entry(pattern.to_owned()) {
             hash_map::Entry::Occupied(entry) => {
                 let (paths, status, _) = entry.get();
-                Ok((paths.clone(), *status))
+                Ok((paths.clone(), status.clone()))
             }
             hash_map::Entry::Vacant(entry) => {
                 let glob = globset::Glob::new(pattern)?;
@@ -282,31 +282,35 @@ impl Workspace {
                 let hash = compute_glob_hash(&matches);
 
                 // Determine the outdatedness of the glob.
-                let status = if self
+                let outdated = if self
                     .werk_cache
                     .glob
                     .get(pattern)
                     .is_some_and(|existing_hash| *existing_hash == hash)
                 {
-                    BuildStatus::Unchanged
+                    Outdatedness::unchanged()
                 } else {
-                    BuildStatus::Rebuilt
+                    Outdatedness::outdated(Reason::Glob(pattern.to_owned()))
                 };
 
-                entry.insert((matches.clone(), status, hash));
-                Ok((matches, status))
+                entry.insert((matches.clone(), outdated.clone(), hash));
+                Ok((matches, outdated))
             }
         }
     }
 
-    pub fn which(&self, io: &dyn Io, command: &str) -> Result<(String, BuildStatus), which::Error> {
+    pub fn which(
+        &self,
+        io: &dyn Io,
+        command: &str,
+    ) -> Result<(String, Outdatedness), which::Error> {
         let mut state = self.runtime_caches.lock();
         let state = &mut *state;
         match state.which_cache.entry(command.to_owned()) {
             hash_map::Entry::Occupied(entry) => entry.get().clone(),
             hash_map::Entry::Vacant(entry) => {
                 let result = io.which(command);
-                let status = match result {
+                let outdated = match result {
                     Ok(ref path) => {
                         if self
                             .werk_cache
@@ -316,15 +320,15 @@ impl Workspace {
                                 std::path::Path::new(&*existing_path) == path
                             })
                         {
-                            BuildStatus::Unchanged
+                            Outdatedness::unchanged()
                         } else {
-                            BuildStatus::Rebuilt
+                            Outdatedness::outdated(Reason::Which(command.to_owned()))
                         }
                     }
-                    Err(_) => BuildStatus::Rebuilt,
+                    Err(_) => Outdatedness::outdated(Reason::Which(command.to_owned())),
                 };
 
-                let result = result.map(|value| (value.to_string_lossy().into_owned(), status));
+                let result = result.map(|value| (value.to_string_lossy().into_owned(), outdated));
 
                 entry.insert(result.clone());
                 result
@@ -332,30 +336,30 @@ impl Workspace {
         }
     }
 
-    pub fn env(&self, io: &dyn Io, name: &str) -> (String, BuildStatus) {
+    pub fn env(&self, io: &dyn Io, name: &str) -> (String, Outdatedness) {
         let mut state = self.runtime_caches.lock();
         let state = &mut *state;
         match state.env_cache.entry(name.to_owned()) {
             hash_map::Entry::Occupied(entry) => {
-                let (value, build_status, _hash) = entry.get();
-                (value.clone(), *build_status)
+                let (value, outdated, _hash) = entry.get();
+                (value.clone(), outdated.clone())
             }
             hash_map::Entry::Vacant(entry) => {
                 let result = io.read_env(name).unwrap_or_default();
                 let hash = compute_stable_hash(&result);
-                let build_status = if self
+                let outdated = if self
                     .werk_cache
                     .env
                     .get(name)
                     .is_some_and(|existing_value| *existing_value == hash)
                 {
-                    BuildStatus::Unchanged
+                    Outdatedness::unchanged()
                 } else {
-                    BuildStatus::Rebuilt
+                    Outdatedness::outdated(Reason::Env(name.to_owned()))
                 };
 
-                entry.insert((result.clone(), build_status, hash));
-                (result, build_status)
+                entry.insert((result.clone(), outdated.clone(), hash));
+                (result, outdated)
             }
         }
     }

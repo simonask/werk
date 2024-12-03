@@ -136,10 +136,13 @@ impl Scope for RootScope<'_> {
 
     #[inline]
     fn get<'b>(&'b self, name: &str) -> Option<Eval<&'b Value>> {
-        self.globals
-            .get(name)
-            .map(Eval::as_ref)
-            .or_else(|| default_global_constants().get(name).map(Eval::unchanged))
+        let Some(local) = self.globals.get(name) else {
+            return default_global_constants().get(name).map(Eval::unchanged);
+        };
+        Some(Eval {
+            value: &local.value,
+            outdatedness: local.outdatedness.clone(),
+        })
     }
 
     #[inline]
@@ -171,10 +174,13 @@ impl Scope for RecipeScope<'_> {
 
     #[inline]
     fn get<'b>(&'b self, name: &str) -> Option<Eval<&'b Value>> {
-        self.vars
-            .get(name)
-            .map(Eval::as_ref)
-            .or_else(|| self.parent.get(name))
+        let Some(local) = self.vars.get(name) else {
+            return self.parent.get(name);
+        };
+        Some(Eval {
+            value: &local.value,
+            outdatedness: local.outdatedness.clone(),
+        })
     }
 
     #[inline]

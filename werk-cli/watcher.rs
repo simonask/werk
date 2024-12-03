@@ -7,7 +7,7 @@ use anstream::stream::{AsLockedWrite, IsTerminal};
 use indexmap::IndexMap;
 use owo_colors::OwoColorize;
 use parking_lot::{Mutex, MutexGuard};
-use werk_runner::{BuildStatus, ShellCommandLine, TaskId};
+use werk_runner::{BuildStatus, Outdatedness, ShellCommandLine, TaskId};
 
 use crate::ColorChoice;
 
@@ -17,6 +17,7 @@ pub struct OutputSettings {
     pub print_recipe_commands: bool,
     pub dry_run: bool,
     pub no_capture: bool,
+    pub explain: bool,
 }
 
 #[cfg(not(windows))]
@@ -251,20 +252,45 @@ impl<'a> StdioLock<'a> {
         self.stdout.flush().unwrap();
     }
 
-    fn will_build(&mut self, task_id: &TaskId, num_steps: usize, pre_message: Option<&str>) {
+    fn will_build(
+        &mut self,
+        task_id: &TaskId,
+        num_steps: usize,
+        pre_message: Option<&str>,
+        outdated: &Outdatedness,
+    ) {
         self.inner
             .current_tasks
             .insert(task_id.clone(), (0, num_steps));
         self.clear_current_line();
-        if let Some(pre_message) = pre_message {
-            _ = writeln!(
-                self.stdout,
-                "{} {}: {}",
-                Bracketed(Step(0, num_steps)).cyan(),
-                task_id,
-                pre_message
-            );
+
+        if self.inner.settings.explain && outdated.is_outdated() {
+            match task_id {
+                TaskId::Command(name) => {
+                    _ = writeln!(
+                        self.stdout,
+                        "{} will run `{name}`",
+                        Bracketed(Step(0, num_steps)).bright_yellow(),
+                    );
+                }
+                TaskId::Build(path_buf) => {
+                    _ = writeln!(
+                        self.stdout,
+                        "{} will build `{path_buf}`",
+                        Bracketed(Step(0, num_steps)).bright_yellow(),
+                    );
+                }
+            }
+
+            for reason in &outdated.reasons {
+                _ = writeln!(self.stdout, "  {} {reason}", "Cause:".yellow());
+            }
         }
+
+        if let Some(pre_message) = pre_message {
+            _ = writeln!(self.stdout, "{} {}", "[info]".cyan(), pre_message);
+        }
+
         self.render();
     }
 
@@ -274,43 +300,37 @@ impl<'a> StdioLock<'a> {
         result: &Result<werk_runner::BuildStatus, werk_runner::Error>,
         post_message: Option<&str>,
     ) {
-        let (_steps, num_steps) = self
-            .inner
+        self.inner
             .current_tasks
             .shift_remove(task_id)
             .unwrap_or_default();
 
         self.clear_current_line();
         match result {
-            Ok(BuildStatus::Unchanged) => {
-                _ = writeln!(
-                    &mut self.stdout,
-                    "{} {task_id}",
-                    Bracketed("--").bright_blue()
-                );
-            }
-            Ok(BuildStatus::Rebuilt) => {
-                _ = writeln!(
-                    &mut self.stdout,
-                    "{} {task_id}{}",
-                    Bracketed("OK").bright_green(),
-                    if self.inner.settings.dry_run {
-                        " (dry-run)"
-                    } else {
-                        ""
-                    }
-                );
-                if let Some(post_message) = post_message {
+            Ok(BuildStatus::Complete(outdatedness)) => {
+                if outdatedness.is_outdated() {
                     _ = writeln!(
-                        self.stdout,
-                        "{} {}: {}",
-                        Bracketed(Step(0, num_steps)).cyan(),
-                        task_id,
-                        post_message
+                        &mut self.stdout,
+                        "{} {task_id}{}",
+                        Bracketed("OK").bright_green(),
+                        if self.inner.settings.dry_run {
+                            " (dry-run)"
+                        } else {
+                            ""
+                        }
+                    );
+                    if let Some(post_message) = post_message {
+                        _ = writeln!(self.stdout, "{} {}", "[info]".cyan(), post_message);
+                    }
+                } else {
+                    _ = writeln!(
+                        &mut self.stdout,
+                        "{} {task_id}",
+                        Bracketed("--").bright_blue()
                     );
                 }
             }
-            Ok(BuildStatus::Exists(_)) => {
+            Ok(BuildStatus::Exists(..)) => {
                 // Print nothing for file existence checks.
             }
             Err(err) => {
@@ -335,13 +355,13 @@ impl<'a> StdioLock<'a> {
             .inner
             .current_tasks
             .get_mut(task_id)
-            .expect("task not registered") = (step, num_steps);
+            .expect("task not registered") = (step + 1, num_steps);
         self.clear_current_line();
         if self.inner.settings.dry_run || self.inner.settings.print_recipe_commands {
             _ = writeln!(
                 self.stdout,
                 "{} {task_id}: {command}",
-                Bracketed(Step(step, num_steps)).bright_yellow()
+                Bracketed(Step(step + 1, num_steps)).bright_yellow()
             );
         }
         self.render();
@@ -372,7 +392,7 @@ impl<'a> StdioLock<'a> {
                     _ = writeln!(
                         self.stdout,
                         "{} {task_id}",
-                        Bracketed(Step(step, num_steps)).green()
+                        Bracketed(Step(step + 1, num_steps)).green()
                     );
                     _ = writeln!(
                         self.stdout,
@@ -387,7 +407,7 @@ impl<'a> StdioLock<'a> {
                 _ = writeln!(
                     self.stdout,
                     "{} Error evaluating command while building '{task_id}': {command}\n{err}",
-                    Bracketed(Step(step, num_steps)).red(),
+                    Bracketed(Step(step + 1, num_steps)).red(),
                 );
                 self.render();
             }
@@ -399,7 +419,7 @@ impl<'a> StdioLock<'a> {
         if let Some(task_id) = task_id {
             _ = writeln!(self.stdout, "{} {}", Bracketed(task_id).cyan(), message);
         } else {
-            _ = writeln!(self.stdout, "{} {}", "[INFO]".cyan(), message);
+            _ = writeln!(self.stdout, "{} {}", "[info]".cyan(), message);
         }
         self.render();
     }
@@ -409,15 +429,22 @@ impl<'a> StdioLock<'a> {
         if let Some(task_id) = task_id {
             _ = writeln!(self.stdout, "{} {}", Bracketed(task_id).yellow(), message);
         } else {
-            _ = writeln!(self.stdout, "{} {}", "[WARN]".yellow(), message);
+            _ = writeln!(self.stdout, "{} {}", "[warn]".yellow(), message);
         }
         self.render();
     }
 }
 
 impl werk_runner::Watcher for StdoutWatcher {
-    fn will_build(&self, task_id: &TaskId, num_steps: usize, pre_message: Option<&str>) {
-        self.lock().will_build(task_id, num_steps, pre_message);
+    fn will_build(
+        &self,
+        task_id: &TaskId,
+        num_steps: usize,
+        pre_message: Option<&str>,
+        outdated: &Outdatedness,
+    ) {
+        self.lock()
+            .will_build(task_id, num_steps, pre_message, outdated);
     }
 
     fn did_build(
@@ -473,6 +500,6 @@ impl<T: Display> Display for Bracketed<T> {
 struct Step(usize, usize);
 impl Display for Step {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", self.0 + 1, self.1)
+        write!(f, "{}/{}", self.0, self.1)
     }
 }

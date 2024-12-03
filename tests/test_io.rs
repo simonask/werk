@@ -3,7 +3,8 @@ use std::collections::hash_map;
 use ahash::HashMap;
 use parking_lot::Mutex;
 use werk_runner::{
-    BuildStatus, DirEntry, Error, Metadata, ShellCommandLine, TaskId, WhichError, WorkspaceSettings,
+    BuildStatus, DirEntry, Error, Metadata, Outdatedness, ShellCommandLine, TaskId, WhichError,
+    WorkspaceSettings,
 };
 
 #[derive(Default)]
@@ -13,7 +14,7 @@ pub struct MockWatcher {
 
 #[derive(Debug, PartialEq)]
 pub enum MockWatcherEvent {
-    WillBuild(TaskId, usize, Option<String>),
+    WillBuild(TaskId, usize, Option<String>, Outdatedness),
     DidBuild(TaskId, Result<BuildStatus, Error>, Option<String>),
     WillExecute(TaskId, ShellCommandLine, usize, usize),
     DidExecute(
@@ -34,11 +35,18 @@ impl MockWatcher {
 }
 
 impl werk_runner::Watcher for MockWatcher {
-    fn will_build(&self, task_id: &TaskId, num_steps: usize, pre_message: Option<&str>) {
+    fn will_build(
+        &self,
+        task_id: &TaskId,
+        num_steps: usize,
+        pre_message: Option<&str>,
+        outdatedness: &Outdatedness,
+    ) {
         self.log.lock().push(MockWatcherEvent::WillBuild(
             task_id.clone(),
             num_steps,
             pre_message.map(|s| s.to_string()),
+            outdatedness.clone(),
         ));
     }
 

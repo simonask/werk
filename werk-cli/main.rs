@@ -143,6 +143,7 @@ async fn try_main(args: Args) -> Result<()> {
         print_recipe_commands: args.print_commands | args.verbose,
         dry_run: args.dry_run,
         no_capture: args.no_capture | args.verbose,
+        explain: args.explain | args.verbose,
     }));
 
     let mut settings = WorkspaceSettings::default();
