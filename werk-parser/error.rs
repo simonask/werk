@@ -10,6 +10,8 @@ pub enum Error {
     ExpectedTable(String),
     #[error("expected string: {0}")]
     ExpectedString(String),
+    #[error("expected boolean: {0}")]
+    ExpectedBool(String),
     #[error("expected string or table: {0}")]
     ExpectedStringOrTable(String),
     #[error("expected string or array: {0}")]

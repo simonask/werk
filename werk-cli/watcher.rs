@@ -11,6 +11,14 @@ use werk_runner::{BuildStatus, ShellCommandLine, TaskId};
 
 use crate::ColorChoice;
 
+#[derive(Clone, Copy, Debug)]
+pub struct OutputSettings {
+    pub color: ColorChoice,
+    pub print_recipe_commands: bool,
+    pub dry_run: bool,
+    pub no_capture: bool,
+}
+
 #[cfg(not(windows))]
 trait ConWrite: Write + AsLockedWrite {}
 #[cfg(not(windows))]
@@ -159,15 +167,19 @@ pub struct StdoutWatcher {
 }
 
 impl StdoutWatcher {
-    pub fn new(choice: ColorChoice, print_recipe_commands: bool, dry_run: bool) -> Self {
+    pub fn new(settings: OutputSettings) -> Self {
         #[cfg(windows)]
         {
             anstyle_query::windows::enable_ansi_colors();
         }
-        let kind = AutoStreamKind::detect(choice);
+        let kind = AutoStreamKind::detect(settings.color);
 
         Self {
-            inner: Mutex::new(Inner::new(print_recipe_commands, dry_run)),
+            inner: Mutex::new(Inner {
+                current_tasks: IndexMap::new(),
+                render_buffer: String::with_capacity(1024),
+                settings,
+            }),
             kind,
         }
     }
@@ -188,19 +200,7 @@ impl StdoutWatcher {
 struct Inner {
     current_tasks: IndexMap<TaskId, (usize, usize)>,
     render_buffer: String,
-    print_recipe_commands: bool,
-    dry_run: bool,
-}
-
-impl Inner {
-    pub fn new(print_recipe_commands: bool, dry_run: bool) -> Self {
-        Self {
-            current_tasks: IndexMap::new(),
-            render_buffer: String::with_capacity(1024),
-            print_recipe_commands,
-            dry_run,
-        }
-    }
+    settings: OutputSettings,
 }
 
 struct StdioLock<'a> {
@@ -294,7 +294,11 @@ impl<'a> StdioLock<'a> {
                     &mut self.stdout,
                     "{} {task_id}{}",
                     Bracketed("OK").bright_green(),
-                    if self.inner.dry_run { " (dry-run)" } else { "" }
+                    if self.inner.settings.dry_run {
+                        " (dry-run)"
+                    } else {
+                        ""
+                    }
                 );
                 if let Some(post_message) = post_message {
                     _ = writeln!(
@@ -333,7 +337,7 @@ impl<'a> StdioLock<'a> {
             .get_mut(task_id)
             .expect("task not registered") = (step, num_steps);
         self.clear_current_line();
-        if self.inner.dry_run || self.inner.print_recipe_commands {
+        if self.inner.settings.dry_run || self.inner.settings.print_recipe_commands {
             _ = writeln!(
                 self.stdout,
                 "{} {task_id}: {command}",
@@ -350,6 +354,7 @@ impl<'a> StdioLock<'a> {
         result: &Result<std::process::Output, werk_runner::Error>,
         step: usize,
         num_steps: usize,
+        print_successful: bool,
     ) {
         match result {
             Ok(output) => {
@@ -360,6 +365,19 @@ impl<'a> StdioLock<'a> {
                         "{} Command failed while building '{task_id}': {command}\nstderr:\n{}",
                         Bracketed(Step(step, num_steps)).red(),
                         String::from_utf8_lossy(&output.stderr)
+                    );
+                    self.render();
+                } else if print_successful || self.inner.settings.no_capture {
+                    self.clear_current_line();
+                    _ = writeln!(
+                        self.stdout,
+                        "{} {task_id}",
+                        Bracketed(Step(step, num_steps)).green()
+                    );
+                    _ = writeln!(
+                        self.stdout,
+                        "{}",
+                        String::from_utf8_lossy(&output.stdout).trim()
                     );
                     self.render();
                 }
@@ -428,9 +446,10 @@ impl werk_runner::Watcher for StdoutWatcher {
         result: &Result<std::process::Output, werk_runner::Error>,
         step: usize,
         num_steps: usize,
+        print_successful: bool,
     ) {
         self.lock()
-            .did_execute(task_id, command, result, step, num_steps);
+            .did_execute(task_id, command, result, step, num_steps, print_successful);
     }
 
     fn message(&self, task_id: Option<&TaskId>, message: &str) {

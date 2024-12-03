@@ -75,6 +75,7 @@ pub struct CommandRecipe {
     pub command: Option<Expr>,
     pub pre_message: Option<StringExpr>,
     pub post_message: Option<StringExpr>,
+    pub capture: Option<bool>,
 }
 
 #[derive(Debug, PartialEq)]

@@ -208,6 +208,9 @@ pre-message = "Before command-name"
 # Optional: Print message in the output after building dependencies and executing commands.
 post-message = "After command-name"
 
+# Optional: Disabling capturing stdout of the command, forwarding it to the terminal.
+capture = false
+
 
 
 # Define a build recipe. See pattern syntax below.

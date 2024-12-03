@@ -379,6 +379,7 @@ fn parse_command_recipe(
     let mut command = None;
     let mut pre_message = None;
     let mut post_message = None;
+    let mut capture = None;
 
     for (key, value) in table.iter() {
         let path = path.ident(key);
@@ -401,6 +402,12 @@ fn parse_command_recipe(
                 };
                 post_message = Some(parse_string_expr(&path, value)?);
             }
+            "capture" => {
+                let Some(value) = value.as_bool() else {
+                    return Err(Error::ExpectedBool(path.to_string()));
+                };
+                capture = Some(value);
+            }
             _ => {
                 return Err(Error::InvalidKey(path.to_string()));
             }
@@ -412,6 +419,7 @@ fn parse_command_recipe(
         command,
         pre_message,
         post_message,
+        capture,
     })
 }
 

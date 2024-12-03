@@ -36,4 +36,6 @@ post-message = "Build done for profile '{profile}'"
 
 [command.run]
 build = "build"
-command = "\"<executable>\""
+command = "<executable>"
+# Echo the output of the command to the terminal unconditionally.
+capture = false

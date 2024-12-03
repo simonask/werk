@@ -77,6 +77,7 @@ impl werk_runner::Watcher for MockWatcher {
         result: &Result<std::process::Output, Error>,
         step: usize,
         num_steps: usize,
+        _print_successful: bool,
     ) {
         self.log.lock().push(MockWatcherEvent::DidExecute(
             task_id.clone(),

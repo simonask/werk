@@ -5,38 +5,59 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use clap::Parser;
-use werk_runner::{LocalVariables, Recipes, RootScope, Runner, Workspace, WorkspaceSettings};
+use werk_runner::{Runner, Workspace, WorkspaceSettings};
 
 #[derive(Debug, clap::Parser)]
 pub struct Args {
     /// The target to build.
     pub target: Option<String>,
+
     #[clap(short, long)]
     /// The path to the werk file. Defaults to searching for `werk.toml` in the
     /// working dir and its parents.
     pub file: Option<std::path::PathBuf>,
+
     /// List the available targets.
     #[clap(short, long)]
     pub list: bool,
+
     /// Dry run; do not execute any recipe commands. Note: Shell commands used
-    /// in global variables are still executed! This also implies
-    /// `--print-commands`.
+    /// in global variables are still executed!
     #[clap(long)]
     pub dry_run: bool,
+
     /// Print recipe shell commands as they are executed.
     #[clap(long)]
     pub print_commands: bool,
+
+    /// Forward the stdout of all executed commands to the terminal, even when
+    /// successful.
+    #[clap(long)]
+    pub no_capture: bool,
+
+    /// For each outdated recipe, explain why it was outdated.
+    #[clap(long)]
+    pub explain: bool,
+
+    /// Shorthand for `--explain --print-commands --no-capture`.
+    #[clap(long, short)]
+    pub verbose: bool,
+
     #[clap(long, default_value = "auto")]
     pub color: ColorChoice,
+
     #[clap(long, default_value = "auto")]
     pub output_format: OutputChoice,
+
     /// Number of tasks to execute in parallel. Defaults to the number of CPU cores.
     #[clap(long, short)]
     pub jobs: Option<usize>,
+
     /// Use the output directory instead of the default. In unspecified, uses
     /// `target` next to the root werk.toml file.
     #[clap(long)]
     pub output_dir: Option<std::path::PathBuf>,
+
     /// Override variable in the werk.toml's `[global]` section. This takes the
     /// form `name=value`.
     #[clap(long, short = 'D')]
@@ -117,11 +138,12 @@ async fn try_main(args: Args) -> Result<()> {
     tracing::debug!("Project directory: {}", project_dir.display());
     tracing::debug!("Output directory: {}", out_dir.display());
 
-    let watcher = Arc::new(watcher::StdoutWatcher::new(
-        args.color,
-        args.print_commands,
-        args.dry_run,
-    ));
+    let watcher = Arc::new(watcher::StdoutWatcher::new(watcher::OutputSettings {
+        color: args.color,
+        print_recipe_commands: args.print_commands | args.verbose,
+        dry_run: args.dry_run,
+        no_capture: args.no_capture | args.verbose,
+    }));
 
     let mut settings = WorkspaceSettings::default();
     for def in &args.define {

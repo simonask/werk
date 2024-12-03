@@ -60,6 +60,7 @@ pub trait Watcher: Send + Sync {
         result: &Result<std::process::Output, Error>,
         step: usize,
         num_steps: usize,
+        print_success: bool,
     );
 
     fn message(&self, task_id: Option<&TaskId>, message: &str);
@@ -521,7 +522,7 @@ impl Inner {
                 .will_build(task_id, shell_commands.len(), pre_message.as_deref());
 
             let result = self
-                .execute_recipe_commands(task_id, &mut shell_commands, &scope)
+                .execute_recipe_commands(task_id, &mut shell_commands, &scope, false)
                 .await
                 .map(|_| build_status);
 
@@ -581,7 +582,12 @@ impl Inner {
             .will_build(task_id, shell_commands.len(), pre_message.as_deref());
 
         let result = self
-            .execute_recipe_commands(task_id, &mut shell_commands, &scope)
+            .execute_recipe_commands(
+                task_id,
+                &mut shell_commands,
+                &scope,
+                recipe.capture.is_some_and(|c| !c),
+            )
             .await
             .map(|_| BuildStatus::Rebuilt);
 
@@ -595,6 +601,7 @@ impl Inner {
         task_id: &TaskId,
         shell_commands: &[ShellCommandLine],
         scope: &RecipeScope<'_>,
+        print_successful: bool,
     ) -> Result<(), Error> {
         let num_steps = shell_commands.len();
         let mut iter = shell_commands.iter().enumerate();
@@ -609,8 +616,14 @@ impl Inner {
                     .await
                     .map_err(Into::into);
 
-                self.watcher
-                    .did_execute(task_id, &shell_command, &result, step, num_steps);
+                self.watcher.did_execute(
+                    task_id,
+                    &shell_command,
+                    &result,
+                    step,
+                    num_steps,
+                    print_successful,
+                );
                 match result {
                     Err(err) => {
                         return Err(err);
