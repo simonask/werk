@@ -1,5 +1,7 @@
 use std::fmt::Write as _;
 
+use crate::AmbiguousPatternError;
+
 #[derive(Debug, Clone)]
 pub struct Pattern {
     pub fragments: Box<[PatternFragment]>,
@@ -39,6 +41,13 @@ pub enum PatternFragment {
 pub struct PatternMatch<'a> {
     pub pattern: &'a Pattern,
     pub data: PatternMatchData,
+}
+
+impl PartialEq<PatternMatchData> for PatternMatch<'_> {
+    #[inline]
+    fn eq(&self, other: &PatternMatchData) -> bool {
+        self.data == *other
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -293,6 +302,111 @@ impl PatternMatchData {
     #[inline]
     pub fn capture_group(&self, group: usize) -> Option<&str> {
         self.captures.get(group).map(|s| &**s)
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct PatternSet {
+    // Could use `regex::RegexSet`, but the main benefit of that is that it only
+    // needs to traverse the haystack once. But our "haystack" (paths and match
+    // arms) are almost always very short, and `RegexSet` requires that
+    // individual patterns are re-matched to get capture groups, so in total it
+    // is unlikely that `RegexSet` would be faster in total.
+    patterns: Vec<Pattern>,
+}
+
+impl PatternSet {
+    pub fn new(patterns: impl IntoIterator<Item = Pattern>) -> Self {
+        Self {
+            patterns: patterns.into_iter().collect(),
+        }
+    }
+
+    #[inline]
+    pub fn push(&mut self, pattern: Pattern) {
+        self.patterns.push(pattern);
+    }
+
+    pub fn matches<'a: 'b, 'b>(
+        &'a self,
+        haystack: &'b str,
+    ) -> impl Iterator<Item = (usize, PatternMatch<'a>)> + 'b {
+        self.patterns
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, pattern)| {
+                pattern
+                    .match_string(haystack)
+                    .map(|data| (index, PatternMatch::from_pattern_and_data(pattern, data)))
+            })
+    }
+
+    pub fn best_match_string<'a>(
+        &'a self,
+        haystack: &str,
+    ) -> Result<Option<(usize, PatternMatch<'a>)>, AmbiguousPatternError> {
+        let mut best_match = None;
+
+        for (index, pattern_match) in self.matches(haystack) {
+            match best_match {
+                None => {
+                    // No match yet, pick this candidate.
+                    best_match = Some((index, pattern_match));
+                }
+                Some((_, ref best)) => match (best.stem(), pattern_match.stem()) {
+                    (None, Some(_)) => {
+                        // Best match is exact, do nothing.
+                    }
+                    (Some(_), None) => {
+                        // Candidate is exact, do nothing.
+                        best_match = Some((index, pattern_match))
+                    }
+                    (Some(best_stem), Some(candidate_stem))
+                        if candidate_stem.len() < best_stem.len() =>
+                    {
+                        // Candidate has a shorter stem, so it's better.
+                        best_match = Some((index, pattern_match));
+                    }
+                    (Some(best_stem), Some(candidate_stem))
+                        if candidate_stem.len() > best_stem.len() =>
+                    {
+                        // Candidate has a longer stem, so it's worse; do nothing.
+                    }
+                    _ => {
+                        // Candidate and best have the same length, or both are
+                        // exact.
+                        return Err(AmbiguousPatternError {
+                            pattern1: best.pattern.to_string(),
+                            pattern2: pattern_match.pattern.to_string(),
+                            path: haystack.to_string(),
+                        });
+                    }
+                },
+            }
+        }
+
+        Ok(best_match)
+    }
+
+    #[inline]
+    pub fn best_match_path<'a>(
+        &'a self,
+        path: &werk_fs::Path,
+    ) -> Result<Option<(usize, PatternMatch<'a>)>, AmbiguousPatternError> {
+        self.best_match_string(path.as_str())
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Pattern> {
+        self.patterns.iter()
+    }
+}
+
+impl std::ops::Index<usize> for PatternSet {
+    type Output = Pattern;
+
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.patterns[index]
     }
 }
 

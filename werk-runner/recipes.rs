@@ -3,12 +3,12 @@ use werk_parser::ast;
 
 use crate::{
     eval_pattern_builder, AmbiguousPatternError, Error, EvalError, Pattern, PatternMatch,
-    PatternMatchData, RootScope, TaskId,
+    PatternMatchData, PatternSet, RootScope, TaskId,
 };
 
 pub struct Recipes {
     pub ast: ast::Root,
-    pub build_recipe_patterns: Vec<Pattern>,
+    pub build_recipe_patterns: PatternSet,
 }
 
 pub enum RecipeMatch<'a> {
@@ -61,7 +61,7 @@ impl From<RecipeMatch<'_>> for RecipeMatchData {
 impl Recipes {
     pub async fn new(root: ast::Root, global_scope: &RootScope<'_>) -> Result<Self, EvalError> {
         // Compile patterns.
-        let mut build_recipe_patterns = Vec::new();
+        let mut build_recipe_patterns = PatternSet::default();
         for (pattern_expr, _) in root.recipes.iter() {
             let mut pattern_builder = eval_pattern_builder(global_scope, pattern_expr)?;
             // Ensure that build recipe patterns are absolute paths.
@@ -108,6 +108,12 @@ impl Recipes {
         }
     }
 
+    pub fn build_recipes<'a>(&'a self) -> impl Iterator<Item = (&'a Pattern, &'a ast::Recipe)> {
+        self.build_recipe_patterns
+            .iter()
+            .zip(self.ast.recipes.values())
+    }
+
     #[inline]
     pub fn match_command_recipe<'b>(&'b self, name: &str) -> Option<RecipeMatch<'b>> {
         let (index, name, recipe) = self.ast.commands.get_full(name)?;
@@ -121,37 +127,19 @@ impl Recipes {
     pub fn match_build_recipe<'b>(&'b self, path: &Path) -> Result<Option<RecipeMatch<'b>>, Error> {
         let path = path.absolutize(Path::ROOT)?;
         tracing::trace!("Looking for build matching '{path}'");
-        let mut best_match: Option<(usize, PatternMatch<'b>, &'b ast::Recipe)> = None;
-        for (recipe_index, pattern) in self.build_recipe_patterns.iter().enumerate() {
-            if let Some(pattern_match) = pattern.match_path(&path) {
-                let pattern_match = PatternMatch::from_pattern_and_data(pattern, pattern_match);
-                // If we already matched a rule that has a pattern stem, the
-                // lookup is ambiguous. If the previous lookup had a stem, but
-                // this one doesn't, this match is considered "more specific".
-                if let Some((_, previous_best, _)) = &best_match {
-                    if !previous_best.is_verbatim() {
-                        return Err(AmbiguousPatternError {
-                            pattern1: previous_best.to_string(),
-                            pattern2: pattern.to_string(),
-                            path: path.as_str().to_owned(),
-                        }
-                        .into());
-                    }
-                }
+        let best_match = self.build_recipe_patterns.best_match_path(&path)?;
+        let Some((recipe_index, pattern_match)) = best_match else {
+            return Ok(None);
+        };
+        let recipe = &self.ast.recipes[recipe_index];
 
-                best_match = Some((recipe_index, pattern_match, &self.ast.recipes[recipe_index]));
-            }
-        }
-
-        Ok(best_match.map(|(index, pattern_match, rule)| {
-            tracing::debug!("Found match: {path} -> {pattern_match}");
-            let target_file = pattern_match.to_path_buf();
-            RecipeMatch::Build {
-                index,
-                pattern_match,
-                recipe: rule,
-                target_file,
-            }
+        tracing::debug!("Found match: {path} -> {pattern_match}");
+        let target_file = pattern_match.to_path_buf();
+        Ok(Some(RecipeMatch::Build {
+            index: recipe_index,
+            pattern_match,
+            recipe,
+            target_file,
         }))
     }
 

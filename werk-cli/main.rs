@@ -193,7 +193,7 @@ async fn try_main(args: Args) -> Result<()> {
         for (name, _) in &recipes.ast.commands {
             println!("{name}");
         }
-        for pattern in &recipes.build_recipe_patterns {
+        for (pattern, _recipe) in recipes.build_recipes() {
             println!("{}", pattern);
         }
         return Ok(());

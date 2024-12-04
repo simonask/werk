@@ -1,4 +1,4 @@
-use werk_runner::{Pattern, PatternMatch, PatternMatchData};
+use werk_runner::{AmbiguousPatternError, Pattern, PatternMatch, PatternMatchData, PatternSet};
 
 #[test]
 fn test_pattern_match() -> anyhow::Result<()> {
@@ -90,6 +90,44 @@ fn test_capture_groups() -> anyhow::Result<()> {
         Some(PatternMatchData::new(Some("bd"), [String::from("b")]))
     );
     assert_eq!(abc_stem.match_string("dbb"), None,);
+
+    Ok(())
+}
+
+#[test]
+fn ambiguous_pattern_set() -> anyhow::Result<()> {
+    let pattern_set = PatternSet::new([Pattern::parse("foo/%/a.c")?, Pattern::parse("%/foo/a.c")?]);
+
+    assert_eq!(
+        pattern_set.best_match_string("foo/bar/a.c"),
+        Ok(Some((
+            0,
+            PatternMatch {
+                pattern: &pattern_set[0],
+                data: PatternMatchData::new(Some("bar"), [])
+            }
+        )))
+    );
+
+    assert_eq!(
+        pattern_set.best_match_string("bar/foo/a.c"),
+        Ok(Some((
+            1,
+            PatternMatch {
+                pattern: &pattern_set[1],
+                data: PatternMatchData::new(Some("bar"), [])
+            }
+        )))
+    );
+
+    assert_eq!(
+        pattern_set.best_match_string("foo/foo/a.c"),
+        Err(AmbiguousPatternError {
+            pattern1: String::from("foo/%/a.c"),
+            pattern2: String::from("%/foo/a.c"),
+            path: String::from("foo/foo/a.c"),
+        })
+    );
 
     Ok(())
 }
