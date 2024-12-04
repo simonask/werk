@@ -53,8 +53,14 @@ pub struct Args {
     #[clap(long, short)]
     pub jobs: Option<usize>,
 
+    /// Override the workspace directory. Defaults to the directory containing
+    /// werk.toml.
+    #[clap(long)]
+    pub workspace_dir: Option<std::path::PathBuf>,
+
     /// Use the output directory instead of the default. In unspecified, uses
-    /// `target` next to the root werk.toml file.
+    /// the `out-dir` configuration variable from werk.toml, or if that is
+    /// unspecified, uses`target` next to the root werk.toml file.
     #[clap(long)]
     pub output_dir: Option<std::path::PathBuf>,
 
@@ -122,20 +128,33 @@ async fn try_main(args: Args) -> Result<()> {
     let werkfile_contents = std::fs::read_to_string(&werkfile_path)?;
     let ast = werk_parser::parse_toml(&werkfile_contents)?;
 
-    let project_dir = werkfile_path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("{} has no parent directory", werkfile_path.display()))?;
+    let workspace_dir = if let Some(ref workspace_dir) = args.workspace_dir {
+        if !workspace_dir.is_dir() {
+            anyhow::bail!(
+                "Workspace dir is not a directory: {}",
+                workspace_dir.display()
+            );
+        } else {
+            &*workspace_dir
+        }
+    } else {
+        werkfile_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("{} has no parent directory", werkfile_path.display()))?
+    };
+    let workspace_dir = std::path::absolute(workspace_dir)?;
+
     let out_dir = args
         .output_dir
         .or_else(|| {
             ast.config
                 .output_directory
                 .as_ref()
-                .map(|s| project_dir.join(s))
+                .map(|s| workspace_dir.join(s))
         })
-        .unwrap_or_else(|| project_dir.join("target"));
+        .unwrap_or_else(|| workspace_dir.join("target"));
     let out_dir = std::path::absolute(out_dir)?;
-    tracing::debug!("Project directory: {}", project_dir.display());
+    tracing::debug!("Project directory: {}", workspace_dir.display());
     tracing::debug!("Output directory: {}", out_dir.display());
 
     let watcher = Arc::new(watcher::StdoutWatcher::new(watcher::OutputSettings {
@@ -165,7 +184,7 @@ async fn try_main(args: Args) -> Result<()> {
         io = Arc::new(werk_runner::RealSystem::new());
     }
 
-    let workspace = Workspace::new(&*io, project_dir.to_owned(), out_dir, settings).await?;
+    let workspace = Workspace::new(&*io, workspace_dir.to_owned(), out_dir, settings).await?;
 
     let mut runner = Runner::new(ast, io.clone(), workspace, watcher).await?;
     if args.list {
