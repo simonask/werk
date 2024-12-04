@@ -1,0 +1,29 @@
+config:
+    out-dir = "../../target/examples/c"
+
+cc = which "clang"
+ld = cc
+profile = "debug"
+executable = "{profile}/example{EXE_SUFFIX}"
+cflags = match profile {
+    'debug' => ["-g", "-O0", "-fcolor-diagnostics"]
+    'release' => ["-O3", "-fcolor-diagnostics"]
+    '%' => error "Unknown profile; valid options are 'debug' and 'release'"
+}
+
+build {profile}/%.o: {%}.c
+    depfile = /{profile}/{%}.c.d
+    run = {cc} -c {cflags*} -o <out> <in>
+
+build {profile}/%.c.d: {%}.c
+    run = "{cc} -MM -MT <in> -MF <out> <in>"
+
+build {profile}/example{EXE_SUFFIX}: glob "%.c" => "/{profile}/{%:.c=.o}"
+    run = "{ld} -o <out> <in*>"
+
+command build: executable
+    post-message = "Build done for profile '{profile}'"
+
+command run: build
+    run = "<executable>"
+    capture = false

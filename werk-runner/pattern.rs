@@ -6,7 +6,7 @@ pub struct Pattern {
     /// The regular expression used to match this pattern.
     pub regex: Box<regex::Regex>,
     /// The index of the regex capture group that represents the pattern stem.
-    pub stem_capture_index: usize,
+    pub stem_capture_index: Option<usize>,
 }
 
 impl PartialEq for Pattern {
@@ -41,12 +41,24 @@ pub struct PatternMatch<'a> {
     pub data: PatternMatchData,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct PatternMatchData {
     /// The matched stem, if the pattern has a stem.
     pub stem: Option<Box<str>>,
     /// One entry for each `OneOf` capture group `(a|b|...)` in the pattern.
     pub captures: Box<[String]>,
+}
+
+impl PatternMatchData {
+    pub fn new(
+        stem: Option<impl Into<String>>,
+        captures: impl IntoIterator<Item = String>,
+    ) -> Self {
+        Self {
+            stem: stem.map(Into::into).map(String::into_boxed_str),
+            captures: captures.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
 impl PatternBuilder {
@@ -83,13 +95,13 @@ impl PatternBuilder {
     pub fn build(self) -> Pattern {
         let mut regex_pattern = String::from("^");
         let mut capture_count = 0;
-        let mut stem_capture_index = 0;
+        let mut stem_capture_index = None;
         for fragment in &self.fragments {
             match fragment {
                 PatternFragment::Literal(lit) => regex_pattern.push_str(&regex::escape(lit)),
                 PatternFragment::PatternStem => {
                     regex_pattern.push_str(r"(.*)");
-                    stem_capture_index = capture_count;
+                    stem_capture_index = Some(capture_count);
                     capture_count += 1;
                 }
                 PatternFragment::OneOf(vec) => {
@@ -121,18 +133,34 @@ impl PatternBuilder {
 }
 
 impl Pattern {
+    pub fn parse(pattern: &str) -> Result<Pattern, werk_parser::ParseError> {
+        let parsed = werk_parser::parse_string::parse_pattern_expr(pattern)?;
+        let mut builder = PatternBuilder::default();
+        for fragment in parsed.fragments {
+            match fragment {
+                werk_parser::ast::PatternFragment::Literal(lit) => builder.push_str(&lit),
+                werk_parser::ast::PatternFragment::PatternStem => builder.push_pattern_stem(),
+                werk_parser::ast::PatternFragment::OneOf(one_of) => builder.push_one_of(one_of),
+                werk_parser::ast::PatternFragment::Interpolation(_) => panic!(
+                    "Pattern::parse cannot handle interpolations; use `eval_pattern` instead"
+                ),
+            }
+        }
+        Ok(builder.build())
+    }
+
     pub fn match_string(&self, string: &str) -> Option<PatternMatchData> {
-        let m = self.regex.captures_iter(string).next()?;
+        let m = self.regex.captures(string)?;
         let mut capture_groups = Vec::new();
         let mut stem = None;
 
         let mut group_matches = m.iter();
         // Skip the implicit whole-string match group.
-        group_matches.next();
+        group_matches.next().unwrap();
 
         for (index, group) in group_matches.enumerate() {
             let group_str = group.unwrap().as_str();
-            if index == self.stem_capture_index {
+            if self.stem_capture_index == Some(index) {
                 stem = Some(group_str.to_owned());
             } else {
                 capture_groups.push(group_str.to_owned());

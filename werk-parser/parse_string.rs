@@ -68,7 +68,7 @@ fn string_expr(input: &mut &str) -> PResult<ast::StringExpr> {
 }
 
 fn pattern_expr(input: &mut &str) -> PResult<ast::PatternExpr> {
-    let fragments = repeat(1.., pattern_fragment)
+    let fragments = repeat(0.., pattern_fragment)
         .context(StrContext::Label("pattern expression"))
         .parse_next(input)?;
     Ok(ast::PatternExpr { fragments })

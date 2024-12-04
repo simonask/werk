@@ -16,3 +16,7 @@ ahash.workspace = true
 [[test]]
 name = "test_expressions"
 path = "test_expressions.rs"
+
+[[test]]
+name = "test_pattern_match"
+path = "test_pattern_match.rs"

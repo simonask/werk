@@ -3,9 +3,9 @@ use std::sync::Arc;
 use werk_parser::{ast, parse_string::parse_pattern_expr, parse_string::parse_string_expr};
 use werk_runner::{Metadata, WhichError};
 
-#[path = "test_io.rs"]
-mod test_io;
-use test_io::*;
+#[path = "mock_io.rs"]
+mod mock_io;
+use mock_io::*;
 
 static EXPRESSIONS_TOML: &str = include_str!("../examples/expressions.toml");
 

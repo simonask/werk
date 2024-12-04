@@ -7,6 +7,16 @@ use werk_runner::{
     WorkspaceSettings,
 };
 
+#[inline]
+pub fn make_mtime(secs_since_epoch: u64) -> std::time::SystemTime {
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs_since_epoch)
+}
+
+#[inline]
+pub fn default_mtime() -> std::time::SystemTime {
+    make_mtime(0)
+}
+
 #[derive(Default)]
 pub struct MockWatcher {
     pub log: Mutex<Vec<MockWatcherEvent>>,
@@ -404,7 +414,7 @@ impl werk_runner::Io for MockIo {
                     hash_map::Entry::Vacant(vacant_entry) => {
                         vacant_entry.insert((
                             Metadata {
-                                mtime: std::time::SystemTime::now(),
+                                mtime: default_mtime(),
                                 is_file: false,
                                 is_symlink: false,
                             },

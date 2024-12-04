@@ -362,32 +362,68 @@ By convention, built-in constants are UPPER_SNAKE_CASE.
 - `{EMPTY}`: The empty string. This exists because TOML does not support empty
   strings in some contexts, like keys in tables.
 
-## Build Recipe Pattern Syntax
+## Pattern matching
 
-Build recipes are identified by a pattern that describes the file name of the
-output that they generate. Patterns can contain interpolated string values,
-which are evaluated in the "global" scope. For example, a build recipe pattern
-producing an executable file may wish to use the `{EXE_SUFFIX}` global constant.
+Patterns occur in a couple of contexts: build recipes and `match` expressions
+(see below). Patterns are strings with some additional magic tokens.
 
-Patterns may have a single "stem" placeholder `%`, which matches any substring.
-The value of the stem is available inside the build recipe as `{%}`.
+- `%` matches any sequence of characters (including the empty string), and may
+  occur at most once in a pattern. The matched sequence becomes the "pattern
+  stem".
+- `(a|b|c)` is a capture group, matching either `a`, `b`, or `c` exactly.
+  Patterns can contain any number of capture groups.
 
-Patterns are string expressions, except they have the following additional
-limitations: Patterns must always evaluate to a valid abstract file path, and
-the literal characters `%`, `(`, and `)` must be escaped.
+Example, given the pattern `%.(c|cpp)`:
 
-### Capture Groups
+- The string `"foo.c"` will match. The stem is `foo`, and capture group 0 is `c`.
+- The string `"foo/bar/baz.cpp"` will match. The stem is `foo/bar/baz`, and
+  capture group 0 is `cpp`.
+- The string `"foo.h"` will not match, because none of the variants in the
+  capture group apply.
+- The string `"abc"` will not match, because the period is missing.
 
-Build recipe patterns support a limited form of capture groups, which have the
-syntax `(a|b|c)`. Build patterns can contain any number of capture groups, and
-their value can be accessed inside the build recipe by their index `{0}`, `{1}`,
-etc.
+When a pattern-match is "in scope" (i.e. within a build recipe, or while
+evaluating a `match` statement), the stem and capture groups are available for
+string interpolation through the special syntax `{%}` (note: braces required)
+and `{0}` (the index of the capture group).
 
-Example:
+> **Note:** TOML does not support empty strings as keys in key-value pairs, and
+> both build recipes and match expressions are expressed as key-value pairs in
+> TOML tables. The special constant `"{EMPTY}"` can be used to produce an empty
+> string, without it looking like an empty string to TOML.
+
+When multiple patterns match in the same context (say, more than one build
+recipe pattern matches the output file name, or a match expression has more than
+one arm), the "most specific" match is chosen:
+
+- A pattern without a `%` stem is "more specific" than a pattern that has a
+  stem.
+- A pattern that matches the input with a shorter stem is "more specific" than
+  a pattern that matches a longer stem.
+- Capture groups do not affect the "specificity" of a pattern.
+
+Given the patterns `%.c`, `%/a.c`, `foo/%/a.c`, `foo/bar/a.c`, this is how
+matches will be chosen based on various inputs:
+
+- `"bar/b.c"`: The pattern `%.c` will be chosen, because it does not match the
+  other patterns. The stem is `"bar/b"`.
+- `"foo/a.c"`: The pattern `%/a.c` will be chosen, because it produces the
+  shortest stem `"a"`. The stem is `foo`.
+- `"foo/foo/a.c"`: The pattern `foo/%/a.c` will be chosen over `%.c` and
+  `%/a.c`, because it produces a shorter stem. The stem is `foo`.
+- `"foo/bar/a.c"`: The pattern `foo/bar/a.c` will be chosen over `foo/%/a.c`,
+  because the pattern is literal exact match without a stem.
+
+**Conflicts:** It's possible to construct patterns that are different, but match
+the same input with the same "specificity". For example, both patterns
+`foo/%/a.c` and `%/foo/a.c` match the input `"foo/foo/a.c"` equally. When such a
+situation occurs, that's a hard error.
+
+### Example build recipe
 
 ```toml
-# Recipe to compile a GLSL shader (vertex, fragment, or compute).
-[build.'%.(frag|vert|comp).spv']
+# Build a GLSL shader using stem and a capture group
+[build.'%.(frag|vert|comp)']
 in = "{%}.{0}"
 command = "glslc -o <out> <in>"
 ```
