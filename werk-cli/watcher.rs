@@ -272,14 +272,14 @@ impl<'a> StdioLock<'a> {
                 TaskId::Command(name) => {
                     _ = writeln!(
                         self.stdout,
-                        "{} will run `{name}`",
+                        "{} running task `{name}`",
                         Bracketed(Step(0, num_steps)).bright_yellow(),
                     );
                 }
                 TaskId::Build(path_buf) => {
                     _ = writeln!(
                         self.stdout,
-                        "{} will build `{path_buf}`",
+                        "{} rebuilding `{path_buf}`",
                         Bracketed(Step(0, num_steps)).bright_yellow(),
                     );
                 }
@@ -315,7 +315,7 @@ impl<'a> StdioLock<'a> {
                     _ = writeln!(
                         &mut self.stdout,
                         "{} {task_id}{}",
-                        Bracketed("OK").bright_green(),
+                        Bracketed(" ok ").bright_green(),
                         if self.inner.settings.dry_run {
                             " (dry-run)"
                         } else {
@@ -329,7 +329,7 @@ impl<'a> StdioLock<'a> {
                     _ = writeln!(
                         &mut self.stdout,
                         "{} {task_id}",
-                        Bracketed("--").bright_blue()
+                        Bracketed(" -- ").bright_blue()
                     );
                 }
             }
