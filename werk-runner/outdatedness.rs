@@ -30,6 +30,10 @@ pub struct Outdatedness {
 }
 
 impl Outdatedness {
+    pub fn new<I: IntoIterator<Item = Reason>>(reasons: I) -> Self {
+        Self::from_iter(reasons)
+    }
+
     pub fn unchanged() -> Self {
         Self {
             reasons: BTreeSet::new(),
@@ -56,6 +60,14 @@ impl Outdatedness {
     #[inline]
     pub fn insert(&mut self, reason: Reason) {
         self.reasons.insert(reason);
+    }
+}
+
+impl FromIterator<Reason> for Outdatedness {
+    fn from_iter<T: IntoIterator<Item = Reason>>(iter: T) -> Self {
+        Outdatedness {
+            reasons: BTreeSet::from_iter(iter),
+        }
     }
 }
 

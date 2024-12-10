@@ -68,6 +68,14 @@ pub struct Args {
     /// form `name=value`.
     #[clap(long, short = 'D')]
     pub define: Vec<String>,
+
+    /// Enable debug logging to stdout. The value is a logging directive (same
+    /// syntax as the conventional `RUST_LOG` environment variable), so it can
+    /// be a log level like "info" or "trace", or a module path like
+    /// "werk_runner=debug". If passed without a directive string, this enables
+    /// logging at the "info" level for only the `werk` runner.
+    #[clap(long)]
+    pub log: Option<Option<String>>,
 }
 
 /// Color mode.
@@ -104,8 +112,17 @@ pub enum OutputChoice {
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
     let args = Args::parse();
+    match args.log {
+        Some(Some(ref directive)) => tracing_subscriber::fmt::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::new(directive))
+            .init(),
+        Some(None) => tracing_subscriber::fmt::fmt()
+            .with_env_filter("werk=info,werk_runner=info")
+            .init(),
+        _ => (),
+    }
+
     let mut builder = tokio::runtime::Builder::new_multi_thread();
     if let Some(jobs) = args.jobs {
         builder.worker_threads(jobs.max(1));
@@ -123,7 +140,7 @@ async fn try_main(args: Args) -> Result<()> {
         find_werkfile()?
     };
     let werkfile_path = std::path::absolute(werkfile_path)?;
-    tracing::debug!("Using werkfile: {}", werkfile_path.display());
+    tracing::info!("Using werkfile: {}", werkfile_path.display());
 
     let werkfile_contents = std::fs::read_to_string(&werkfile_path)?;
     let ast = werk_parser::parse_toml(&werkfile_contents)?;
@@ -154,10 +171,11 @@ async fn try_main(args: Args) -> Result<()> {
         })
         .unwrap_or_else(|| workspace_dir.join("target"));
     let out_dir = std::path::absolute(out_dir)?;
-    tracing::debug!("Project directory: {}", workspace_dir.display());
-    tracing::debug!("Output directory: {}", out_dir.display());
+    tracing::info!("Project directory: {}", workspace_dir.display());
+    tracing::info!("Output directory: {}", out_dir.display());
 
     let watcher = Arc::new(watcher::StdoutWatcher::new(watcher::OutputSettings {
+        logging_enabled: args.log.is_some(),
         color: args.color,
         print_recipe_commands: args.print_commands | args.verbose,
         dry_run: args.dry_run,
@@ -166,6 +184,7 @@ async fn try_main(args: Args) -> Result<()> {
     }));
 
     let mut settings = WorkspaceSettings::default();
+    settings.output_directory = out_dir;
     for def in &args.define {
         let Some((key, value)) = def.split_once('=') else {
             return Err(anyhow::anyhow!(
@@ -184,7 +203,7 @@ async fn try_main(args: Args) -> Result<()> {
         io = Arc::new(werk_runner::RealSystem::new());
     }
 
-    let workspace = Workspace::new(&*io, workspace_dir.to_owned(), out_dir, settings).await?;
+    let workspace = Workspace::new(&*io, workspace_dir.to_owned(), &settings).await?;
 
     let mut runner = Runner::new(ast, io.clone(), workspace, watcher).await?;
     if args.list {
@@ -204,7 +223,9 @@ async fn try_main(args: Args) -> Result<()> {
     };
 
     runner.build_or_run(&target).await?;
-    runner.workspace().finalize(&*io).await;
+    if let Err(err) = runner.workspace().finalize(&*io).await {
+        eprintln!("Error writing `.werk-cache`: {err}")
+    }
 
     Ok(())
 }

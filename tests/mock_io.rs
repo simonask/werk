@@ -1,10 +1,14 @@
-use std::collections::hash_map;
+use core::panic;
+use std::{
+    collections::{hash_map, HashMap},
+    sync::atomic::AtomicU64,
+    time::SystemTime,
+};
 
-use ahash::HashMap;
 use parking_lot::Mutex;
 use werk_runner::{
-    BuildStatus, DirEntry, Error, Metadata, Outdatedness, ShellCommandLine, TaskId, WhichError,
-    WorkspaceSettings,
+    globset, BuildStatus, DirEntry, Error, GlobSettings, Metadata, Outdatedness, ShellCommandLine,
+    TaskId, WhichError,
 };
 
 #[inline]
@@ -121,20 +125,27 @@ impl werk_runner::Watcher for MockWatcher {
     }
 }
 
+pub type MockDir = HashMap<String, MockDirEntry>;
+pub type ProgramResult = std::io::Result<std::process::Output>;
+
+pub enum MockDirEntry {
+    File(Metadata, Vec<u8>),
+    Dir(MockDir),
+}
+
 #[derive(Default)]
 pub struct MockIo {
-    pub filesystem: Mutex<HashMap<std::path::PathBuf, (Metadata, Vec<u8>)>>,
-    pub which: HashMap<String, std::path::PathBuf>,
+    pub filesystem: Mutex<MockDir>,
+    pub which: Mutex<HashMap<String, std::path::PathBuf>>,
     pub programs: Mutex<
         HashMap<
             std::path::PathBuf,
-            Box<
-                dyn FnMut(&ShellCommandLine) -> Result<std::process::Output, std::io::Error> + Send,
-            >,
+            Box<dyn FnMut(&ShellCommandLine, &mut MockDir) -> ProgramResult + Send>,
         >,
     >,
-    pub env: HashMap<String, String>,
+    pub env: Mutex<HashMap<String, String>>,
     pub oplog: Mutex<Vec<MockIoOp>>,
+    pub now: AtomicU64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -148,6 +159,203 @@ pub enum MockIoOp {
     ReadEnv(String),
 }
 
+fn create_parent_dirs(fs: &mut MockDir, path: &std::path::Path) -> std::io::Result<()> {
+    let Some(parent) = path.parent() else {
+        return Ok(());
+    };
+
+    fn create_dirs(fs: &mut MockDir, path: &std::path::Path) -> std::io::Result<()> {
+        let mut iter = path.components();
+
+        let (Some(here), rest) = (iter.next(), iter.as_path()) else {
+            return Ok(());
+        };
+
+        match here {
+            std::path::Component::Prefix(_)
+            | std::path::Component::RootDir
+            | std::path::Component::CurDir => create_dirs(fs, rest),
+            std::path::Component::ParentDir => panic!("parent component"),
+            std::path::Component::Normal(name) => {
+                let name = name.to_string_lossy().into_owned();
+
+                match fs.entry(name) {
+                    hash_map::Entry::Occupied(occupied_entry) => {
+                        let MockDirEntry::Dir(subdir) = occupied_entry.into_mut() else {
+                            panic!("subdir is a file");
+                        };
+                        create_dirs(subdir, rest)
+                    }
+                    hash_map::Entry::Vacant(vacant_entry) => {
+                        let MockDirEntry::Dir(subdir) =
+                            vacant_entry.insert(MockDirEntry::Dir(HashMap::new()))
+                        else {
+                            unreachable!()
+                        };
+                        create_dirs(subdir, rest)
+                    }
+                }
+            }
+        }
+    }
+
+    create_dirs(fs, parent)
+}
+
+pub fn insert_fs(
+    fs: &mut MockDir,
+    path: &std::path::Path,
+    (metadata, vec): (Metadata, Vec<u8>),
+) -> std::io::Result<()> {
+    let mut iter = path.components();
+
+    let (Some(here), rest) = (iter.next(), iter.as_path()) else {
+        panic!("empty path");
+    };
+
+    match here {
+        std::path::Component::Prefix(_)
+        | std::path::Component::RootDir
+        | std::path::Component::CurDir => insert_fs(fs, rest, (metadata, vec)),
+        std::path::Component::ParentDir => panic!("parent component"),
+        std::path::Component::Normal(name) => {
+            let name = name.to_string_lossy().into_owned();
+
+            match fs.entry(name) {
+                hash_map::Entry::Occupied(occupied_entry) => {
+                    if rest.as_os_str().is_empty() {
+                        match occupied_entry.into_mut() {
+                            MockDirEntry::File(ref mut m, ref mut v) => {
+                                *m = metadata;
+                                *v = vec;
+                                Ok(())
+                            }
+                            MockDirEntry::Dir(_) => {
+                                panic!("file is a dir")
+                            }
+                        }
+                    } else {
+                        match occupied_entry.into_mut() {
+                            MockDirEntry::Dir(subdir) => insert_fs(subdir, rest, (metadata, vec)),
+                            MockDirEntry::File(..) => panic!("dir is a file"),
+                        }
+                    }
+                }
+                hash_map::Entry::Vacant(vacant_entry) => {
+                    if rest.as_os_str().is_empty() {
+                        vacant_entry.insert(MockDirEntry::File(metadata, vec));
+                        Ok(())
+                    } else {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "parent directory not found",
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn remove_fs(fs: &mut MockDir, path: &std::path::Path) -> std::io::Result<()> {
+    let mut iter = path.components();
+
+    let (Some(here), rest) = (iter.next(), iter.as_path()) else {
+        panic!("empty path");
+    };
+
+    match here {
+        std::path::Component::Prefix(_)
+        | std::path::Component::RootDir
+        | std::path::Component::CurDir => remove_fs(fs, rest),
+        std::path::Component::ParentDir => panic!("parent component"),
+        std::path::Component::Normal(name) => {
+            let name = name.to_string_lossy().into_owned();
+
+            match fs.entry(name) {
+                hash_map::Entry::Occupied(occupied_entry) => {
+                    if rest.as_os_str().is_empty() {
+                        occupied_entry.remove();
+                        Ok(())
+                    } else {
+                        match occupied_entry.into_mut() {
+                            MockDirEntry::Dir(subdir) => remove_fs(subdir, rest),
+                            MockDirEntry::File(..) => panic!("dir is a file"),
+                        }
+                    }
+                }
+                hash_map::Entry::Vacant(_) => Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "parent directory not found",
+                )),
+            }
+        }
+    }
+}
+
+fn read_fs<'a>(fs: &'a MockDir, path: &std::path::Path) -> std::io::Result<(DirEntry, &'a [u8])> {
+    fn read_fs<'a>(
+        fs: &'a MockDir,
+        path: &std::path::Path,
+        whole_path: &std::path::Path,
+    ) -> std::io::Result<(DirEntry, &'a [u8])> {
+        let mut iter = path.components();
+
+        let (Some(here), rest) = (iter.next(), iter.as_path()) else {
+            panic!("empty path")
+        };
+
+        match here {
+            std::path::Component::Prefix(_)
+            | std::path::Component::RootDir
+            | std::path::Component::CurDir => read_fs(fs, rest, whole_path),
+            std::path::Component::ParentDir => panic!("parent component"),
+            std::path::Component::Normal(name) => {
+                let Some(entry) = fs.get(name.to_string_lossy().as_ref()) else {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "file not found",
+                    ));
+                };
+
+                if rest.as_os_str().is_empty() {
+                    match entry {
+                        MockDirEntry::File(metadata, data) => Ok((
+                            DirEntry {
+                                path: whole_path.to_path_buf(),
+                                metadata: *metadata,
+                            },
+                            data,
+                        )),
+                        MockDirEntry::Dir(_) => Ok((
+                            DirEntry {
+                                path: whole_path.to_path_buf(),
+                                metadata: Metadata {
+                                    mtime: default_mtime(),
+                                    is_file: false,
+                                    is_symlink: false,
+                                },
+                            },
+                            &[],
+                        )),
+                    }
+                } else {
+                    match entry {
+                        MockDirEntry::File(..) => panic!("subdir is a file"),
+                        MockDirEntry::Dir(subdir) => read_fs(subdir, rest, whole_path),
+                    }
+                }
+            }
+        }
+    }
+
+    read_fs(fs, path, path)
+}
+
+pub fn contains_file(fs: &MockDir, path: &std::path::Path) -> bool {
+    read_fs(fs, path).is_ok()
+}
+
 impl MockIo {
     pub fn with_filesystem<I, K>(self, iter: I) -> Self
     where
@@ -155,27 +363,28 @@ impl MockIo {
         K: Into<std::path::PathBuf>,
     {
         let mut filesystem = self.filesystem.lock();
-        filesystem.extend(iter.into_iter().map(|(k, v)| (k.into(), v)));
+        for (path, (metadata, data)) in iter {
+            let path = path.into();
+            create_parent_dirs(&mut *filesystem, &path).unwrap();
+            insert_fs(&mut *filesystem, &path, (metadata, data)).unwrap();
+        }
         std::mem::drop(filesystem);
         self
     }
 
-    pub fn with_programs<I>(mut self, iter: I) -> Self
+    pub fn with_programs<I>(self, iter: I) -> Self
     where
         I: IntoIterator<
             Item = (
                 String,
-                Box<
-                    dyn FnMut(&ShellCommandLine) -> Result<std::process::Output, std::io::Error>
-                        + Send,
-                >,
+                Box<dyn FnMut(&ShellCommandLine, &mut MockDir) -> ProgramResult + Send>,
             ),
         >,
     {
         let mut programs = self.programs.lock();
         for (program, fun) in iter {
             let path = std::path::Path::new("/").join(&program);
-            self.which.insert(program, path.clone());
+            self.which.lock().insert(program, path.clone());
             programs.insert(path, fun);
         }
         std::mem::drop(programs);
@@ -184,29 +393,78 @@ impl MockIo {
     }
 
     pub fn with_program(
-        mut self,
+        self,
         program: impl Into<String>,
         path: impl Into<std::path::PathBuf>,
-        fun: impl FnMut(&ShellCommandLine) -> Result<std::process::Output, std::io::Error>
-            + Send
-            + 'static,
+        fun: impl FnMut(&ShellCommandLine, &mut MockDir) -> ProgramResult + Send + 'static,
     ) -> Self {
-        let program = program.into();
-        let path = path.into();
-        self.which.insert(program.clone(), path.clone());
-        self.programs.lock().insert(path, Box::new(fun));
+        self.set_program(program, path, fun);
         self
     }
 
-    pub fn with_envs<I, K, V>(mut self, iter: I) -> Self
+    pub fn with_envs<I, K, V>(self, iter: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: Into<String>,
         V: Into<String>,
     {
         self.env
+            .lock()
             .extend(iter.into_iter().map(|(k, v)| (k.into(), v.into())));
         self
+    }
+
+    pub fn set_env(&self, name: impl Into<String>, value: impl Into<String>) {
+        self.env.lock().insert(name.into(), value.into());
+    }
+
+    pub fn set_program(
+        &self,
+        program: impl Into<String>,
+        path: impl Into<std::path::PathBuf>,
+        fun: impl FnMut(&ShellCommandLine, &mut MockDir) -> ProgramResult + Send + 'static,
+    ) {
+        let program = program.into();
+        let path = path.into();
+        self.which.lock().insert(program.clone(), path.clone());
+        self.programs.lock().insert(path, Box::new(fun));
+    }
+
+    pub fn set_file(
+        &self,
+        path: impl AsRef<std::path::Path>,
+        contents: impl AsRef<[u8]>,
+    ) -> std::io::Result<()> {
+        let mut fs = self.filesystem.lock();
+        insert_fs(
+            &mut *fs,
+            path.as_ref(),
+            (
+                Metadata {
+                    mtime: self.now(),
+                    is_file: true,
+                    is_symlink: false,
+                },
+                Vec::from(contents.as_ref()),
+            ),
+        )
+    }
+
+    pub fn delete_file(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        let mut fs = self.filesystem.lock();
+        remove_fs(&mut *fs, path.as_ref())
+    }
+
+    pub fn clear_oplog(&self) {
+        self.oplog.lock().clear();
+    }
+
+    pub fn now(&self) -> SystemTime {
+        make_mtime(self.now.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    pub fn tick(&self) {
+        self.now.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn did_run_during_build(&self, command_line: &ShellCommandLine) -> bool {
@@ -278,7 +536,8 @@ impl werk_runner::Io for MockIo {
                     "program not found",
                 ));
             };
-            program(command_line)
+            let mut fs = self.filesystem.lock();
+            program(command_line, &mut *fs)
         })
     }
 
@@ -300,55 +559,67 @@ impl werk_runner::Io for MockIo {
                     "program not found",
                 ));
             };
-            program(command_line)
+            let mut fs = self.filesystem.lock();
+            program(command_line, &mut *fs)
         })
     }
 
     fn which(&self, command: &str) -> Result<std::path::PathBuf, WhichError> {
         self.oplog.lock().push(MockIoOp::Which(command.to_string()));
 
+        println!("which: {command}");
+
         self.which
+            .lock()
             .get(command)
             .cloned()
             .ok_or(WhichError::CannotFindBinaryPath)
     }
 
-    fn walk_directory<'a>(
+    fn glob_workspace<'a>(
         &'a self,
         path: &'a std::path::Path,
-        settings: &'a WorkspaceSettings,
-        ignore_subdirs: &'a [&std::path::Path],
-    ) -> Result<werk_runner::BoxIter<'a, Result<DirEntry, Error>>, Error> {
-        let vec = self
-            .filesystem
-            .lock()
-            .iter()
-            .filter_map(|(entry_path, (metadata, _))| {
-                if entry_path.starts_with(path) {
-                    if settings.ignore.iter().any(|ignore| ignore == path)
-                        || ignore_subdirs.iter().any(|ignore| *ignore == path)
-                    {
-                        return None;
-                    }
-                    Some(Ok(DirEntry {
-                        path: entry_path.clone(),
-                        metadata: metadata.clone(),
-                    }))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
+        settings: &'a GlobSettings,
+    ) -> werk_runner::PinBoxFut<'a, Result<Vec<DirEntry>, Error>> {
+        let fs = self.filesystem.lock();
 
-        Ok(Box::new(vec.into_iter()))
+        fn glob(
+            path: &std::path::Path,
+            dir: &MockDir,
+            results: &mut Vec<DirEntry>,
+            ignore_explicitly: &globset::GlobSet,
+        ) -> Result<(), Error> {
+            for (name, entry) in dir {
+                let entry_path = path.join(name);
+                match entry {
+                    MockDirEntry::File(metadata, _) => {
+                        if !ignore_explicitly.is_match(&entry_path) {
+                            results.push(DirEntry {
+                                path: entry_path,
+                                metadata: metadata.clone(),
+                            });
+                        }
+                    }
+                    MockDirEntry::Dir(subdir) => {
+                        glob(&entry_path, subdir, results, ignore_explicitly)?;
+                    }
+                }
+            }
+
+            Ok(())
+        }
+
+        let mut results = Vec::new();
+        let result = glob(path, &*fs, &mut results, &settings.ignore_explicitly);
+
+        Box::pin(std::future::ready(result.map(move |_| results)))
     }
 
     fn metadata(&self, path: &std::path::Path) -> Result<Metadata, Error> {
-        self.filesystem
-            .lock()
-            .get(path)
-            .map(|(metadata, _)| metadata.clone())
-            .ok_or(std::io::Error::new(std::io::ErrorKind::NotFound, "file not found").into())
+        let fs = self.filesystem.lock();
+        read_fs(&*fs, path)
+            .map(|(entry, _)| entry.metadata)
+            .map_err(Into::into)
     }
 
     fn read_file<'a>(
@@ -358,17 +629,20 @@ impl werk_runner::Io for MockIo {
         self.oplog
             .lock()
             .push(MockIoOp::ReadFile(path.to_path_buf()));
+        let fut = async move {
+            let fs = self.filesystem.lock();
+            let (entry, data) = read_fs(&*fs, path)?;
+            if !entry.metadata.is_file {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::IsADirectory,
+                    "is a directory",
+                ));
+            }
+            let data = Vec::from(data);
+            Ok(data)
+        };
 
-        Box::pin(async {
-            self.filesystem
-                .lock()
-                .get(path)
-                .map(|(_, data)| data.clone())
-                .ok_or(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "file not found",
-                ))
-        })
+        Box::pin(fut)
     }
 
     fn write_file<'a>(
@@ -376,61 +650,47 @@ impl werk_runner::Io for MockIo {
         path: &'a std::path::Path,
         data: &'a [u8],
     ) -> werk_runner::PinBoxFut<'a, Result<(), std::io::Error>> {
-        self.oplog
-            .lock()
-            .push(MockIoOp::WriteFile(path.to_path_buf()));
+        let path = path.to_path_buf();
+        self.oplog.lock().push(MockIoOp::WriteFile(path.clone()));
 
-        Box::pin(async {
-            let mut lock = self.filesystem.lock();
-            let Some(file) = lock.get_mut(path) else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "file not found",
-                ));
-            };
-            file.1.clear();
-            file.1.extend_from_slice(data);
-            Ok(())
-        })
+        let fut = async move {
+            let mut fs = self.filesystem.lock();
+            insert_fs(
+                &mut *fs,
+                &path,
+                (
+                    Metadata {
+                        mtime: self.now(),
+                        is_file: true,
+                        is_symlink: false,
+                    },
+                    Vec::from(data),
+                ),
+            )
+        };
+
+        Box::pin(fut)
     }
 
     fn create_parent_dirs<'a>(
         &'a self,
         path: &'a std::path::Path,
-    ) -> werk_runner::PinBoxFut<'a, Result<(), Error>> {
+    ) -> werk_runner::PinBoxFut<'a, Result<(), std::io::Error>> {
         self.oplog
             .lock()
             .push(MockIoOp::CreateParentDirs(path.to_path_buf()));
 
-        Box::pin(async {
-            let mut lock = self.filesystem.lock();
-            let mut current = path.parent();
-            while let Some(p) = current {
-                match lock.entry(p.to_path_buf()) {
-                    hash_map::Entry::Occupied(occupied_entry) => {
-                        assert!(occupied_entry.get().0.is_dir());
-                        break;
-                    }
-                    hash_map::Entry::Vacant(vacant_entry) => {
-                        vacant_entry.insert((
-                            Metadata {
-                                mtime: default_mtime(),
-                                is_file: false,
-                                is_symlink: false,
-                            },
-                            Vec::new(),
-                        ));
-                        current = p.parent();
-                    }
-                }
-            }
-            Ok(())
-        })
+        let fut = async move {
+            let mut fs = self.filesystem.lock();
+            create_parent_dirs(&mut *fs, path)
+        };
+
+        Box::pin(fut)
     }
 
     fn read_env(&self, name: &str) -> Option<String> {
         self.oplog.lock().push(MockIoOp::ReadEnv(name.to_string()));
-        self.env.get(name).cloned()
+        self.env.lock().get(name).cloned()
     }
 
     fn is_dry_run(&self) -> bool {

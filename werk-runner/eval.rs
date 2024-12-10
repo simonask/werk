@@ -3,8 +3,8 @@ use std::sync::Arc;
 use werk_parser::ast;
 
 use crate::{
-    BuildStatus, Error, EvalError, Io, Outdatedness, Pattern, PatternBuilder, PatternMatch, Reason,
-    RecipeScope, Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError, Value, Workspace,
+    Error, EvalError, Io, Outdatedness, Pattern, PatternBuilder, PatternMatch, Reason, RecipeScope,
+    Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError, Value, Workspace,
 };
 
 /// Evaluated value, which keeps track of "outdatedness" with respect to cached
@@ -511,26 +511,14 @@ pub fn eval_shell_commands(
 /// command is different from the cached path in .werk-cache.toml.
 pub fn eval_shell_commands_run_which_and_detect_outdated(
     scope: &RecipeScope<'_>,
-    io: &dyn Io,
     expr: &ast::Expr,
     force_color: bool,
 ) -> Result<Eval<Vec<ShellCommandLine>>, Error> {
-    let mut cmds = Vec::new();
-    eval_shell_commands_into(scope, expr, &mut cmds, force_color)?;
-
-    let mut outdated = Outdatedness::unchanged();
-    for cmd in cmds.iter_mut() {
-        let (program, which_outdated) = scope
-            .workspace()
-            .which(io, &cmd.program)
-            .map_err(|e| Error::CommandNotFound(cmd.program.clone(), e))?;
-        cmd.program = program;
-        outdated |= which_outdated;
-    }
-
+    let mut value = Vec::new();
+    let outdatedness = eval_shell_commands_into(scope, expr, &mut value, force_color)?;
     Ok(Eval {
-        value: cmds,
-        outdatedness: outdated,
+        value,
+        outdatedness,
     })
 }
 
@@ -597,13 +585,6 @@ pub async fn eval_shell<P: Scope + ?Sized>(
     // because we are capturing the output as a string.
     command.set_no_color();
 
-    // Resolve the program path up front, in order to detect if it changed.
-    let (which_program, which_status) = scope
-        .workspace()
-        .which(io, &command.program)
-        .map_err(|e| EvalError::CommandNotFound(command.program.clone(), e))?;
-    command.program = which_program;
-
     let output = match io
         .run_during_eval(&command, scope.workspace().project_root())
         .await
@@ -631,7 +612,7 @@ pub async fn eval_shell<P: Scope + ?Sized>(
     let stdout = String::from_utf8_lossy(&output.stdout.trim_ascii());
     Ok(Eval {
         value: stdout.into_owned(),
-        outdatedness: command.outdatedness | which_status,
+        outdatedness: command.outdatedness,
     })
 }
 

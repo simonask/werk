@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
-[dev-dependencies]
+[dependencies]
 werk-runner.workspace = true
 werk-parser.workspace = true
 werk-fs.workspace = true
@@ -12,6 +12,10 @@ tokio.workspace = true
 anyhow = "1"
 parking_lot.workspace = true
 ahash.workspace = true
+tracing-subscriber = "0.3.18"
+
+[lib]
+path = "lib.rs"
 
 [[test]]
 name = "test_expressions"
@@ -20,3 +24,7 @@ path = "test_expressions.rs"
 [[test]]
 name = "test_pattern_match"
 path = "test_pattern_match.rs"
+
+[[test]]
+name = "test_outdatedness"
+path = "test_outdatedness.rs"

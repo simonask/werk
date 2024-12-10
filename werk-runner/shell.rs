@@ -7,8 +7,10 @@ use crate::{EvalError, Value};
 
 #[derive(Clone, PartialEq)]
 pub struct ShellCommandLine {
-    /// The name of the program to run. This will be passed to `which`.
-    pub program: String,
+    /// The name of the program to run. Should be an absolute path, either from
+    /// a `which` expression or an `<var>` interpolation when running an
+    /// executable produced by another recipe.
+    pub program: std::path::PathBuf,
     pub arguments: Vec<String>,
     pub env: BTreeMap<OsString, OsString>,
     /// Environment variables *not* to inherit from the parent process.
@@ -85,7 +87,7 @@ impl ShellCommandLine {
 
 impl std::fmt::Display for ShellCommandLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.program)?;
+        write!(f, "{}", self.program.display())?;
         for arg in &self.arguments {
             // TODO: Don't escape Unicode sequences, just newlines, control chars, and quotes.
             if arg.contains(char::is_whitespace) {
@@ -100,7 +102,7 @@ impl std::fmt::Display for ShellCommandLine {
 
 impl std::fmt::Debug for ShellCommandLine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "\"{}\"", self.program.escape_debug())?;
+        write!(f, "{:?}", self.program)?;
         for arg in &self.arguments {
             write!(f, " \"{}\"", arg.escape_debug())?;
         }
@@ -195,6 +197,13 @@ impl ShellCommandLineBuilder {
         } else {
             let trimmed = s.trim();
             if !trimmed.is_empty() {
+                if let Some(last) = self.parts.last_mut() {
+                    if last.is_empty() {
+                        last.push_str(trimmed);
+                        return self;
+                    }
+                }
+
                 self.parts.push(trimmed.to_owned());
             }
         }
@@ -220,7 +229,7 @@ impl ShellCommandLineBuilder {
                 return Err(EvalError::EmptyCommand.into());
             };
             Ok(ShellCommandLine {
-                program,
+                program: program.into(),
                 arguments: parts.collect(),
                 env: std::mem::take(&mut self.env),
                 env_remove: std::mem::take(&mut self.env_remove),

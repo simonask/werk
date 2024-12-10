@@ -4,16 +4,16 @@ use parking_lot::Mutex;
 use std::collections::hash_map;
 use werk_fs::PathError;
 
-use crate::{BuildStatus, DirEntry, Error, Io, Outdatedness, Reason};
+use crate::{DirEntry, Error, Io, Outdatedness, Reason};
 
 #[derive(Clone)]
 pub struct WorkspaceSettings {
-    pub git_ignore: bool,
-    pub git_ignore_global: bool,
-    pub git_ignore_exclude: bool,
-    pub git_ignore_from_parents: bool,
-    pub ignore_hidden: bool,
-    pub ignore: Vec<std::path::PathBuf>,
+    pub output_directory: std::path::PathBuf,
+    /// Settings for globbing the workspace directory. Note that the
+    /// `output_directory` is not automatically ignored, and must either be
+    /// present in `.gitignore` or explicitly ignored here.
+    pub glob: GlobSettings,
+    /// Command-line `--define` or `-D` arguments, overriding global variables.
     pub defines: HashMap<String, String>,
     /// When true, the [`Runner`](crate::Runner) sets the `FORCE_COLOR` and
     /// `CLICOLOR_FORCE` environment variables to "1" when executing recipe
@@ -22,16 +22,44 @@ pub struct WorkspaceSettings {
 }
 
 impl Default for WorkspaceSettings {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            output_directory: std::path::PathBuf::from("target"),
+            glob: GlobSettings::default(),
+            defines: HashMap::default(),
+            force_color: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct GlobSettings {
+    /// Read the workspace directory's `.gitignore`. Enabled by default.
+    pub git_ignore: bool,
+    /// Read a global gitignore file, specified in the `core.excludeFiles`
+    /// config option. Enabled by default.
+    pub git_ignore_global: bool,
+    /// Read `.git/info/exclude`. Enabled by default.
+    pub git_ignore_exclude: bool,
+    /// Read `.gitignore` from parent directoryes. Enabled by default.
+    pub git_ignore_from_parents: bool,
+    /// Enables reading `.ignore` files, supported by `ripgrep` and The Silver Searcher. Enabled by default.
+    pub dot_ignore: bool,
+    /// Explicit file name patterns to ignore in addition to gitignore and .ignore files.
+    pub ignore_explicitly: globset::GlobSet,
+}
+
+impl Default for GlobSettings {
+    #[inline]
     fn default() -> Self {
         Self {
             git_ignore: true,
             git_ignore_global: true,
             git_ignore_exclude: true,
-            git_ignore_from_parents: false,
-            ignore_hidden: false,
-            ignore: Vec::new(),
-            defines: HashMap::default(),
-            force_color: false,
+            git_ignore_from_parents: true,
+            dot_ignore: true,
+            ignore_explicitly: globset::GlobSet::empty(),
         }
     }
 }
@@ -40,6 +68,11 @@ impl WorkspaceSettings {
     /// Override a global variable in the root scope.
     pub fn define(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
         self.defines.insert(key.into(), value.into());
+        self
+    }
+
+    pub fn ignore_explicitly(&mut self, globset: globset::GlobSet) -> &mut Self {
+        self.glob.ignore_explicitly = globset;
         self
     }
 }
@@ -70,7 +103,7 @@ struct Caches {
 }
 
 /// Persisted workspace cache, i.e. the contents of `<out-dir>/.werk-cache`.
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Debug, serde::Serialize, serde::Deserialize)]
 struct PersistedCache {
     /// Glob strings and the hash of their results. This is used to determine if
     /// a glob changed between runs.
@@ -90,17 +123,14 @@ impl Workspace {
     pub async fn new(
         io: &dyn Io,
         project_root: std::path::PathBuf,
-        output_directory: std::path::PathBuf,
-        settings: WorkspaceSettings,
+        settings: &WorkspaceSettings,
     ) -> Result<Self, Error> {
-        let werk_cache = read_workspace_cache(io, &output_directory).await;
+        let werk_cache = read_workspace_cache(io, &settings.output_directory).await;
 
         let mut workspace_files =
             IndexMap::with_capacity_and_hasher(1024, ahash::RandomState::default());
 
-        for entry in io.walk_directory(&project_root, &settings, &[&output_directory])? {
-            let entry = entry?;
-
+        for entry in io.glob_workspace(&project_root, &settings.glob).await? {
             if entry.path.file_name() == Some(WERK_CACHE_FILENAME.as_ref()) {
                 return Err(Error::ClobberedWorkspace(entry.path));
             }
@@ -121,7 +151,7 @@ impl Workspace {
 
         Ok(Self {
             project_root,
-            output_directory,
+            output_directory: settings.output_directory.clone(),
             workspace_files,
             werk_cache,
             runtime_caches: Mutex::new(Caches {
@@ -129,13 +159,13 @@ impl Workspace {
                 which_cache: HashMap::default(),
                 env_cache: HashMap::default(),
             }),
-            defines: settings.defines,
+            defines: settings.defines.clone(),
             force_color: settings.force_color,
         })
     }
 
     /// Write outdatedness cache (`which` and `glob`)  to "<out-dir>/.werk-cache".
-    pub async fn finalize(&self, io: &dyn Io) {
+    pub async fn finalize(&self, io: &dyn Io) -> std::io::Result<()> {
         let caches = self.runtime_caches.lock();
         let new_cache = PersistedCache {
             glob: caches
@@ -161,7 +191,7 @@ impl Workspace {
                 .collect(),
         };
 
-        write_workspace_cache(io, &self.output_directory, &new_cache).await;
+        write_workspace_cache(io, &self.output_directory, &new_cache).await
     }
 
     #[inline]
@@ -218,7 +248,7 @@ impl Workspace {
         path: &werk_fs::Path,
     ) -> Result<(), Error> {
         let fs_path = path.resolve(&self.output_directory)?;
-        io.create_parent_dirs(&fs_path).await
+        io.create_parent_dirs(&fs_path).await.map_err(Into::into)
     }
 
     /// Resolve abstract path. If the path exists in the workspace, return the
@@ -290,6 +320,7 @@ impl Workspace {
                 {
                     Outdatedness::unchanged()
                 } else {
+                    tracing::debug!("Glob result changed: {pattern}");
                     Outdatedness::outdated(Reason::Glob(pattern.to_owned()))
                 };
 
@@ -322,6 +353,7 @@ impl Workspace {
                         {
                             Outdatedness::unchanged()
                         } else {
+                            tracing::debug!("Program path changed: {command} -> {path:?}");
                             Outdatedness::outdated(Reason::Which(command.to_owned()))
                         }
                     }
@@ -347,15 +379,18 @@ impl Workspace {
             hash_map::Entry::Vacant(entry) => {
                 let result = io.read_env(name).unwrap_or_default();
                 let hash = compute_stable_hash(&result);
-                let outdated = if self
-                    .werk_cache
-                    .env
-                    .get(name)
-                    .is_some_and(|existing_value| *existing_value == hash)
-                {
-                    Outdatedness::unchanged()
-                } else {
-                    Outdatedness::outdated(Reason::Env(name.to_owned()))
+                let outdated = match self.werk_cache.env.get(name) {
+                    Some(existing_value) if *existing_value != hash => {
+                        tracing::trace!("Environment variable changed: {name} (old hash = {existing_value:?}, new hash = {hash:?})");
+                        Outdatedness::outdated(Reason::Env(name.to_owned()))
+                    }
+                    Some(_existing_value) => {
+                        tracing::trace!(
+                            "Cached environment variable did not change: {name} (hash = {hash:?})"
+                        );
+                        Outdatedness::unchanged()
+                    }
+                    None => Outdatedness::unchanged(),
                 };
 
                 entry.insert((result.clone(), outdated.clone(), hash));
@@ -399,12 +434,16 @@ async fn read_workspace_cache(io: &dyn Io, output_dir: &std::path::Path) -> Pers
     }
 }
 
-async fn write_workspace_cache(io: &dyn Io, output_dir: &std::path::Path, cache: &PersistedCache) {
+async fn write_workspace_cache(
+    io: &dyn Io,
+    output_dir: &std::path::Path,
+    cache: &PersistedCache,
+) -> std::io::Result<()> {
     let data = match toml_edit::ser::to_vec(cache) {
         Ok(data) => data,
         Err(err) => {
             tracing::error!("Serialization error writing .werk-cache: {err}");
-            return;
+            panic!("Serialization error writing .werk-cache: {err}");
         }
     };
 
@@ -415,13 +454,14 @@ async fn write_workspace_cache(io: &dyn Io, output_dir: &std::path::Path, cache:
             "Error creating parent directory for .werk-cache '{}': {err}",
             output_dir.display()
         );
-        return;
+        return Err(err);
     }
 
     match io.write_file(&path, &data).await {
-        Ok(()) => {}
+        Ok(()) => Ok(()),
         Err(err) => {
             tracing::error!("Error writing .werk-cache: {err}");
+            Err(err)
         }
     }
 }

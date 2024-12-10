@@ -479,6 +479,9 @@ tables, and keys in TOML tables must be unique).
 - `{ ..., warning = "message" }`: Emit a warning and pass the value unaltered.
 - `{ ..., info = "message" }`: Emit an informational message and pass the value
   unaltered.
+- `{ ..., help = "message" }`: When the expression fails for whatever reason,
+  print the help message to the user. For example, this might be used together
+  with `which` to guide the user to install a command-line utility.
 - `{ ..., patsubst = { pattern = "pattern", replacement = "replacement" } }`: If
   the value matches the pattern, replace it with `replacement`. Pattern captures
   are available inside the replacement.

@@ -94,7 +94,7 @@ struct TaskState {
 pub enum BuildStatus {
     /// Target was built, along with the outdatedness. If the outdatedness is
     /// empty, the target was determined to be up-to-date.
-    Complete(Outdatedness),
+    Complete(TaskId, Outdatedness),
     /// Target is a dependency that exists in the filesystem, along with its
     /// last modification time.
     Exists(werk_fs::PathBuf, SystemTime),
@@ -106,7 +106,13 @@ impl BuildStatus {
     /// an output mtime is not available, returns empty outdatedness.
     pub fn into_output_outdatedness(self, output_mtime: Option<SystemTime>) -> Outdatedness {
         match self {
-            BuildStatus::Complete(outdatedness) => outdatedness,
+            BuildStatus::Complete(task_id, outdatedness) => {
+                if outdatedness.is_outdated() {
+                    Outdatedness::outdated(Reason::Rebuilt(task_id.clone()))
+                } else {
+                    Outdatedness::unchanged()
+                }
+            }
             BuildStatus::Exists(path_buf, system_time) => {
                 let Some(output_mtime) = output_mtime else {
                     return Outdatedness::unchanged();
@@ -184,6 +190,11 @@ impl<'a> Runner<'a> {
             // simplifies things because we don't need a `RootScopeMut` variant.
             let scope = RootScope::new(&globals, &workspace, &*watcher);
             let value = eval(&scope, &*io, value).await?;
+            tracing::trace!(
+                "global var '{name}' = {:?}, outdated = {:?}",
+                value.value,
+                value.outdatedness
+            );
             globals.insert(name.to_owned(), value);
         }
 
@@ -485,7 +496,6 @@ impl Inner {
         let mut shell_commands = if let Some(commands) = &recipe.command {
             eval_shell_commands_run_which_and_detect_outdated(
                 &scope,
-                &*self.io,
                 commands,
                 self.workspace.force_color,
             )?
@@ -522,12 +532,10 @@ impl Inner {
             tracing::debug!("Rebuilding: {task_id}");
             self.execute_recipe_commands(task_id, &mut shell_commands.value, &scope, false)
                 .await
-                .map(|_| {
-                    BuildStatus::Complete(Outdatedness::outdated(Reason::Rebuilt(task_id.clone())))
-                })
+                .map(|_| BuildStatus::Complete(task_id.clone(), outdated))
         } else {
             tracing::debug!("Up to date: {task_id}");
-            Ok(BuildStatus::Complete(Outdatedness::unchanged()))
+            Ok(BuildStatus::Complete(task_id.clone(), outdated))
         };
 
         self.watcher
@@ -591,7 +599,7 @@ impl Inner {
                 recipe.capture.is_some_and(|c| !c),
             )
             .await
-            .map(|_| BuildStatus::Complete(outdated));
+            .map(|_| BuildStatus::Complete(task_id.clone(), outdated));
 
         self.watcher
             .did_build(task_id, &result, post_message.as_deref());
@@ -650,8 +658,9 @@ impl Inner {
     ) -> Pin<Box<dyn Future<Output = Result<Outdatedness, Error>> + Send + 'a>> {
         if dependencies.len() == 1 {
             // Boxing because of recursion.
+            let dependency = dependencies.pop().unwrap();
             return Box::pin(async move {
-                self.run_task(dependencies.pop().unwrap(), DepChain::Ref(&dependent))
+                self.run_task(dependency, DepChain::Ref(&dependent))
                     .await
                     .map(|status| status.into_output_outdatedness(output_mtime))
             });

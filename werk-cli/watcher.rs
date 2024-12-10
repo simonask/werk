@@ -13,6 +13,8 @@ use crate::ColorChoice;
 
 #[derive(Clone, Copy, Debug)]
 pub struct OutputSettings {
+    /// Logging is enabled, so don't try to modify terminal contents in-place.
+    pub logging_enabled: bool,
     pub color: ColorChoice,
     pub print_recipe_commands: bool,
     pub dry_run: bool,
@@ -211,7 +213,7 @@ struct StdioLock<'a> {
 
 impl<'a> StdioLock<'a> {
     fn clear_current_line(&mut self) {
-        if self.stdout.advanced_rendering() {
+        if self.stdout.advanced_rendering() && !self.inner.settings.logging_enabled {
             crossterm::execute!(
                 &mut self.stdout,
                 crossterm::cursor::MoveToColumn(0),
@@ -222,7 +224,7 @@ impl<'a> StdioLock<'a> {
     }
 
     fn render(&mut self) {
-        if self.stdout.advanced_rendering() {
+        if self.stdout.advanced_rendering() && !self.inner.settings.logging_enabled {
             let inner = &mut *self.inner;
             let buffer = &mut inner.render_buffer;
             if inner.current_tasks.is_empty() {
@@ -246,10 +248,11 @@ impl<'a> StdioLock<'a> {
                     write!(buffer, "{}", task).unwrap();
                 }
             }
+            buffer.push(' ');
             self.stdout.write_all(buffer.as_bytes()).unwrap();
-        }
 
-        self.stdout.flush().unwrap();
+            self.stdout.flush().unwrap();
+        }
     }
 
     fn will_build(
@@ -307,7 +310,7 @@ impl<'a> StdioLock<'a> {
 
         self.clear_current_line();
         match result {
-            Ok(BuildStatus::Complete(outdatedness)) => {
+            Ok(BuildStatus::Complete(_task_id, outdatedness)) => {
                 if outdatedness.is_outdated() {
                     _ = writeln!(
                         &mut self.stdout,

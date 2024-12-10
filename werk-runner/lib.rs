@@ -24,3 +24,6 @@ pub use value::*;
 pub use workspace::*;
 
 pub use which::Error as WhichError;
+
+#[doc(no_inline)]
+pub use globset;

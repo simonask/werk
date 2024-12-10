@@ -583,6 +583,15 @@ impl<'a> TryFrom<&'a str> for &'a Path {
     }
 }
 
+impl TryFrom<&str> for PathBuf {
+    type Error = PathError;
+
+    #[inline(always)]
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        PathBuf::new(value.to_owned())
+    }
+}
+
 /// Fallible conversion to `Path`.
 pub trait AsPath {
     fn as_path(&self) -> Result<&Path, PathError>;

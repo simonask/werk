@@ -1,4 +1,4 @@
-use werk_runner::{BoxIter, Error, PinBoxFut};
+use werk_runner::{DirEntry, Error, PinBoxFut};
 
 pub struct DryRun(werk_runner::RealSystem);
 
@@ -35,13 +35,12 @@ impl werk_runner::Io for DryRun {
         self.0.which(command)
     }
 
-    fn walk_directory<'a>(
+    fn glob_workspace<'a>(
         &'a self,
         path: &'a std::path::Path,
-        settings: &'a werk_runner::WorkspaceSettings,
-        ignore_subdirs: &'a [&std::path::Path],
-    ) -> Result<BoxIter<'a, Result<werk_runner::DirEntry, Error>>, Error> {
-        self.0.walk_directory(path, settings, ignore_subdirs)
+        settings: &'a werk_runner::GlobSettings,
+    ) -> PinBoxFut<'a, Result<Vec<DirEntry>, Error>> {
+        self.0.glob_workspace(path, settings)
     }
 
     fn metadata(&self, path: &std::path::Path) -> Result<werk_runner::Metadata, Error> {
@@ -71,7 +70,7 @@ impl werk_runner::Io for DryRun {
     fn create_parent_dirs<'a>(
         &'a self,
         path: &'a std::path::Path,
-    ) -> PinBoxFut<'a, Result<(), Error>> {
+    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
         tracing::info!(
             "[DRY-RUN] Would create parent directories for '{}'",
             path.display()

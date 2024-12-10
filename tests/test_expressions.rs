@@ -3,9 +3,7 @@ use std::sync::Arc;
 use werk_parser::{ast, parse_string::parse_pattern_expr, parse_string::parse_string_expr};
 use werk_runner::{Metadata, WhichError};
 
-#[path = "mock_io.rs"]
-mod mock_io;
-use mock_io::*;
+use tests::mock_io::*;
 
 static EXPRESSIONS_TOML: &str = include_str!("../examples/expressions.toml");
 
@@ -75,7 +73,7 @@ async fn expressions() -> anyhow::Result<()> {
     let watcher = Arc::new(MockWatcher::default());
     let io = Arc::new(
         MockIo::default()
-            .with_program("clang", "/clang", |_cmdline| {
+            .with_program("clang", "/clang", |_cmdline, _fs| {
                 Ok(std::process::Output {
                     status: std::process::ExitStatus::default(),
                     stdout: Vec::from(b"clang output"),
@@ -95,8 +93,7 @@ async fn expressions() -> anyhow::Result<()> {
             )])
             .with_envs([("PROFILE", "debug")]),
     );
-    let workspace =
-        werk_runner::Workspace::new(&*io, "/".into(), "target".into(), Default::default()).await?;
+    let workspace = werk_runner::Workspace::new(&*io, "/".into(), &Default::default()).await?;
     let runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher).await?;
 
     let globals = runner.globals();
@@ -128,8 +125,7 @@ async fn fail_which() -> anyhow::Result<()> {
             )])
             .with_envs([("PROFILE", "debug")]),
     );
-    let workspace =
-        werk_runner::Workspace::new(&*io, "/".into(), "target".into(), Default::default()).await?;
+    let workspace = werk_runner::Workspace::new(&*io, "/".into(), &Default::default()).await?;
     let Err(err) = werk_runner::Runner::new(ast, io.clone(), workspace, watcher).await else {
         panic!("expected error")
     };
@@ -153,7 +149,7 @@ async fn fail_custom_err() -> anyhow::Result<()> {
     let watcher = Arc::new(MockWatcher::default());
     let io = Arc::new(
         MockIo::default()
-            .with_program("clang", "/clang", |_cmdline| {
+            .with_program("clang", "/clang", |_cmdline, _fs| {
                 Ok(std::process::Output {
                     status: std::process::ExitStatus::default(),
                     stdout: Vec::from(b"clang output"),
@@ -173,8 +169,7 @@ async fn fail_custom_err() -> anyhow::Result<()> {
             )])
             .with_envs([("PROFILE", "nonexistent profile")]),
     );
-    let workspace =
-        werk_runner::Workspace::new(&*io, "/".into(), "target".into(), Default::default()).await?;
+    let workspace = werk_runner::Workspace::new(&*io, "/".into(), &Default::default()).await?;
     let Err(err) = werk_runner::Runner::new(ast, io.clone(), workspace, watcher).await else {
         panic!("expected error")
     };

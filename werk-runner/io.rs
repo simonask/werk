@@ -4,7 +4,10 @@ use std::{
     time::SystemTime,
 };
 
-use crate::{Error, ShellCommandLine, WorkspaceSettings};
+pub use ignore::WalkState;
+use parking_lot::Mutex;
+
+use crate::{Error, GlobSettings, ShellCommandLine};
 
 /// Convenience type alias.
 pub type PinBox<T> = std::pin::Pin<Box<T>>;
@@ -39,22 +42,39 @@ pub trait Io: Send + Sync + 'static {
         working_dir: &'a Path,
     ) -> PinBoxFut<'a, Result<std::process::Output, std::io::Error>>;
 
+    /// Determine the absolute filesystem path to a program.
     fn which(&self, command: &str) -> Result<PathBuf, which::Error>;
-    fn walk_directory<'a>(
+
+    /// Glob the workspace directory, adhering to the glob settings.
+    ///
+    /// If this function produces a path to a `.werk-cache` file, the
+    /// `Workspace` constructor will fail.
+    fn glob_workspace<'a>(
         &'a self,
         path: &'a Path,
-        settings: &'a WorkspaceSettings,
-        ignore_subdirs: &'a [&Path],
-    ) -> Result<BoxIter<'a, Result<DirEntry, Error>>, Error>;
+        settings: &'a GlobSettings,
+    ) -> PinBoxFut<'a, Result<Vec<DirEntry>, Error>>;
+
+    /// Query the metadata of a filesystem path.
     fn metadata(&self, path: &Path) -> Result<Metadata, Error>;
+
+    /// Read a file from the filesystem.
     fn read_file<'a>(&'a self, path: &'a Path) -> PinBoxFut<'a, Result<Vec<u8>, std::io::Error>>;
+
+    /// Write a file to the filesystem.
     fn write_file<'a>(
         &'a self,
         path: &'a Path,
         data: &'a [u8],
     ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
-    fn create_parent_dirs<'a>(&'a self, path: &'a Path) -> PinBoxFut<'a, Result<(), Error>>;
 
+    /// Create the parent directories of `path`, recursively.
+    fn create_parent_dirs<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
+
+    /// Read environment variable.
     fn read_env(&self, name: &str) -> Option<String>;
 
     /// Is this object actually executing commands or not? The return value
@@ -67,6 +87,30 @@ pub trait Io: Send + Sync + 'static {
 pub struct DirEntry {
     pub path: PathBuf,
     pub metadata: Metadata,
+}
+
+impl TryFrom<ignore::DirEntry> for DirEntry {
+    type Error = ignore::Error;
+
+    #[inline]
+    fn try_from(entry: ignore::DirEntry) -> Result<Self, Self::Error> {
+        Ok(DirEntry {
+            metadata: entry.metadata()?.try_into()?,
+            path: entry.into_path(),
+        })
+    }
+}
+
+impl TryFrom<std::fs::DirEntry> for DirEntry {
+    type Error = std::io::Error;
+
+    #[inline]
+    fn try_from(value: std::fs::DirEntry) -> Result<Self, Self::Error> {
+        Ok(DirEntry {
+            metadata: value.metadata()?.try_into()?,
+            path: value.path(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -149,36 +193,86 @@ impl Io for RealSystem {
         which::which(program)
     }
 
-    fn walk_directory<'a>(
+    fn glob_workspace<'a>(
         &'a self,
         path: &'a Path,
-        settings: &'a WorkspaceSettings,
-        ignore_subdirs: &'a [&'a Path],
-    ) -> Result<BoxIter<'a, Result<DirEntry, Error>>, Error> {
+        settings: &'a GlobSettings,
+    ) -> PinBoxFut<'a, Result<Vec<DirEntry>, Error>> {
+        let GlobSettings {
+            git_ignore,
+            git_ignore_global,
+            git_ignore_exclude,
+            git_ignore_from_parents,
+            dot_ignore,
+            ignore_explicitly,
+        } = settings.clone();
+
         let mut walker = ignore::WalkBuilder::new(path);
         walker
-            .git_ignore(settings.git_ignore)
-            .git_global(settings.git_ignore_global)
-            .git_exclude(settings.git_ignore_exclude)
-            .parents(settings.git_ignore_from_parents)
-            .hidden(!settings.ignore_hidden);
+            .git_ignore(git_ignore)
+            .git_global(git_ignore_global)
+            .git_exclude(git_ignore_exclude)
+            .ignore(dot_ignore)
+            .parents(git_ignore_from_parents);
 
-        // Ignore the out_dir in globs.
-        for ignore in ignore_subdirs {
-            walker.add_ignore(ignore);
-        }
-        for ignore in &settings.ignore {
-            walker.add_ignore(ignore);
+        walker.filter_entry(move |entry| !ignore_explicitly.is_match(entry.path()));
+
+        let walker = walker.build_parallel();
+
+        struct Builder<'s>(&'s Mutex<Result<Vec<DirEntry>, Error>>);
+        impl<'s> ignore::ParallelVisitorBuilder<'s> for Builder<'s> {
+            fn build(&mut self) -> Box<dyn ignore::ParallelVisitor + 's> {
+                Box::new(Visitor(Ok(Vec::new()), &self.0))
+            }
         }
 
-        let walker = walker.build();
-        Ok(Box::new(walker.map(|entry| {
-            let entry = entry?;
-            Ok(DirEntry {
-                path: entry.path().to_path_buf(),
-                metadata: entry.metadata()?.try_into()?,
+        struct Visitor<'s>(
+            Result<Vec<DirEntry>, Error>,
+            &'s Mutex<Result<Vec<DirEntry>, Error>>,
+        );
+        impl<'s> ignore::ParallelVisitor for Visitor<'s> {
+            fn visit(&mut self, entry: Result<ignore::DirEntry, ignore::Error>) -> WalkState {
+                let Ok(ref mut entries) = self.0 else {
+                    // Already errored.
+                    return WalkState::Quit;
+                };
+
+                match entry.map_err(Into::into).and_then(TryInto::try_into) {
+                    Ok(entry) => {
+                        entries.push(entry);
+                        WalkState::Continue
+                    }
+                    Err(err) => {
+                        self.0 = Err(err.into());
+                        WalkState::Quit
+                    }
+                }
+            }
+        }
+        impl<'s> Drop for Visitor<'s> {
+            fn drop(&mut self) {
+                let mut results = self.1.lock();
+                let Ok(ref mut entries) = &mut *results else {
+                    // Already errored.
+                    return;
+                };
+
+                match std::mem::replace(&mut self.0, Ok(Vec::new())) {
+                    Ok(new_entries) => entries.extend(new_entries),
+                    Err(err) => *results = Err(err),
+                }
+            }
+        }
+
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                let results = Mutex::new(Ok(Vec::new()));
+                walker.visit(&mut Builder(&results));
+                results.into_inner()
             })
-        })))
+            .await
+            .map_err(Error::custom)?
+        })
     }
 
     fn metadata(&self, path: &Path) -> Result<Metadata, Error> {
@@ -197,7 +291,10 @@ impl Io for RealSystem {
         Box::pin(async move { tokio::fs::write(path, data).await })
     }
 
-    fn create_parent_dirs<'a>(&'a self, path: &'a Path) -> PinBoxFut<'a, Result<(), Error>> {
+    fn create_parent_dirs<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
         Box::pin(async move {
             let parent = path.parent().unwrap();
             let did_exist = parent.is_dir();
