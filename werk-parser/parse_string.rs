@@ -1,12 +1,12 @@
 use crate::{ast, ParseError};
 use winnow::{
-    ascii::digit1,
+    ascii::{digit1, multispace1},
     combinator::{alt, cut_err, delimited, opt, peek, preceded, repeat, separated, separated_pair},
     error::{
         StrContext::{self, Expected},
         StrContextValue::Description,
     },
-    token::take_while,
+    token::{take_till, take_while},
     PResult, Parser,
 };
 
@@ -60,69 +60,149 @@ fn ident(input: &mut &str) -> PResult<String> {
         .map(ToOwned::to_owned)
 }
 
+#[derive(Debug, Clone)]
+enum StringFragment<'a> {
+    Literal(&'a str),
+    EscapedChar(char),
+    EscapedWhitespace,
+    Interpolation(ast::StringInterpolation),
+    PatternStem,
+    OneOf(Vec<String>),
+}
+
+fn push_string_fragment(expr: &mut ast::StringExpr, frag: StringFragment) {
+    match frag {
+        StringFragment::Literal(lit) => {
+            if let Some(ast::StringFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
+                last.push_str(lit);
+            } else {
+                expr.fragments
+                    .push(ast::StringFragment::Literal(lit.to_owned()));
+            }
+        }
+        StringFragment::EscapedChar(ch) => {
+            if let Some(ast::StringFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
+                last.push(ch);
+            } else {
+                expr.fragments
+                    .push(ast::StringFragment::Literal(ch.to_string()));
+            }
+        }
+        StringFragment::EscapedWhitespace => {}
+        StringFragment::Interpolation(string_interpolation) => {
+            expr.fragments
+                .push(ast::StringFragment::Interpolation(string_interpolation));
+        }
+        StringFragment::PatternStem => panic!("pattern in string expr"),
+        StringFragment::OneOf(_) => panic!("pattern in string expr"),
+    }
+}
+
+fn push_pattern_fragment(expr: &mut ast::PatternExpr, frag: StringFragment) {
+    match frag {
+        StringFragment::Literal(lit) => {
+            if let Some(ast::PatternFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
+                last.push_str(lit);
+            } else {
+                expr.fragments
+                    .push(ast::PatternFragment::Literal(lit.to_owned()));
+            }
+        }
+        StringFragment::EscapedChar(ch) => {
+            if let Some(ast::PatternFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
+                last.push(ch);
+            } else {
+                expr.fragments
+                    .push(ast::PatternFragment::Literal(ch.to_string()));
+            }
+        }
+        StringFragment::EscapedWhitespace => {}
+        StringFragment::Interpolation(string_interpolation) => {
+            expr.fragments
+                .push(ast::PatternFragment::Interpolation(string_interpolation));
+        }
+        StringFragment::PatternStem => expr.fragments.push(ast::PatternFragment::PatternStem),
+        StringFragment::OneOf(one_of) => expr.fragments.push(ast::PatternFragment::OneOf(one_of)),
+    }
+}
+
 fn string_expr(input: &mut &str) -> PResult<ast::StringExpr> {
-    let fragments = repeat(0.., string_fragment)
-        .context(StrContext::Label("string expression"))
-        .parse_next(input)?;
-    Ok(ast::StringExpr { fragments })
+    let mut build_string =
+        repeat(0.., string_fragment).fold(ast::StringExpr::default, |mut expr, fragment| {
+            push_string_fragment(&mut expr, fragment);
+            expr
+        });
+    build_string.parse_next(input)
 }
 
 fn pattern_expr(input: &mut &str) -> PResult<ast::PatternExpr> {
-    let fragments = repeat(0.., pattern_fragment)
-        .context(StrContext::Label("pattern expression"))
-        .parse_next(input)?;
-    Ok(ast::PatternExpr { fragments })
+    let mut build_pattern =
+        repeat(0.., pattern_fragment).fold(ast::PatternExpr::default, |mut expr, fragment| {
+            push_pattern_fragment(&mut expr, fragment);
+            expr
+        });
+    build_pattern.parse_next(input)
 }
 
-fn string_fragment(input: &mut &str) -> PResult<ast::StringFragment> {
+fn string_fragment<'a>(input: &mut &'a str) -> PResult<StringFragment<'a>> {
     // TODO: Consider escape sequences etc.
     alt((
-        "\\{".map(|_| ast::StringFragment::Literal(String::from("{{"))),
-        "\\}".map(|_| ast::StringFragment::Literal(String::from("}}"))),
-        "\\<".map(|_| ast::StringFragment::Literal(String::from("<"))),
-        "\\>".map(|_| ast::StringFragment::Literal(String::from(">"))),
-        string_interpolation.map(ast::StringFragment::Interpolation),
-        path_interpolation.map(ast::StringFragment::Interpolation),
-        string_literal_fragment.map(ast::StringFragment::Literal),
+        string_literal::<false>.map(StringFragment::Literal),
+        escaped_char.map(StringFragment::EscapedChar),
+        escaped_whitespace.value(StringFragment::EscapedWhitespace),
+        string_interpolation.map(StringFragment::Interpolation),
+        path_interpolation.map(StringFragment::Interpolation),
     ))
     .context(StrContext::Label("string fragment"))
     .parse_next(input)
 }
 
-fn pattern_fragment(input: &mut &str) -> PResult<ast::PatternFragment> {
+fn pattern_fragment<'a>(input: &mut &'a str) -> PResult<StringFragment<'a>> {
+    // TODO: Consider escape sequences etc.
     alt((
-        "\\{".map(|_| ast::PatternFragment::Literal(String::from("{"))),
-        "\\}".map(|_| ast::PatternFragment::Literal(String::from("}"))),
-        "\\<".map(|_| ast::PatternFragment::Literal(String::from("<"))),
-        "\\>".map(|_| ast::PatternFragment::Literal(String::from(">"))),
-        "\\(".map(|_| ast::PatternFragment::Literal(String::from("("))),
-        "\\)".map(|_| ast::PatternFragment::Literal(String::from(")"))),
-        "\\%".map(|_| ast::PatternFragment::Literal(String::from("%"))),
-        '%'.value(ast::PatternFragment::PatternStem),
-        string_interpolation.map(ast::PatternFragment::Interpolation),
-        path_interpolation.map(ast::PatternFragment::Interpolation),
-        pattern_one_of.map(ast::PatternFragment::OneOf),
-        pattern_literal_fragment.map(ast::PatternFragment::Literal),
+        '%'.value(StringFragment::PatternStem),
+        pattern_one_of.map(StringFragment::OneOf),
+        string_literal::<true>.map(StringFragment::Literal),
+        escaped_char.map(StringFragment::EscapedChar),
+        escaped_whitespace.value(StringFragment::EscapedWhitespace),
+        string_interpolation.map(StringFragment::Interpolation),
+        path_interpolation.map(StringFragment::Interpolation),
     ))
     .context(StrContext::Label("pattern fragment"))
     .parse_next(input)
 }
 
-pub const SPECIAL_STRING_CHARS: &str = r#"{}<>"#;
-pub const SPECIAL_PATTERN_CHARS: &str = r#"{}<>()%"#;
+fn string_literal<'a, const IS_PATTERN: bool>(input: &mut &'a str) -> PResult<&'a str> {
+    let until = if IS_PATTERN {
+        &['\\', '{', '}', '<', '>', '(', ')', '%'] as &[char]
+    } else {
+        &['\\', '{', '}', '<', '>'] as &[char]
+    };
 
-fn string_literal_fragment(input: &mut &str) -> PResult<String> {
-    take_while(1.., |ch| !SPECIAL_STRING_CHARS.contains(ch))
-        .take()
-        .map(ToOwned::to_owned)
+    take_till(1.., until)
+        .verify(|s: &str| !s.is_empty())
         .parse_next(input)
 }
 
-fn pattern_literal_fragment(input: &mut &str) -> PResult<String> {
-    take_while(1.., |ch| !SPECIAL_PATTERN_CHARS.contains(ch))
-        .take()
-        .map(ToOwned::to_owned)
-        .parse_next(input)
+fn escaped_char(input: &mut &str) -> PResult<char> {
+    preceded(
+        '\\',
+        alt((
+            '\\'.value('\\'),
+            '{'.value('{'),
+            '}'.value('}'),
+            '<'.value('<'),
+            '>'.value('>'),
+            '('.value('('),
+            ')'.value(')'),
+            '%'.value('%'),
+        )),
+    )
+    .parse_next(input)
+}
+
+fn escaped_whitespace<'a>(input: &mut &'a str) -> PResult<&'a str> {
+    preceded('\\', multispace1).parse_next(input)
 }
 
 fn pattern_one_of(input: &mut &str) -> PResult<Vec<String>> {
@@ -249,6 +329,16 @@ mod tests {
             ],
         };
 
+        let result = string_expr.parse(input).unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_string_escape() {
+        let input = "*.\\{c,cpp\\}";
+        let expected = ast::StringExpr {
+            fragments: vec![ast::StringFragment::Literal(String::from("*.{c,cpp}"))],
+        };
         let result = string_expr.parse(input).unwrap();
         assert_eq!(result, expected);
     }

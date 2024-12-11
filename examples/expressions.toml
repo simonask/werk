@@ -2,7 +2,7 @@
 out-dir = "../target/werk-examples/expressions"
 
 [global]
-source-files = { glob = "*.c" }
+source-files = { glob = "*.\\{c,cpp\\}" }
 profile.env = "PROFILE"
 cc.which = "clang"
 
