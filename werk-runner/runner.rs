@@ -314,6 +314,7 @@ impl Inner {
             // abstract path within the workspace. Normally this will be a file
             // inside the output directory.
             let abstract_path = self.workspace.unresolve_path(dep)?;
+            tracing::debug!("Found depfile dependency: {abstract_path}");
             specs.push(self.get_build_spec(&abstract_path)?);
         }
         Ok(specs)
