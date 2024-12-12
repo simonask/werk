@@ -1476,6 +1476,7 @@ dependencies = [
  "werk-fs",
  "werk-parser",
  "which",
+ "winnow",
 ]
 
 [[package]]
