@@ -219,6 +219,8 @@ pub enum EvalError {
     PathWithinQuotes,
     #[error("empty command")]
     EmptyCommand,
+    #[error("empty list")]
+    EmptyList,
     #[error("unterminated quote")]
     UnterminatedQuote,
     #[error("`{0}` expressions are not allowed in this context")]

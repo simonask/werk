@@ -473,22 +473,30 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
                         werk_fs::Path::ROOT,
                         scope.workspace(),
                     )?;
-                    builder.push_all(value.value);
-                } else {
-                    match value.value {
-                        Value::List(list) => match interp.join {
-                            Some(' ') => {
-                                builder.push_all(Value::List(list));
-                            }
-                            Some(sep) => {
-                                let s = recursive_join(Value::List(list), sep);
-                                builder.push_arg(&s);
-                            }
-                            None => return Err(EvalError::UnexpectedList.into()),
-                        },
-                        Value::String(s) => {
-                            builder.push_str(&s);
+                }
+
+                match value.value {
+                    Value::List(list) => match interp.join {
+                        // When the join char is a space, we treat the list as
+                        // separate arguments to the command.
+                        Some(' ') => {
+                            builder.push_all(Value::List(list));
                         }
+                        // Otherwise, we join the list into a single argument.
+                        Some(sep) => {
+                            let s = recursive_join(Value::List(list), sep);
+                            builder.push_arg(&s);
+                        }
+                        // When no join operator is present take the first element of the list.
+                        None => {
+                            let Some(s) = find_first_string(&list) else {
+                                return Err(EvalError::EmptyList);
+                            };
+                            builder.push_arg(s);
+                        }
+                    },
+                    Value::String(s) => {
+                        builder.push_str(&s);
                     }
                 }
             }
@@ -532,7 +540,7 @@ fn eval_shell_commands_into(
             }
             Ok(status)
         }
-        ast::Expr::Join(expr, sep) => Err(EvalError::UnexpectedExpressionType("join").into()),
+        ast::Expr::Join(..) => Err(EvalError::UnexpectedExpressionType("join").into()),
         ast::Expr::Ident(_) => return Err(EvalError::UnexpectedExpressionType("from").into()),
         ast::Expr::Then(_, _) => return Err(EvalError::UnexpectedExpressionType("then").into()),
         ast::Expr::Message(message_expr) => {
@@ -765,4 +773,11 @@ fn recursive_append_each(mut value: Value, suffix: &str) -> Result<Value, EvalEr
         s.push_str(suffix);
     });
     Ok(value)
+}
+
+fn find_first_string(list: &[Value]) -> Option<&str> {
+    list.iter().find_map(|value| match value {
+        Value::String(s) => Some(&**s),
+        Value::List(list) => find_first_string(list),
+    })
 }

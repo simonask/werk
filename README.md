@@ -313,9 +313,10 @@ interpolation is always inside `{...}` or `<...>`).
 All of these may also be used with formatting options.
 
 - `{in}`, `<in>`, `{^}`, or `<^>`: The abstract or filesystem path(s) of the
-  input file(s) of a build recipe ("prerequisite"). This list is deduplicated;
-  each path will only appear once. Note that this may be a list when the recipe
-  has multiple inputs. Equivalent to `{+:dedup}`.
+  first input file of a build recipe ("prerequisite").
+- `{in*}`, `<in*>`: The abstract or filesystem paths of all prerequisites. This
+  list is deduplicated; each path will only appear once. Note that this may be a
+  list when the recipe has multiple inputs. Equivalent to `{+:dedup}`
 - `{out}`, `<out>`, `{@}`, or `<@>`: The abstract or concrete path to the output
   file(s) of a build recipe.
 - `{?}` or `<?>`: The abstract or filesystem path(s) of all the prerequisites
