@@ -429,7 +429,7 @@ fn parse_build_recipe(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Re
     };
 
     let mut in_files = None;
-    let mut depfiles = None;
+    let mut depfile = None;
     let mut command = None;
     let mut pre_message = None;
     let mut post_message = None;
@@ -441,7 +441,7 @@ fn parse_build_recipe(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Re
                 in_files = Some(parse_item_expr(&path, value)?);
             }
             "depfile" | "depfiles" => {
-                depfiles = Some(parse_item_expr(&path, value)?);
+                depfile = Some(parse_item_string_expr(&path, value)?);
             }
             "pre-message" => {
                 let Some(value) = value.as_str() else {
@@ -466,7 +466,7 @@ fn parse_build_recipe(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Re
 
     Ok(ast::Recipe {
         in_files,
-        depfiles,
+        depfile,
         command,
         pre_message,
         post_message,

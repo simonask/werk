@@ -25,6 +25,7 @@ pub enum RecipeMatch<'a> {
     },
 }
 
+#[derive(Debug, Clone)]
 pub enum RecipeMatchData {
     Command {
         index: usize,
@@ -35,6 +36,15 @@ pub enum RecipeMatchData {
         pattern_match: PatternMatchData,
         target_file: werk_fs::PathBuf,
     },
+}
+
+impl std::fmt::Display for RecipeMatchData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RecipeMatchData::Command { name, .. } => f.write_str(name),
+            RecipeMatchData::Build { target_file, .. } => f.write_str(target_file.as_str()),
+        }
+    }
 }
 
 impl From<RecipeMatch<'_>> for RecipeMatchData {

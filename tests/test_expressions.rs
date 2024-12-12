@@ -19,7 +19,7 @@ fn parse_as_expected() -> anyhow::Result<()> {
 
     assert_eq!(
         ast.global["source-files"],
-        ast::Expr::Glob(ast::StringExpr::literal("*.c"))
+        ast::Expr::Glob(ast::StringExpr::literal("*.{c,cpp}"))
     );
     assert_eq!(
         ast.global["profile"],

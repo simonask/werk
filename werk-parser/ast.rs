@@ -81,7 +81,7 @@ pub struct CommandRecipe {
 #[derive(Debug, PartialEq)]
 pub struct Recipe {
     pub in_files: Option<Expr>,
-    pub depfiles: Option<Expr>,
+    pub depfile: Option<StringExpr>,
     pub command: Option<Expr>,
     pub pre_message: Option<StringExpr>,
     pub post_message: Option<StringExpr>,
