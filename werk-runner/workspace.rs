@@ -225,7 +225,7 @@ impl Workspace {
         io: &dyn Io,
         path: &werk_fs::Path,
     ) -> Result<Option<DirEntry>, Error> {
-        let fs_path = path.resolve(&self.output_directory)?;
+        let fs_path = path.resolve(werk_fs::Path::ROOT, &self.output_directory)?;
         match io.metadata(&fs_path) {
             Ok(metadata) => Ok(Some(DirEntry {
                 path: fs_path,
@@ -247,7 +247,7 @@ impl Workspace {
         io: &dyn Io,
         path: &werk_fs::Path,
     ) -> Result<(), Error> {
-        let fs_path = path.resolve(&self.output_directory)?;
+        let fs_path = path.resolve(werk_fs::Path::ROOT, &self.output_directory)?;
         io.create_parent_dirs(&fs_path).await.map_err(Into::into)
     }
 
@@ -264,9 +264,9 @@ impl Workspace {
         };
 
         if self.workspace_files.contains_key(path) {
-            path.resolve(&self.project_root)
+            path.resolve(werk_fs::Path::ROOT, &self.project_root)
         } else {
-            path.resolve(&self.output_directory)
+            path.resolve(werk_fs::Path::ROOT, &self.output_directory)
         }
     }
 

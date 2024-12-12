@@ -78,7 +78,7 @@ pub enum PathError {
     ReservedStem(&'static &'static str),
     #[error("invalid UTF-8 byte: {0}")]
     InvalidUtf8(u8),
-    #[error("cannot resolve a relative path to an OS path: {0}")]
+    #[error("cannot resolve a relative path to an OS path from a relative working directory: {0}")]
     ResolveRelative(PathBuf),
 }
 
@@ -320,13 +320,25 @@ impl Path {
     /// Build a filesystem path from an abstract relative to `root`.
     ///
     /// This does not access the filesystem.
-    pub fn resolve(&self, root: &std::path::Path) -> Result<std::path::PathBuf, PathError> {
-        if !self.is_absolute() {
-            return Err(PathError::ResolveRelative(self.to_path_buf()));
+    pub fn resolve(
+        &self,
+        working_dir: &Path,
+        root: &std::path::Path,
+    ) -> Result<std::path::PathBuf, PathError> {
+        if !working_dir.is_absolute() {
+            return Err(PathError::ResolveRelative(working_dir.to_path_buf()));
         }
+        let in_buf;
+        let path = if self.is_absolute() {
+            self
+        } else {
+            in_buf = working_dir.join(self);
+            &*in_buf
+        };
+        debug_assert!(path.is_absolute());
 
         let mut buf = root.to_path_buf();
-        for component in self.components() {
+        for component in path.components() {
             match component {
                 Component::Root => {}
                 Component::Current => {}
