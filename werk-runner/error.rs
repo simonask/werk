@@ -49,6 +49,31 @@ impl Error {
     pub fn custom<E: std::error::Error + Send + Sync + 'static>(err: E) -> Self {
         Self::Custom(Arc::new(anyhow::Error::new(err)))
     }
+
+    /// True when, even though an error occurred, the `.werk-cache` file should
+    /// still be written.
+    pub fn should_still_write_werk_cache(&self) -> bool {
+        match self {
+            Error::Io(_)
+            | Error::CommandNotFound(..)
+            | Error::NoRuleToBuildTarget(_)
+            | Error::CircularDependency(_)
+            | Error::DependencyFailed(..)
+            | Error::CommandFailed(_)
+            | Error::DepfileNotFound(_)
+            | Error::DepfileError(_)
+            | Error::Cancelled(_) => true,
+            Error::Eval(_)
+            | Error::Walk(_)
+            | Error::Glob(_)
+            | Error::DuplicateCommand(_)
+            | Error::DuplicateTarget(_)
+            | Error::AmbiguousPattern(_)
+            | Error::OutputDirectoryNotAvailable
+            | Error::ClobberedWorkspace(_)
+            | Error::Custom(_) => false,
+        }
+    }
 }
 
 impl PartialEq for Error {
