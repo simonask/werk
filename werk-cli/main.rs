@@ -205,7 +205,7 @@ async fn try_main(args: Args) -> Result<()> {
 
     let workspace = Workspace::new(&*io, workspace_dir.to_owned(), &settings).await?;
 
-    let mut runner = Runner::new(ast, io.clone(), workspace, watcher).await?;
+    let mut runner = Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
     if args.list {
         let recipes = runner.recipes();
         // TODO: Print doc comments from the TOML as well.
@@ -222,12 +222,27 @@ async fn try_main(args: Args) -> Result<()> {
         anyhow::bail!("No target specified");
     };
 
-    runner.build_or_run(&target).await?;
-    if let Err(err) = runner.workspace().finalize(&*io).await {
-        eprintln!("Error writing `.werk-cache`: {err}")
+    // Hide cursor and disable line wrapping while running.
+    watcher.lock().start_advanced_rendering();
+
+    let result = runner.build_or_run(&target).await;
+
+    // Show the cursor again and re-enable line wrapping.
+    watcher.lock().finish_advanced_rendering();
+
+    let write_cache = match result {
+        Ok(_) => true,
+        Err(ref err) if err.should_still_write_werk_cache() => true,
+        Err(_) => false,
+    };
+
+    if write_cache {
+        if let Err(err) = runner.workspace().finalize(&*io).await {
+            eprintln!("Error writing `.werk-cache`: {err}")
+        }
     }
 
-    Ok(())
+    result.map(|_| ()).map_err(Into::into)
 }
 
 fn find_werkfile() -> Result<std::path::PathBuf> {

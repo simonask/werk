@@ -50,12 +50,7 @@ impl<S: ConWrite> AutoStream<S> {
     }
 
     pub fn advanced_rendering(&self) -> bool {
-        match self {
-            AutoStream::Passthrough(_) => true,
-            AutoStream::Strip(_) => false,
-            #[cfg(windows)]
-            AutoStream::Wincon(_) => true,
-        }
+        !matches!(self, AutoStream::Strip(_))
     }
 }
 
@@ -180,8 +175,11 @@ impl StdoutWatcher {
         Self {
             inner: Mutex::new(Inner {
                 current_tasks: IndexMap::new(),
+                num_tasks: 0,
+                num_completed_tasks: 0,
                 render_buffer: String::with_capacity(1024),
                 settings,
+                width: crossterm::terminal::size().map_or(80, |(w, _)| w as usize),
             }),
             kind,
         }
@@ -192,7 +190,7 @@ impl StdoutWatcher {
         !matches!(self.kind, AutoStreamKind::Strip)
     }
 
-    fn lock(&self) -> StdioLock {
+    pub fn lock(&self) -> StdioLock {
         StdioLock {
             inner: self.inner.lock(),
             stdout: AutoStream::new(std::io::stdout().lock(), self.kind),
@@ -202,16 +200,41 @@ impl StdoutWatcher {
 
 struct Inner {
     current_tasks: IndexMap<TaskId, (usize, usize)>,
+    num_tasks: usize,
+    num_completed_tasks: usize,
     render_buffer: String,
     settings: OutputSettings,
+    width: usize,
 }
 
-struct StdioLock<'a> {
+pub struct StdioLock<'a> {
     inner: MutexGuard<'a, Inner>,
     stdout: AutoStream<std::io::StdoutLock<'static>>,
 }
 
 impl<'a> StdioLock<'a> {
+    pub fn start_advanced_rendering(&mut self) {
+        if self.stdout.advanced_rendering() {
+            crossterm::execute!(
+                &mut self.stdout,
+                crossterm::cursor::Hide,
+                crossterm::terminal::DisableLineWrap
+            )
+            .unwrap();
+        }
+    }
+
+    pub fn finish_advanced_rendering(&mut self) {
+        if self.stdout.advanced_rendering() {
+            crossterm::execute!(
+                &mut self.stdout,
+                crossterm::cursor::Show,
+                crossterm::terminal::EnableLineWrap
+            )
+            .unwrap();
+        }
+    }
+
     fn clear_current_line(&mut self) {
         if self.stdout.advanced_rendering() && !self.inner.settings.logging_enabled {
             crossterm::execute!(
@@ -231,25 +254,79 @@ impl<'a> StdioLock<'a> {
                 return;
             }
             buffer.clear();
-            buffer.push_str("Building: ");
-            for (i, (task, (step, num_steps))) in inner.current_tasks.iter().enumerate() {
-                if i != 0 {
-                    write!(buffer, ", ").unwrap();
-                }
-                if *num_steps > 1 {
-                    write!(
-                        buffer,
-                        "{} {}",
-                        task,
-                        Bracketed(Step(*step, *num_steps)).bright_yellow()
-                    )
-                    .unwrap();
-                } else {
-                    write!(buffer, "{}", task).unwrap();
+            _ = write!(
+                buffer,
+                "{} Building: ",
+                Bracketed(Step(inner.num_completed_tasks, inner.num_tasks)).bright_cyan()
+            );
+
+            fn num_width(num: usize) -> usize {
+                match num.checked_ilog10() {
+                    None => 1,
+                    Some(n) => n as usize + 1,
                 }
             }
-            buffer.push(' ');
+
+            // The width of the "[N/N] Building: " prefix.
+            let mut written_width =
+                11 + 2 + num_width(inner.num_completed_tasks) + 1 + num_width(inner.num_tasks);
+            let num_tasks = inner.current_tasks.len();
+
+            for (i, (task, (step, num_steps))) in inner.current_tasks.iter().enumerate() {
+                let is_last = i + 1 == num_tasks;
+
+                let mut available_width = inner.width.saturating_sub(written_width);
+                if !is_last {
+                    // Make space for ", ..." at the end.
+                    available_width = available_width.saturating_sub(5);
+                }
+
+                let mut task_width = 0;
+                if i != 0 {
+                    // Make space for ", " between tasks.
+                    task_width += 2;
+                }
+                // Make space for "[N/N] "
+                task_width += 1 + num_width(*step) + 1 + num_width(*num_steps) + 2;
+
+                // Make space for the task name
+                task_width += match task {
+                    // Note: Conservative for UTF-8 sequences, but counting
+                    // chars here might be excessive. Could be cached in the map?
+                    TaskId::Command(cmd) => cmd.len(),
+                    TaskId::Build(path_buf) => path_buf.len(),
+                };
+
+                if task_width > available_width {
+                    if i != 0 {
+                        write!(buffer, ", ").unwrap();
+                    }
+                    if *num_steps > 1 {
+                        write!(
+                            buffer,
+                            "{} {}",
+                            task,
+                            Bracketed(Step(*step, *num_steps)).bright_yellow()
+                        )
+                        .unwrap();
+                    } else {
+                        write!(buffer, "{}", task).unwrap();
+                    }
+                    written_width += task_width;
+                    continue;
+                } else {
+                    if i == 0 {
+                        buffer.push_str("...");
+                    } else if is_last {
+                        buffer.push_str(", ...");
+                    }
+                    break;
+                }
+            }
+
+            crossterm::queue!(&mut self.stdout, crossterm::terminal::DisableLineWrap).unwrap();
             self.stdout.write_all(buffer.as_bytes()).unwrap();
+            crossterm::queue!(&mut self.stdout, crossterm::terminal::EnableLineWrap).unwrap();
 
             self.stdout.flush().unwrap();
         }
