@@ -8,10 +8,10 @@ use werk_fs::{Path, PathBuf};
 use werk_parser::ast;
 
 use crate::{
-    depfile::Depfile, eval, eval_shell_commands, eval_shell_commands_run_which_and_detect_outdated,
-    eval_string_expr, Error, Eval, Io, LocalVariables, Outdatedness, PatternMatch, Reason,
-    RecipeMatch, RecipeMatchData, RecipeScope, Recipes, RootScope, Scope as _, ShellCommandLine,
-    Value, Workspace, WorkspaceSettings,
+    depfile::Depfile, eval, eval_run_expr, eval_shell_commands,
+    eval_shell_commands_run_which_and_detect_outdated, eval_string_expr, Error, Eval, Io,
+    LocalVariables, Outdatedness, PatternMatch, Reason, RecipeMatch, RecipeMatchData, RecipeScope,
+    Recipes, RootScope, Scope as _, ShellCommandLine, Value, Workspace, WorkspaceSettings,
 };
 
 pub struct Runner<'a> {
@@ -47,13 +47,7 @@ pub trait Watcher: Send + Sync {
         post_message: Option<&str>,
     );
     /// Shell command is about to be executed.
-    fn will_execute(
-        &self,
-        task_id: &TaskId,
-        command: &ShellCommandLine,
-        step: usize,
-        num_steps: usize,
-    );
+    fn will_execute(&self, task_id: &TaskId, command: &RunCommand, step: usize, num_steps: usize);
     /// Shell command is finished executing, or failed to start. Note that
     /// `result` will be `Ok` even if the command returned an error, allowing
     /// access to the command's stdout/stderr.
@@ -63,7 +57,7 @@ pub trait Watcher: Send + Sync {
     fn did_execute(
         &self,
         task_id: &TaskId,
-        command: &ShellCommandLine,
+        command: &RunCommand,
         result: &Result<std::process::Output, Error>,
         step: usize,
         num_steps: usize,
@@ -556,16 +550,13 @@ impl Inner {
         outdated |= self.build_dependencies(deps, dep_chain, out_mtime).await?;
 
         // Figure out what to run.
-        let mut shell_commands = if let Some(commands) = &recipe.command {
-            eval_shell_commands_run_which_and_detect_outdated(
-                &scope,
-                commands,
-                self.workspace.force_color,
-            )?
-        } else {
-            Default::default()
-        };
-        outdated |= shell_commands.outdatedness;
+        let mut run_commands = Vec::with_capacity(recipe.command.len());
+        for run_expr in recipe.command.iter() {
+            let run_command =
+                eval_run_expr(&scope, &*self.io, run_expr, self.workspace.force_color).await?;
+            outdated |= run_command.outdatedness;
+            run_commands.push(run_command.value);
+        }
 
         let pre_message = if let Some(pre_message) = &recipe.pre_message {
             Some(eval_string_expr(&scope, pre_message)?.value)
@@ -586,14 +577,14 @@ impl Inner {
 
         self.watcher.will_build(
             task_id,
-            shell_commands.value.len(),
+            run_commands.len(),
             pre_message.as_deref(),
             &outdated,
         );
 
         let result = if outdated.is_outdated() {
             tracing::debug!("Rebuilding: {task_id}");
-            self.execute_recipe_commands(task_id, &mut shell_commands.value, &scope, false)
+            self.execute_recipe_commands(task_id, &run_commands, &scope, false)
                 .await
                 .map(|_| BuildStatus::Complete(task_id.clone(), outdated))
         } else {
@@ -647,11 +638,14 @@ impl Inner {
         self.build_dependencies(deps, dep_chain, None).await?;
 
         // Figure out what to run.
-        let mut shell_commands = if let Some(commands) = &recipe.command {
-            eval_shell_commands(&scope, commands, self.workspace.force_color)?
-        } else {
-            Vec::new()
-        };
+        // Figure out what to run.
+        let mut run_commands = Vec::with_capacity(recipe.command.len());
+        for run_expr in recipe.command.iter() {
+            let run_command =
+                eval_run_expr(&scope, &*self.io, run_expr, self.workspace.force_color).await?;
+            run_commands.push(run_command.value);
+        }
+
         let pre_message = if let Some(pre_message) = &recipe.pre_message {
             Some(eval_string_expr(&scope, pre_message)?.value)
         } else {
@@ -666,7 +660,7 @@ impl Inner {
         let outdated = Outdatedness::outdated(Reason::Rebuilt(task_id.clone()));
         self.watcher.will_build(
             task_id,
-            shell_commands.len(),
+            run_commands.len(),
             pre_message.as_deref(),
             &outdated,
         );
@@ -674,7 +668,7 @@ impl Inner {
         let result = self
             .execute_recipe_commands(
                 task_id,
-                &mut shell_commands,
+                &run_commands,
                 &scope,
                 recipe.capture.is_some_and(|c| !c),
             )
@@ -689,45 +683,70 @@ impl Inner {
     async fn execute_recipe_commands(
         &self,
         task_id: &TaskId,
-        shell_commands: &[ShellCommandLine],
+        run_commands: &[RunCommand],
         scope: &RecipeScope<'_>,
         print_successful: bool,
     ) -> Result<(), Error> {
-        let num_steps = shell_commands.len();
-        let mut iter = shell_commands.iter().enumerate();
-        loop {
-            if let Some((step, shell_command)) = iter.next() {
-                self.watcher
-                    .will_execute(task_id, shell_command, step, num_steps);
+        let num_steps = run_commands.len();
 
-                let result = self
-                    .io
-                    .run_build_command(&shell_command, scope.workspace().project_root())
-                    .await
-                    .map_err(Into::into);
-
-                self.watcher.did_execute(
-                    task_id,
-                    &shell_command,
-                    &result,
-                    step,
-                    num_steps,
-                    print_successful,
-                );
-                match result {
-                    Err(err) => {
-                        return Err(err);
-                    }
-                    Ok(output) => {
-                        if !output.status.success() {
-                            return Err(Error::CommandFailed(output.status));
-                        }
-                    }
-                }
-            } else {
-                return Ok(());
+        fn default_output() -> std::process::Output {
+            std::process::Output {
+                status: std::process::ExitStatus::default(),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
             }
         }
+
+        for (step, run_command) in run_commands.iter().enumerate() {
+            self.watcher
+                .will_execute(task_id, run_command, step, num_steps);
+
+            let result = match run_command {
+                RunCommand::Shell(command_line) => {
+                    self.io
+                        .run_build_command(command_line, scope.workspace().project_root())
+                        .await
+                }
+                RunCommand::Write(path_buf, vec) => self
+                    .io
+                    .write_file(&path_buf, vec)
+                    .await
+                    .map(|_| default_output()),
+                RunCommand::Copy(from, to) => {
+                    self.io.copy_file(from, to).await.map(|_| default_output())
+                }
+                RunCommand::Echo(message) => {
+                    self.watcher.message(Some(task_id), message);
+                    Ok(default_output())
+                }
+                RunCommand::Delete(path) => {
+                    self.io.delete_file(path).await.map(|_| default_output())
+                }
+            }
+            .map_err(Into::into);
+
+            self.watcher.did_execute(
+                task_id,
+                run_command,
+                &result,
+                step,
+                num_steps,
+                print_successful,
+            );
+
+            match result {
+                Err(err) => {
+                    return Err(err);
+                }
+                Ok(output) => {
+                    if !output.status.success() {
+                        return Err(Error::CommandFailed(output.status));
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn build_dependencies<'a>(
@@ -814,6 +833,35 @@ impl Inner {
                 }
             }
             TaskSpec::CheckExists(path) => self.check_exists(&path).await,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RunCommand {
+    Shell(ShellCommandLine),
+    Write(std::path::PathBuf, Vec<u8>),
+    Copy(std::path::PathBuf, std::path::PathBuf),
+    Echo(String),
+    Delete(std::path::PathBuf),
+}
+
+impl std::fmt::Display for RunCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunCommand::Shell(shell_command_line) => std::fmt::Display::fmt(shell_command_line, f),
+            RunCommand::Write(path_buf, vec) => {
+                write!(f, "write {} ({} bytes)", path_buf.display(), vec.len())
+            }
+            RunCommand::Copy(from, to) => {
+                write!(f, "copy '{}' to '{}'", from.display(), to.display())
+            }
+            RunCommand::Echo(message) => {
+                write!(f, "echo \"{}\"", message.escape_default())
+            }
+            RunCommand::Delete(path) => {
+                write!(f, "delete '{}'", path.display())
+            }
         }
     }
 }

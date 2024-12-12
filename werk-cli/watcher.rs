@@ -7,7 +7,7 @@ use anstream::stream::{AsLockedWrite, IsTerminal};
 use indexmap::IndexMap;
 use owo_colors::OwoColorize;
 use parking_lot::{Mutex, MutexGuard};
-use werk_runner::{BuildStatus, Outdatedness, ShellCommandLine, TaskId};
+use werk_runner::{BuildStatus, Outdatedness, RunCommand, ShellCommandLine, TaskId};
 
 use crate::ColorChoice;
 
@@ -17,6 +17,7 @@ pub struct OutputSettings {
     pub logging_enabled: bool,
     pub color: ColorChoice,
     pub print_recipe_commands: bool,
+    pub print_fresh: bool,
     pub dry_run: bool,
     pub no_capture: bool,
     pub explain: bool,
@@ -162,6 +163,7 @@ impl AutoStreamKind {
 pub struct StdoutWatcher {
     inner: Mutex<Inner>,
     kind: AutoStreamKind,
+    settings: OutputSettings,
 }
 
 impl StdoutWatcher {
@@ -178,9 +180,9 @@ impl StdoutWatcher {
                 num_tasks: 0,
                 num_completed_tasks: 0,
                 render_buffer: String::with_capacity(1024),
-                settings,
                 width: crossterm::terminal::size().map_or(80, |(w, _)| w as usize),
             }),
+            settings,
             kind,
         }
     }
@@ -194,6 +196,7 @@ impl StdoutWatcher {
         StdioLock {
             inner: self.inner.lock(),
             stdout: AutoStream::new(std::io::stdout().lock(), self.kind),
+            settings: &self.settings,
         }
     }
 }
@@ -203,13 +206,13 @@ struct Inner {
     num_tasks: usize,
     num_completed_tasks: usize,
     render_buffer: String,
-    settings: OutputSettings,
     width: usize,
 }
 
 pub struct StdioLock<'a> {
     inner: MutexGuard<'a, Inner>,
     stdout: AutoStream<std::io::StdoutLock<'static>>,
+    settings: &'a OutputSettings,
 }
 
 impl<'a> StdioLock<'a> {
@@ -236,7 +239,7 @@ impl<'a> StdioLock<'a> {
     }
 
     fn clear_current_line(&mut self) {
-        if self.stdout.advanced_rendering() && !self.inner.settings.logging_enabled {
+        if self.stdout.advanced_rendering() && !self.settings.logging_enabled {
             crossterm::execute!(
                 &mut self.stdout,
                 crossterm::cursor::MoveToColumn(0),
@@ -247,7 +250,7 @@ impl<'a> StdioLock<'a> {
     }
 
     fn render(&mut self) {
-        if self.stdout.advanced_rendering() && !self.inner.settings.logging_enabled {
+        if self.stdout.advanced_rendering() && !self.settings.logging_enabled {
             let inner = &mut *self.inner;
             let buffer = &mut inner.render_buffer;
             if inner.current_tasks.is_empty() {
@@ -344,7 +347,7 @@ impl<'a> StdioLock<'a> {
             .insert(task_id.clone(), (0, num_steps));
         self.clear_current_line();
 
-        if self.inner.settings.explain && outdated.is_outdated() {
+        if self.settings.explain && outdated.is_outdated() {
             match task_id {
                 TaskId::Command(name) => {
                     _ = writeln!(
@@ -393,7 +396,7 @@ impl<'a> StdioLock<'a> {
                         &mut self.stdout,
                         "{} {task_id}{}",
                         Bracketed(" ok ").bright_green(),
-                        if self.inner.settings.dry_run {
+                        if self.settings.dry_run {
                             " (dry-run)"
                         } else {
                             ""
@@ -402,7 +405,7 @@ impl<'a> StdioLock<'a> {
                     if let Some(post_message) = post_message {
                         _ = writeln!(self.stdout, "{} {}", "[info]".cyan(), post_message);
                     }
-                } else {
+                } else if self.settings.print_fresh {
                     _ = writeln!(
                         &mut self.stdout,
                         "{} {task_id}",
@@ -427,7 +430,7 @@ impl<'a> StdioLock<'a> {
     fn will_execute(
         &mut self,
         task_id: &TaskId,
-        command: &ShellCommandLine,
+        command: &RunCommand,
         step: usize,
         num_steps: usize,
     ) {
@@ -437,7 +440,7 @@ impl<'a> StdioLock<'a> {
             .get_mut(task_id)
             .expect("task not registered") = (step + 1, num_steps);
         self.clear_current_line();
-        if self.inner.settings.dry_run || self.inner.settings.print_recipe_commands {
+        if self.settings.dry_run || self.settings.print_recipe_commands {
             _ = writeln!(
                 self.stdout,
                 "{} {task_id}: {command}",
@@ -450,7 +453,7 @@ impl<'a> StdioLock<'a> {
     fn did_execute(
         &mut self,
         task_id: &TaskId,
-        command: &ShellCommandLine,
+        command: &RunCommand,
         result: &Result<std::process::Output, werk_runner::Error>,
         step: usize,
         num_steps: usize,
@@ -467,7 +470,7 @@ impl<'a> StdioLock<'a> {
                         String::from_utf8_lossy(&output.stderr)
                     );
                     self.render();
-                } else if print_successful || self.inner.settings.no_capture {
+                } else if print_successful || self.settings.no_capture {
                     self.clear_current_line();
                     _ = writeln!(
                         self.stdout,
@@ -536,25 +539,27 @@ impl werk_runner::Watcher for StdoutWatcher {
         self.lock().did_build(task_id, result, post_message);
     }
 
-    fn will_execute(
-        &self,
-        task_id: &TaskId,
-        command: &ShellCommandLine,
-        step: usize,
-        num_steps: usize,
-    ) {
+    fn will_execute(&self, task_id: &TaskId, command: &RunCommand, step: usize, num_steps: usize) {
+        if let RunCommand::Echo(_) = command {
+            return;
+        }
+
         self.lock().will_execute(task_id, command, step, num_steps);
     }
 
     fn did_execute(
         &self,
         task_id: &TaskId,
-        command: &ShellCommandLine,
+        command: &RunCommand,
         result: &Result<std::process::Output, werk_runner::Error>,
         step: usize,
         num_steps: usize,
         print_successful: bool,
     ) {
+        if let RunCommand::Echo(_) = command {
+            return;
+        }
+
         self.lock()
             .did_execute(task_id, command, result, step, num_steps, print_successful);
     }

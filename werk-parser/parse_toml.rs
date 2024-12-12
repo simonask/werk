@@ -1,3 +1,5 @@
+use std::path;
+
 use indexmap::IndexMap;
 
 use crate::{ast, parse_string, Error};
@@ -100,6 +102,12 @@ fn parse_config_table(
                 };
                 config.print_commands = Some(value);
             }
+            "default" => {
+                let Some(value) = value.as_str() else {
+                    return Err(Error::ExpectedString(path.ident("default").to_string()));
+                };
+                config.default = Some(value.to_owned());
+            }
             _ => {
                 return Err(Error::UnknownConfigKey(key.to_owned()));
             }
@@ -165,7 +173,42 @@ impl std::fmt::Display for ExprType {
     }
 }
 
-fn find_main_expression_type<'a, I>(keys: I) -> Result<(ExprType, &'a toml_edit::Item), Error>
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RunExprType {
+    Shell,
+    Write,
+    Copy,
+    Echo,
+}
+
+impl RunExprType {
+    pub fn all_strs() -> &'static [&'static str] {
+        &["shell", "write", "copy", "echo"]
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "shell" => Some(Self::Shell),
+            "write" => Some(Self::Write),
+            "copy" => Some(Self::Copy),
+            "echo" => Some(Self::Echo),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for RunExprType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            RunExprType::Shell => "shell",
+            RunExprType::Write => "write",
+            RunExprType::Copy => "copy",
+            RunExprType::Echo => "echo",
+        })
+    }
+}
+
+fn find_main_expr_type<'a, I>(keys: I) -> Result<(ExprType, &'a toml_edit::Item), Error>
 where
     I: IntoIterator<Item = (&'a str, &'a toml_edit::Item)>,
 {
@@ -191,11 +234,37 @@ where
     Ok(found)
 }
 
+fn find_main_run_expr_type<'a, I>(keys: I) -> Result<(RunExprType, &'a toml_edit::Item), Error>
+where
+    I: IntoIterator<Item = (&'a str, &'a toml_edit::Item)>,
+{
+    let mut found = None;
+    let mut iter = keys.into_iter();
+    while let Some((key, item)) = iter.next() {
+        if let Some(ty) = RunExprType::from_str(key) {
+            found = Some((ty, item));
+            break;
+        }
+    }
+
+    let Some(found) = found else {
+        return Err(Error::ExpectedMainExpression);
+    };
+
+    while let Some((tail, _)) = iter.next() {
+        if let Some(duplicate) = RunExprType::from_str(&tail) {
+            return Err(Error::AmbiguousRunExpression(found.0, duplicate));
+        }
+    }
+
+    Ok(found)
+}
+
 fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
     path: &TomlPath,
     table: &T,
 ) -> Result<ast::Expr, Error> {
-    let expr_ty = find_main_expression_type(table.iter())?;
+    let expr_ty = find_main_expr_type(table.iter())?;
     let mut expr = match expr_ty {
         (ExprType::String, item) => {
             parse_item_string_expr(&path.ident("string"), item).map(ast::Expr::StringExpr)?
@@ -253,6 +322,10 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                     input: expr,
                     patterns,
                 }));
+            }
+            "join" => {
+                let sep = parse_item_string_expr(&path, item)?;
+                expr = ast::Expr::Join(Box::new(expr), Box::new(sep));
             }
             "warn" => {
                 let message = parse_item_string_expr(&path, item)?;
@@ -347,6 +420,108 @@ fn parse_item_expr(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Expr,
     }
 }
 
+fn parse_item_run_expr(
+    path: &TomlPath,
+    toml: &toml_edit::Item,
+) -> Result<Vec<ast::RunExpr>, Error> {
+    let mut vec = Vec::new();
+    parse_item_run_exprs_into(path, toml, &mut vec)?;
+    Ok(vec)
+}
+
+fn parse_item_run_exprs_into(
+    path: &TomlPath,
+    toml: &toml_edit::Item,
+    exprs: &mut Vec<ast::RunExpr>,
+) -> Result<(), Error> {
+    match toml {
+        toml_edit::Item::None => return Ok(()),
+        toml_edit::Item::Value(value) => parse_value_run_exprs_into(path, value, exprs),
+        toml_edit::Item::Table(table) => {
+            exprs.push(parse_table_run_expr(path, table)?);
+            Ok(())
+        }
+        toml_edit::Item::ArrayOfTables(array_of_tables) => {
+            for (index, table) in array_of_tables.iter().enumerate() {
+                let path = path.index(index);
+                let run_expr = parse_table_run_expr(&path, table)?;
+                exprs.push(run_expr);
+            }
+            Ok(())
+        }
+    }
+}
+
+fn parse_value_run_exprs_into(
+    path: &TomlPath,
+    value: &toml_edit::Value,
+    exprs: &mut Vec<ast::RunExpr>,
+) -> Result<(), Error> {
+    match value {
+        toml_edit::Value::String(formatted) => {
+            let string = parse_string_expr(path, formatted.value())?;
+            exprs.push(ast::RunExpr::Shell(string));
+            Ok(())
+        }
+        toml_edit::Value::Integer(_)
+        | toml_edit::Value::Float(_)
+        | toml_edit::Value::Boolean(_)
+        | toml_edit::Value::Datetime(_) => Err(Error::ExpectedStringOrArray(path.to_string())),
+        toml_edit::Value::Array(array) => {
+            for (index, element) in array.iter().enumerate() {
+                let path = path.index(index);
+                parse_value_run_exprs_into(&path, element, exprs)?;
+            }
+            Ok(())
+        }
+        toml_edit::Value::InlineTable(table) => {
+            exprs.push(parse_table_run_expr(path, table)?);
+            Ok(())
+        }
+    }
+}
+
+fn parse_table_run_expr<T: toml_edit::TableLike>(
+    path: &TomlPath,
+    table: &T,
+) -> Result<ast::RunExpr, Error> {
+    let run_expr_ty = find_main_run_expr_type(table.iter())?;
+    match run_expr_ty {
+        (RunExprType::Shell, item) => {
+            // TODO: Validate that there are no other keys.
+            let path = path.ident("shell");
+            parse_item_string_expr(&path, item).map(ast::RunExpr::Shell)
+        }
+        (RunExprType::Write, item) => {
+            let path = path.ident("write");
+            let target = parse_item_string_expr(&path, item)?;
+            if let Some(data) = table.get("data") {
+                let path = path.ident("data");
+                let data = parse_item_expr(&path, data)?;
+                Ok(ast::RunExpr::Write(target, data))
+            } else {
+                Err(Error::ExpectedKey(path.to_string(), "data".to_owned()))
+            }
+        }
+        (RunExprType::Copy, item) => {
+            let path = path.ident("copy");
+            let source = parse_item_string_expr(&path, item)?;
+            if let Some(destination) = table.get("to") {
+                let path = path.ident("to");
+                let to = parse_item_string_expr(&path, destination)?;
+                Ok(ast::RunExpr::Copy(source, to))
+            } else {
+                Err(Error::ExpectedKey(path.to_string(), "to".to_owned()))
+            }
+        }
+        (RunExprType::Echo, item) => {
+            let path = path.ident("echo");
+            let message = parse_item_string_expr(&path, item)?;
+            Ok(ast::RunExpr::Echo(message))
+        }
+    }
+}
+
 fn parse_item_string_expr(
     path: &TomlPath,
     toml: &toml_edit::Item,
@@ -376,7 +551,7 @@ fn parse_command_recipe(
     };
 
     let mut build = None;
-    let mut command = None;
+    let mut command = Vec::new();
     let mut pre_message = None;
     let mut post_message = None;
     let mut capture = None;
@@ -388,7 +563,7 @@ fn parse_command_recipe(
                 build = Some(parse_item_expr(&path, value)?);
             }
             "command" => {
-                command = Some(parse_item_expr(&path, value)?);
+                command = parse_item_run_expr(&path, value)?;
             }
             "pre-message" => {
                 let Some(value) = value.as_str() else {
@@ -430,7 +605,7 @@ fn parse_build_recipe(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Re
 
     let mut in_files = None;
     let mut depfile = None;
-    let mut command = None;
+    let mut command = Vec::new();
     let mut pre_message = None;
     let mut post_message = None;
 
@@ -456,7 +631,7 @@ fn parse_build_recipe(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Re
                 post_message = Some(parse_string_expr(&path, value)?);
             }
             "command" => {
-                command = Some(parse_item_expr(&path, value)?);
+                command = parse_item_run_expr(&path, value)?;
             }
             _ => {
                 return Err(Error::InvalidKey(path.to_string()));

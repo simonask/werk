@@ -4,7 +4,7 @@ use werk_parser::ast;
 
 use crate::{
     Error, EvalError, Io, Outdatedness, Pattern, PatternBuilder, PatternMatch, Reason, RecipeScope,
-    Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError, Value, Workspace,
+    RunCommand, Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError, Value, Workspace,
 };
 
 /// Evaluated value, which keeps track of "outdatedness" with respect to cached
@@ -164,6 +164,16 @@ pub async fn eval(
             })
             .await
         }
+        ast::Expr::Join(list, sep) => {
+            // Boxing for recursion.
+            let list = Box::pin(eval(scope, io, list)).await?;
+            let sep = eval_string_expr(scope, sep)?;
+            let joined = flat_join(&[list.value], &sep.value);
+            Ok(Eval {
+                value: Value::String(joined),
+                outdatedness: list.outdatedness | sep.outdatedness,
+            })
+        }
         ast::Expr::Ident(ident) => scope
             .get(ident)
             .as_ref()
@@ -231,6 +241,7 @@ pub fn will_evaluate_to_string<P: Scope + ?Sized>(scope: &P, expr: &ast::Expr) -
         | ast::Expr::Env(_)
         | ast::Expr::Then(_, _) => true,
         ast::Expr::List(_) | ast::Expr::Glob(_) => false,
+        ast::Expr::Join(..) => false,
         ast::Expr::Patsubst(patsubst_expr) => will_evaluate_to_string(scope, &patsubst_expr.input),
         ast::Expr::Match(match_expr) => match_expr
             .patterns
@@ -390,6 +401,50 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
     })
 }
 
+pub async fn eval_run_expr(
+    scope: &RecipeScope<'_>,
+    io: &dyn Io,
+    expr: &ast::RunExpr,
+    force_color: bool,
+) -> Result<Eval<RunCommand>, EvalError> {
+    match expr {
+        ast::RunExpr::Shell(expr) => {
+            let shell = eval_shell_command(scope, expr, force_color)?;
+            Ok(shell.map(RunCommand::Shell))
+        }
+        ast::RunExpr::Write(destination, data) => {
+            let destination = eval_string_expr(scope, destination)?;
+            let data = eval(scope, io, data).await?;
+            let outdatedness = destination.outdatedness | data.outdatedness;
+            let Value::String(data) = data.value else {
+                return Err(EvalError::UnexpectedList);
+            };
+
+            Ok(Eval {
+                value: RunCommand::Write(destination.value.into(), data.into()),
+                outdatedness,
+            })
+        }
+        ast::RunExpr::Copy(from, to) => {
+            let from = eval_string_expr(scope, from)?;
+            let to = eval_string_expr(scope, to)?;
+            let outdatedness = from.outdatedness | to.outdatedness;
+            Ok(Eval {
+                value: RunCommand::Copy(from.value.into(), to.value.into()),
+                outdatedness,
+            })
+        }
+        ast::RunExpr::Echo(message) => {
+            let message = eval_string_expr(scope, message)?;
+            Ok(Eval {
+                value: RunCommand::Echo(message.value.into()),
+                // Echo commands never contribute to outdatedness.
+                outdatedness: Outdatedness::unchanged(),
+            })
+        }
+    }
+}
+
 pub fn eval_shell_command<P: Scope + ?Sized>(
     scope: &P,
     expr: &ast::StringExpr,
@@ -477,6 +532,7 @@ fn eval_shell_commands_into(
             }
             Ok(status)
         }
+        ast::Expr::Join(expr, sep) => Err(EvalError::UnexpectedExpressionType("join").into()),
         ast::Expr::Ident(_) => return Err(EvalError::UnexpectedExpressionType("from").into()),
         ast::Expr::Then(_, _) => return Err(EvalError::UnexpectedExpressionType("then").into()),
         ast::Expr::Message(message_expr) => {

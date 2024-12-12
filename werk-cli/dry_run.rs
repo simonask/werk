@@ -67,6 +67,27 @@ impl werk_runner::Io for DryRun {
         Box::pin(std::future::ready(Ok(())))
     }
 
+    fn copy_file<'a>(
+        &'a self,
+        from: &'a std::path::Path,
+        to: &'a std::path::Path,
+    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
+        tracing::info!(
+            "[DRY-RUN] Would copy file '{}' to '{}'",
+            from.display(),
+            to.display()
+        );
+        Box::pin(std::future::ready(Ok(())))
+    }
+
+    fn delete_file<'a>(
+        &'a self,
+        path: &'a std::path::Path,
+    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
+        tracing::info!("[DRY-RUN] Would delete file '{}'", path.display());
+        Box::pin(std::future::ready(Ok(())))
+    }
+
     fn create_parent_dirs<'a>(
         &'a self,
         path: &'a std::path::Path,

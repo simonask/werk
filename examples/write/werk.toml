@@ -1,0 +1,10 @@
+[config]
+out-dir = "../../target/examples/write"
+default = "lines.txt"
+
+[global]
+list = ["a", "b", "c"]
+
+[build.'lines.txt']
+command.write = "<out>"
+command.data = { from = "list", join = "\n" }

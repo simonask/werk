@@ -7,8 +7,8 @@ use std::{
 
 use parking_lot::Mutex;
 use werk_runner::{
-    globset, BuildStatus, DirEntry, Error, GlobSettings, Metadata, Outdatedness, ShellCommandLine,
-    TaskId, WhichError,
+    globset, BuildStatus, DirEntry, Error, GlobSettings, Metadata, Outdatedness, RunCommand,
+    ShellCommandLine, TaskId, WhichError,
 };
 
 #[inline]
@@ -30,10 +30,10 @@ pub struct MockWatcher {
 pub enum MockWatcherEvent {
     WillBuild(TaskId, usize, Option<String>, Outdatedness),
     DidBuild(TaskId, Result<BuildStatus, Error>, Option<String>),
-    WillExecute(TaskId, ShellCommandLine, usize, usize),
+    WillExecute(TaskId, RunCommand, usize, usize),
     DidExecute(
         TaskId,
-        ShellCommandLine,
+        RunCommand,
         Result<std::process::Output, Error>,
         usize,
         usize,
@@ -77,13 +77,7 @@ impl werk_runner::Watcher for MockWatcher {
         ));
     }
 
-    fn will_execute(
-        &self,
-        task_id: &TaskId,
-        command: &ShellCommandLine,
-        step: usize,
-        num_steps: usize,
-    ) {
+    fn will_execute(&self, task_id: &TaskId, command: &RunCommand, step: usize, num_steps: usize) {
         self.log.lock().push(MockWatcherEvent::WillExecute(
             task_id.clone(),
             command.clone(),
@@ -95,7 +89,7 @@ impl werk_runner::Watcher for MockWatcher {
     fn did_execute(
         &self,
         task_id: &TaskId,
-        command: &ShellCommandLine,
+        command: &RunCommand,
         result: &Result<std::process::Output, Error>,
         step: usize,
         num_steps: usize,
@@ -155,6 +149,8 @@ pub enum MockIoOp {
     Which(String),
     ReadFile(std::path::PathBuf),
     WriteFile(std::path::PathBuf),
+    CopyFile(std::path::PathBuf, std::path::PathBuf),
+    DeleteFile(std::path::PathBuf),
     CreateParentDirs(std::path::PathBuf),
     ReadEnv(String),
 }
@@ -350,6 +346,12 @@ fn read_fs<'a>(fs: &'a MockDir, path: &std::path::Path) -> std::io::Result<(DirE
     }
 
     read_fs(fs, path, path)
+}
+
+fn copy_fs(fs: &mut MockDir, from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    let (entry, data) = read_fs(fs, from)?;
+    let data = data.to_vec();
+    insert_fs(fs, to, (entry.metadata, data))
 }
 
 pub fn contains_file(fs: &MockDir, path: &std::path::Path) -> bool {
@@ -667,6 +669,39 @@ impl werk_runner::Io for MockIo {
                     Vec::from(data),
                 ),
             )
+        };
+
+        Box::pin(fut)
+    }
+
+    fn copy_file<'a>(
+        &'a self,
+        from: &'a std::path::Path,
+        to: &'a std::path::Path,
+    ) -> werk_runner::PinBoxFut<'a, Result<(), std::io::Error>> {
+        let from = from.to_path_buf();
+        let to = to.to_path_buf();
+        self.oplog
+            .lock()
+            .push(MockIoOp::CopyFile(from.clone(), to.clone()));
+
+        let fut = async move {
+            let mut fs = self.filesystem.lock();
+            copy_fs(&mut *fs, &from, &to)
+        };
+        Box::pin(fut)
+    }
+
+    fn delete_file<'a>(
+        &'a self,
+        path: &'a std::path::Path,
+    ) -> werk_runner::PinBoxFut<'a, Result<(), std::io::Error>> {
+        let path = path.to_path_buf();
+        self.oplog.lock().push(MockIoOp::DeleteFile(path.clone()));
+
+        let fut = async move {
+            let mut fs = self.filesystem.lock();
+            remove_fs(&mut *fs, &path)
         };
 
         Box::pin(fut)

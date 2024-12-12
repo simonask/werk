@@ -1,4 +1,4 @@
-use crate::parse_toml::ExprType;
+use crate::parse_toml::{ExprType, RunExprType};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -24,6 +24,8 @@ pub enum Error {
     ExpectedMainExpression,
     #[error("expression table can only contain one root expression, found: {0} and {1}")]
     AmbiguousMainExpression(ExprType, ExprType),
+    #[error("expression table can only contain one root expression, found: {0} and {1}")]
+    AmbiguousRunExpression(RunExprType, RunExprType),
     #[error("unknown chaining expression: {0}")]
     UnknownExpressionChain(String),
     #[error("invalid identifier '{0}': {1}")]

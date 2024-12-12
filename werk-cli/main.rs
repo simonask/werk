@@ -26,20 +26,27 @@ pub struct Args {
     #[clap(long)]
     pub dry_run: bool,
 
-    /// Print recipe shell commands as they are executed.
+    /// Print recipe shell commands as they are executed. Implied by
+    /// `--verbose`.
     #[clap(long)]
     pub print_commands: bool,
 
+    /// Print build targets that were not rebuilt because they were up-to-date.
+    /// Implied by `--verbose`.
+    #[clap(long)]
+    pub print_fresh: bool,
+
     /// Forward the stdout of all executed commands to the terminal, even when
-    /// successful.
+    /// successful. Implied by `--verbose`.
     #[clap(long)]
     pub no_capture: bool,
 
-    /// For each outdated recipe, explain why it was outdated.
+    /// For each outdated recipe, explain why it was outdated. Implied by
+    /// `--verbose`.
     #[clap(long)]
     pub explain: bool,
 
-    /// Shorthand for `--explain --print-commands --no-capture`.
+    /// Shorthand for `--explain --print-commands --print-fresh --no-capture`.
     #[clap(long, short)]
     pub verbose: bool,
 
@@ -178,6 +185,7 @@ async fn try_main(args: Args) -> Result<()> {
         logging_enabled: args.log.is_some(),
         color: args.color,
         print_recipe_commands: args.print_commands | args.verbose,
+        print_fresh: args.print_fresh | args.verbose,
         dry_run: args.dry_run,
         no_capture: args.no_capture | args.verbose,
         explain: args.explain | args.verbose,
@@ -205,6 +213,8 @@ async fn try_main(args: Args) -> Result<()> {
 
     let workspace = Workspace::new(&*io, workspace_dir.to_owned(), &settings).await?;
 
+    let target = args.target.or_else(|| ast.config.default.clone());
+
     let mut runner = Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
     if args.list {
         let recipes = runner.recipes();
@@ -218,8 +228,8 @@ async fn try_main(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    let Some(target) = args.target else {
-        anyhow::bail!("No target specified");
+    let Some(target) = target else {
+        anyhow::bail!("No target specified. Pass a target name on the command-line, or set the `config.default` variable. Use `--list` to get a list of available targets.");
     };
 
     // Hide cursor and disable line wrapping while running.

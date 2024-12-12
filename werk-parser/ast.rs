@@ -14,6 +14,7 @@ pub struct Config {
     pub edition: Option<String>,
     pub output_directory: Option<String>,
     pub print_commands: Option<bool>,
+    pub default: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -28,6 +29,9 @@ pub enum Expr {
     List(Vec<Expr>),
     Patsubst(Box<PatsubstExpr>),
     Match(Box<MatchExpr>),
+    /// Given a list expression, flatten the list and join each element with
+    /// separator.
+    Join(Box<Expr>, Box<StringExpr>),
     Then(Box<Expr>, Box<StringExpr>),
     Message(Box<MessageExpr>),
     Error(StringExpr),
@@ -69,10 +73,23 @@ pub enum MessageType {
     Warning,
 }
 
+/// Things that can appear in the `command` part of recipes.
+#[derive(Debug, PartialEq)]
+pub enum RunExpr {
+    /// Run shell command.
+    Shell(StringExpr),
+    /// Write the result of the expression to the path. The string is an OS path.
+    Write(StringExpr, Expr),
+    /// Copy one file to another.
+    Copy(StringExpr, StringExpr),
+    /// Print a message while running the command.
+    Echo(StringExpr),
+}
+
 #[derive(Debug, PartialEq)]
 pub struct CommandRecipe {
     pub build: Option<Expr>,
-    pub command: Option<Expr>,
+    pub command: Vec<RunExpr>,
     pub pre_message: Option<StringExpr>,
     pub post_message: Option<StringExpr>,
     pub capture: Option<bool>,
@@ -82,7 +99,7 @@ pub struct CommandRecipe {
 pub struct Recipe {
     pub in_files: Option<Expr>,
     pub depfile: Option<StringExpr>,
-    pub command: Option<Expr>,
+    pub command: Vec<RunExpr>,
     pub pre_message: Option<StringExpr>,
     pub post_message: Option<StringExpr>,
 }

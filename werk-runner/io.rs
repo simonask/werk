@@ -68,6 +68,17 @@ pub trait Io: Send + Sync + 'static {
         data: &'a [u8],
     ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
 
+    /// Copy one file to another on the file system. Must do nothing in dry-run.
+    /// May do nothing if the paths are equal.
+    fn copy_file<'a>(
+        &'a self,
+        from: &'a Path,
+        to: &'a Path,
+    ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
+
+    /// Delete a file from the filesystem. Must do nothing in dry-run.
+    fn delete_file<'a>(&'a self, path: &'a Path) -> PinBoxFut<'a, Result<(), std::io::Error>>;
+
     /// Create the parent directories of `path`, recursively.
     fn create_parent_dirs<'a>(
         &'a self,
@@ -289,6 +300,18 @@ impl Io for RealSystem {
         data: &'a [u8],
     ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
         Box::pin(async move { tokio::fs::write(path, data).await })
+    }
+
+    fn copy_file<'a>(
+        &'a self,
+        from: &'a Path,
+        to: &'a Path,
+    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
+        Box::pin(async move { tokio::fs::copy(from, to).await.map(|_| ()) })
+    }
+
+    fn delete_file<'a>(&'a self, path: &'a Path) -> PinBoxFut<'a, Result<(), std::io::Error>> {
+        Box::pin(async move { tokio::fs::remove_file(path).await.map(|_| ()) })
     }
 
     fn create_parent_dirs<'a>(

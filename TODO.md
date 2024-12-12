@@ -4,7 +4,14 @@
 - [ ] Take `werk.toml` modification time into account in outdatedness.
 - [ ] Consider using pattern syntax for glob patterns instead of standard glob syntax.
 - [ ] Forward doc comments from TOML to `--list`.
-- [ ] Support generating depfiles in the same command that compiles the file.
+- [ ] Autoclean: Match files in the output directory against available recipes
+  and delete them if they are older than `.werk-cache`.
+
+## Done
+
+- [x] Don't use `RUST_LOG` to enable logging, as it interferes with child
+  processes. ~~Use `WERK_LOG` instead.~~
+- [x] Support generating depfiles in the same command that compiles the file.
   The logic should be, if the target has a `depfile` field: Only read the
   depfile if the target already exists and isn't outdated anyway due to mtime.
   If the depfile is missing/outdated, the target is outdated. Determine how to
@@ -14,8 +21,3 @@
   warning after building the recipe (not an error). Recipes that have the
   `depfile` field, but never actually generate a depfile (either by an explicit
   recipe or implicitly) will always be outdated.
-
-## Done
-
-- [x] Don't use `RUST_LOG` to enable logging, as it interferes with child
-  processes. ~~Use `WERK_LOG` instead.~~
