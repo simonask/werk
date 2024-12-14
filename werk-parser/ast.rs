@@ -122,7 +122,7 @@ impl StringExpr {
 pub enum StringFragment {
     Literal(String),
     /// `{...}`
-    Interpolation(StringInterpolation),
+    Interpolation(Interpolation),
 }
 
 impl Default for StringFragment {
@@ -146,22 +146,26 @@ pub enum PatternFragment {
     /// `(a|b|c)`
     OneOf(Vec<String>),
     /// `{...}`
-    Interpolation(StringInterpolation),
+    Interpolation(Interpolation),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct StringInterpolation {
-    pub stem: StringInterpolationStem,
+pub struct Interpolation {
+    pub stem: InterpolationStem,
+    pub options: InterpolationOptions,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct InterpolationOptions {
     /// `{stem:operation}`
-    pub operation: Option<StringInterpolationOperation>,
-    /// `<...>` instead of `{...}`.
-    pub interpolate_as_resolved_path: bool,
-    /// `<...*>`
-    pub join: Option<char>,
+    pub ops: Vec<InterpolationOp>,
+    /// `{...*}` - This is not a normal operation because we need to treat it
+    /// specially when building shell commands.
+    pub join: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum StringInterpolationStem {
+pub enum InterpolationStem {
     /// Empty stem; inherit output type from the interpolated value.
     Implied,
     /// `{%}` - output is string.
@@ -173,9 +177,34 @@ pub enum StringInterpolationStem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum StringInterpolationOperation {
+pub enum InterpolationOp {
     /// Replace extension - input must be path.
     ReplaceExtension(String, String),
     PrependEach(String),
     AppendEach(String),
+    RegexReplace(RegexInterpolationOp),
+    // Interpret the string as an OS path and resolve it. This is the `<..>`
+    // interpolation syntax.
+    ResolveOsPath,
+}
+
+#[derive(Clone, Debug)]
+pub struct RegexInterpolationOp {
+    pub regex: regex::Regex,
+    pub replacer: String,
+}
+
+impl PartialEq for RegexInterpolationOp {
+    fn eq(&self, other: &Self) -> bool {
+        self.regex.as_str() == other.regex.as_str() && self.replacer == other.replacer
+    }
+}
+
+impl Eq for RegexInterpolationOp {}
+
+impl std::hash::Hash for RegexInterpolationOp {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.regex.as_str().hash(state);
+        self.replacer.hash(state);
+    }
 }

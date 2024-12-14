@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use werk_parser::ast;
 
@@ -313,20 +313,20 @@ pub fn eval_pattern_builder<P: Scope + ?Sized>(
             ast::PatternFragment::PatternStem => pattern_builder.push_pattern_stem(),
             ast::PatternFragment::OneOf(one_of) => pattern_builder.push_one_of(one_of.clone()),
             ast::PatternFragment::Interpolation(interp) => {
-                if let ast::StringInterpolationStem::PatternCapture = interp.stem {
+                if let ast::InterpolationStem::PatternCapture = interp.stem {
                     return Err(EvalError::PatternStemInterpolationInPattern.into());
                 }
-                if interp.interpolate_as_resolved_path {
-                    return Err(EvalError::ResolvePathInPattern.into());
-                }
-                if interp.join.is_some() {
+                if interp.options.join.is_some() {
                     return Err(EvalError::JoinInPattern.into());
                 }
 
                 let mut value = eval_string_interpolation_stem(scope, &interp.stem)?;
-                if let Some(ref op) = interp.operation {
-                    value = eval_string_interpolation_map_operation(value, op)?;
-                }
+                eval_string_interpolation_ops(
+                    &mut value,
+                    &interp.options.ops,
+                    false,
+                    scope.workspace(),
+                )?;
 
                 // Note: Ignoring the build-status of the interpolation
                 // stem, because we are building a pattern - it can't itself
@@ -366,20 +366,14 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
             ast::StringFragment::Literal(lit) => s.push_str(lit),
             ast::StringFragment::Interpolation(interp) => {
                 let mut value = eval_string_interpolation_stem(scope, &interp.stem)?;
+                eval_string_interpolation_ops(
+                    &mut value,
+                    &interp.options.ops,
+                    true,
+                    scope.workspace(),
+                )?;
 
-                if let Some(ref op) = interp.operation {
-                    value = eval_string_interpolation_map_operation(value, op)?;
-                }
-
-                if interp.interpolate_as_resolved_path {
-                    value.value = recursive_resolve_path(
-                        value.value,
-                        werk_fs::Path::ROOT,
-                        scope.workspace(),
-                    )?;
-                }
-
-                if let Some(join) = interp.join {
+                if let Some(ref join) = interp.options.join {
                     value.value = Value::String(recursive_join(value.value, join));
                 }
 
@@ -461,25 +455,19 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
             }
             ast::StringFragment::Interpolation(interp) => {
                 let mut value = eval_string_interpolation_stem(scope, &interp.stem)?;
-
-                if let Some(ref op) = interp.operation {
-                    value = eval_string_interpolation_map_operation(value, op)?;
-                }
+                eval_string_interpolation_ops(
+                    &mut value,
+                    &interp.options.ops,
+                    true,
+                    scope.workspace(),
+                )?;
                 outdated |= value.outdatedness;
 
-                if interp.interpolate_as_resolved_path {
-                    value.value = recursive_resolve_path(
-                        value.value,
-                        werk_fs::Path::ROOT,
-                        scope.workspace(),
-                    )?;
-                }
-
                 match value.value {
-                    Value::List(list) => match interp.join {
+                    Value::List(list) => match interp.options.join.as_deref() {
                         // When the join char is a space, we treat the list as
                         // separate arguments to the command.
-                        Some(' ') => {
+                        Some(" ") => {
                             builder.push_all(Value::List(list));
                         }
                         // Otherwise, we join the list into a single argument.
@@ -588,14 +576,14 @@ pub fn eval_shell_commands_run_which_and_detect_outdated(
 
 pub fn eval_string_interpolation_stem<P: Scope + ?Sized>(
     scope: &P,
-    stem: &ast::StringInterpolationStem,
+    stem: &ast::InterpolationStem,
 ) -> Result<Eval<Value>, EvalError> {
     Ok(match stem {
-        ast::StringInterpolationStem::Implied => scope
+        ast::InterpolationStem::Implied => scope
             .implied_value()
             .ok_or(EvalError::NoImpliedValue)?
             .clone(),
-        ast::StringInterpolationStem::PatternCapture => Eval {
+        ast::InterpolationStem::PatternCapture => Eval {
             value: Value::String(
                 scope
                     .pattern_stem()
@@ -605,37 +593,47 @@ pub fn eval_string_interpolation_stem<P: Scope + ?Sized>(
             ),
             outdatedness: Outdatedness::unchanged(),
         },
-        ast::StringInterpolationStem::CaptureGroup(group) => Eval::unchanged(
+        ast::InterpolationStem::CaptureGroup(group) => Eval::unchanged(
             scope
                 .capture_group(*group)
                 .ok_or(EvalError::NoSuchCaptureGroup(*group))?
                 .to_owned()
                 .into(),
         ),
-        ast::StringInterpolationStem::Ident(ref ident) => scope
+        ast::InterpolationStem::Ident(ref ident) => scope
             .get(ident)
             .ok_or_else(|| EvalError::NoSuchIdentifier(ident.clone()))?
             .cloned(),
     })
 }
 
-pub fn eval_string_interpolation_map_operation(
-    value: Eval<Value>,
-    op: &ast::StringInterpolationOperation,
-) -> Result<Eval<Value>, EvalError> {
-    value
-        .map(|value| match op {
-            ast::StringInterpolationOperation::ReplaceExtension(from, to) => {
+pub fn eval_string_interpolation_ops(
+    value: &mut Value,
+    ops: &[ast::InterpolationOp],
+    allow_os_paths: bool,
+    workspace: &Workspace,
+) -> Result<(), EvalError> {
+    for op in ops {
+        match op {
+            ast::InterpolationOp::ReplaceExtension(from, to) => {
                 recursive_replace_extension(value, from, to)
             }
-            ast::StringInterpolationOperation::PrependEach(prefix) => {
-                recursive_prepend_each(value, prefix)
+            ast::InterpolationOp::PrependEach(prefix) => recursive_prepend_each(value, prefix),
+            ast::InterpolationOp::AppendEach(suffix) => recursive_append_each(value, suffix),
+            ast::InterpolationOp::RegexReplace(r) => {
+                recursive_regex_replace(value, &r.regex, &r.replacer)
             }
-            ast::StringInterpolationOperation::AppendEach(suffix) => {
-                recursive_append_each(value, suffix)
+            ast::InterpolationOp::ResolveOsPath => {
+                if allow_os_paths {
+                    recursive_resolve_path(value, werk_fs::Path::ROOT, workspace)?
+                } else {
+                    return Err(EvalError::JoinInPattern);
+                }
             }
-        })
-        .transpose_result()
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn eval_shell<P: Scope + ?Sized>(
@@ -725,18 +723,18 @@ fn flat_join(values: &[Value], sep: &str) -> String {
     s
 }
 
-fn recursive_join(value: Value, sep: char) -> String {
+fn recursive_join(value: Value, sep: &str) -> String {
     match value {
         Value::String(string) => string,
-        Value::List(values) => flat_join(&values, &sep.to_string()),
+        Value::List(values) => flat_join(&values, sep),
     }
 }
 
 fn recursive_resolve_path(
-    mut value: Value,
+    value: &mut Value,
     working_dir: &werk_fs::Path,
     workspace: &Workspace,
-) -> Result<Value, EvalError> {
+) -> Result<(), EvalError> {
     value.try_recursive_modify(|string| {
         let path = werk_fs::Path::new(&string)?;
         let path = path.absolutize(working_dir)?;
@@ -748,31 +746,38 @@ fn recursive_resolve_path(
         Ok::<_, EvalError>(())
     })?;
 
-    Ok(value)
+    Ok(())
 }
 
-fn recursive_replace_extension(mut value: Value, from: &str, to: &str) -> Result<Value, EvalError> {
+fn recursive_replace_extension(value: &mut Value, from: &str, to: &str) {
     value.recursive_modify(|s| {
         if s.ends_with(from) {
             s.truncate(s.len() - from.len());
             s.push_str(to);
         }
     });
-    Ok(value)
 }
 
-fn recursive_prepend_each(mut value: Value, prefix: &str) -> Result<Value, EvalError> {
+fn recursive_prepend_each(value: &mut Value, prefix: &str) {
     value.recursive_modify(|s| {
         s.insert_str(0, prefix);
     });
-    Ok(value)
 }
 
-fn recursive_append_each(mut value: Value, suffix: &str) -> Result<Value, EvalError> {
+fn recursive_append_each(value: &mut Value, suffix: &str) {
     value.recursive_modify(|s| {
         s.push_str(suffix);
     });
-    Ok(value)
+}
+
+fn recursive_regex_replace(value: &mut Value, regex: &regex::Regex, replacer: &String) {
+    value.recursive_modify(|s| {
+        // regex guarantees Cow::Borrowed means that nothing was replaced.
+        let Cow::Owned(replaced) = regex.replace(s, replacer) else {
+            return;
+        };
+        *s = replaced;
+    });
 }
 
 fn find_first_string(list: &[Value]) -> Option<&str> {

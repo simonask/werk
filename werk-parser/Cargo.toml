@@ -12,3 +12,4 @@ toml_edit = "0.22.22"
 thiserror.workspace = true
 unicode-ident = "1.0.13"
 winnow.workspace = true
+regex.workspace = true

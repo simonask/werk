@@ -74,6 +74,11 @@ impl FromIterator<Reason> for Outdatedness {
 impl BitOrAssign for Outdatedness {
     #[inline]
     fn bitor_assign(&mut self, rhs: Self) {
+        if self.reasons.is_empty() {
+            self.reasons = rhs.reasons;
+            return;
+        }
+
         self.reasons.extend(rhs.reasons);
     }
 }
