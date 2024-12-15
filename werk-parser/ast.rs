@@ -5,7 +5,7 @@ pub struct Root {
     pub config: Config,
     pub global: IndexMap<String, Expr>,
     pub commands: IndexMap<String, CommandRecipe>,
-    pub recipes: IndexMap<PatternExpr, Recipe>,
+    pub recipes: IndexMap<PatternExpr, BuildRecipe>,
 }
 
 /// The `[config]` section of werk.toml.
@@ -17,7 +17,7 @@ pub struct Config {
     pub default: Option<String>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
     // Look up variable in scope.
     Ident(String),
@@ -47,24 +47,42 @@ impl Expr {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MessageExpr {
     pub inner: Expr,
     pub message: StringExpr,
     pub message_type: MessageType,
 }
 
-#[derive(Debug, PartialEq)]
+impl std::hash::Hash for MessageExpr {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Disregard the actual message in the hash, because the hash is used to
+        // calculate outdatedness.
+        self.inner.hash(state);
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct PatsubstExpr {
     pub input: Expr,
     pub pattern: PatternExpr,
     pub replacement: StringExpr,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct MatchExpr {
     pub input: Expr,
     pub patterns: IndexMap<PatternExpr, Expr>,
+}
+
+impl std::hash::Hash for MatchExpr {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.input.hash(state);
+        for (pattern, expr) in &self.patterns {
+            pattern.hash(state);
+            expr.hash(state);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -74,7 +92,7 @@ pub enum MessageType {
 }
 
 /// Things that can appear in the `command` part of recipes.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum RunExpr {
     /// Run shell command.
     Shell(StringExpr),
@@ -95,8 +113,8 @@ pub struct CommandRecipe {
     pub capture: Option<bool>,
 }
 
-#[derive(Debug, PartialEq)]
-pub struct Recipe {
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct BuildRecipe {
     pub in_files: Option<Expr>,
     pub depfile: Option<StringExpr>,
     pub command: Vec<RunExpr>,

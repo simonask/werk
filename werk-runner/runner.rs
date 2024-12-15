@@ -1,6 +1,5 @@
 use std::{future::Future, marker::PhantomData, pin::Pin, sync::Arc, time::SystemTime};
 
-use ahash::HashSet;
 use futures::channel::oneshot;
 use indexmap::{map::Entry, IndexMap};
 use parking_lot::Mutex;
@@ -8,10 +7,10 @@ use werk_fs::{Path, PathBuf};
 use werk_parser::ast;
 
 use crate::{
-    depfile::Depfile, eval, eval_run_expr, eval_shell_commands,
-    eval_shell_commands_run_which_and_detect_outdated, eval_string_expr, Error, Eval, Io,
-    LocalVariables, Outdatedness, PatternMatch, Reason, RecipeMatch, RecipeMatchData, RecipeScope,
-    Recipes, RootScope, Scope as _, ShellCommandLine, Value, Workspace, WorkspaceSettings,
+    compute_stable_hash, depfile::Depfile, eval, eval_run_expr, eval_string_expr, Error, Eval, Io,
+    LocalVariables, Outdatedness, OutdatednessTracker, PatternMatch, Reason, RecipeMatch,
+    RecipeMatchData, RecipeScope, Recipes, RootScope, Scope as _, ShellCommandLine, UsedVariable,
+    Value, Workspace, WorkspaceSettings,
 };
 
 pub struct Runner<'a> {
@@ -98,24 +97,24 @@ impl BuildStatus {
     /// Given an output file modification time, return the outdatedness of the
     /// target. If the target is up-to-date, the outdatedness will be empty. If
     /// an output mtime is not available, returns empty outdatedness.
-    pub fn into_output_outdatedness(self, output_mtime: Option<SystemTime>) -> Outdatedness {
+    pub fn into_outdated_reason(self, output_mtime: Option<SystemTime>) -> Option<Reason> {
         match self {
             BuildStatus::Complete(task_id, outdatedness) => {
                 if outdatedness.is_outdated() {
-                    Outdatedness::outdated(Reason::Rebuilt(task_id.clone()))
+                    Some(Reason::Rebuilt(task_id.clone()))
                 } else {
-                    Outdatedness::unchanged()
+                    None
                 }
             }
             BuildStatus::Exists(path_buf, system_time) => {
                 let Some(output_mtime) = output_mtime else {
-                    return Outdatedness::unchanged();
+                    return None;
                 };
 
                 if output_mtime <= system_time {
-                    Outdatedness::outdated(Reason::Modified(path_buf, system_time))
+                    Some(Reason::Modified(path_buf, system_time))
                 } else {
-                    Outdatedness::unchanged()
+                    None
                 }
             }
         }
@@ -128,27 +127,46 @@ enum TaskStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum TaskId {
-    Command(String),
-    Build(PathBuf),
+pub struct TaskId {
+    name: String,
 }
 
 impl TaskId {
     pub fn command(s: impl Into<String>) -> Self {
-        TaskId::Command(s.into())
+        let name = s.into();
+        debug_assert!(!name.starts_with('/'));
+        TaskId { name }
     }
 
     pub fn build(p: impl Into<PathBuf>) -> Self {
-        TaskId::Build(p.into())
+        let path = p.into();
+        assert!(path.is_absolute());
+        TaskId { name: path.into() }
+    }
+
+    #[inline]
+    pub fn is_command(&self) -> bool {
+        !self.name.starts_with('/')
+    }
+
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        &self.name
+    }
+
+    #[inline]
+    pub fn as_path(&self) -> Option<&werk_fs::Path> {
+        if self.name.starts_with('/') {
+            Some(werk_fs::Path::new_unchecked(&self.name))
+        } else {
+            None
+        }
     }
 }
 
 impl std::fmt::Display for TaskId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TaskId::Command(s) => f.write_str(s),
-            TaskId::Build(p) => f.write_str(p.as_str()),
-        }
+        f.write_str(&self.name)
     }
 }
 
@@ -168,7 +186,7 @@ impl TaskSpec {
     pub fn to_task_id(&self) -> TaskId {
         match self {
             TaskSpec::Recipe(recipe_match_data) => recipe_match_data.to_task_id(),
-            TaskSpec::CheckExists(path_buf) => TaskId::Build(path_buf.clone()),
+            TaskSpec::CheckExists(path_buf) => TaskId::build(path_buf.clone()),
         }
     }
 }
@@ -183,7 +201,13 @@ impl<'a> Runner<'a> {
         let mut globals = LocalVariables::new();
         for (name, value) in &ast.global {
             if let Some(def) = workspace.defines.get(name) {
-                globals.insert(name.to_owned(), Eval::unchanged(Value::String(def.clone())));
+                globals.insert(
+                    name.to_owned(),
+                    Eval::using_var(
+                        Value::String(def.clone()),
+                        UsedVariable::Define(name.clone(), compute_stable_hash(def)),
+                    ),
+                );
                 continue;
             }
 
@@ -192,9 +216,9 @@ impl<'a> Runner<'a> {
             let scope = RootScope::new(&globals, &workspace, &*watcher);
             let value = eval(&scope, &*io, value).await?;
             tracing::trace!(
-                "global var '{name}' = {:?}, outdated = {:?}",
+                "global var '{name}' = {:?}, used = {:?}",
                 value.value,
-                value.outdatedness
+                value.used
             );
             globals.insert(name.to_owned(), value);
         }
@@ -295,41 +319,6 @@ impl Inner {
         }
     }
 
-    async fn parse_depfile_build_specs<'a>(
-        &'a self,
-        task_id: &TaskId,
-        depfile_path: &werk_fs::Path,
-    ) -> Result<Vec<TaskSpec>, Error> {
-        let Some(dir_entry) = self
-            .workspace
-            .get_existing_output_file(&*self.io, depfile_path)?
-        else {
-            if self.io.is_dry_run() {
-                self.watcher.warning(
-                    Some(task_id),
-                    "Depfile does not exist, and was not generated, because this is a dry run",
-                );
-                return Ok(vec![]);
-            } else {
-                return Err(Error::DepfileNotFound(depfile_path.to_path_buf()));
-            }
-        };
-
-        tracing::debug!("Parsing depfile: {}", dir_entry.path.display());
-        let depfile_contents = self.io.read_file(&dir_entry.path).await?;
-        let depfile = Depfile::parse(&depfile_contents)?;
-        let mut specs = Vec::new();
-        for dep in &depfile.deps {
-            // Translate the filesystem path produced by the compiler into an
-            // abstract path within the workspace. Normally this will be a file
-            // inside the output directory.
-            let abstract_path = self.workspace.unresolve_path(dep)?;
-            tracing::debug!("Found depfile dependency: {abstract_path}");
-            specs.push(self.get_build_spec(&abstract_path)?);
-        }
-        Ok(specs)
-    }
-
     /// Build the task, coordinating dependencies and rebuilds. The `invoker`
     /// is the chain of dependencies that triggered this build, not including
     /// this task.
@@ -414,10 +403,11 @@ impl Inner {
         Ok(BuildStatus::Exists(path.to_path_buf(), mtime))
     }
 
+    #[tracing::instrument(level = "debug", skip_all, fields(target_file))]
     async fn execute_build_recipe(
         self: &Arc<Self>,
         task_id: &TaskId,
-        recipe: &ast::Recipe,
+        recipe: &ast::BuildRecipe,
         pattern_match: &PatternMatch<'_>,
         target_file: &werk_fs::Path,
         dep_chain: DepChainEntry<'_>,
@@ -426,16 +416,22 @@ impl Inner {
         let mut scope = RecipeScope::new(&global_scope, task_id, Some(pattern_match));
         scope.set(
             "out".to_owned(),
-            Eval::unchanged(Value::String(target_file.to_string())),
+            Eval::inherent(Value::String(target_file.to_string())),
         );
 
-        let mut outdated = Outdatedness::unchanged();
+        let mut cache = self.workspace.take_build_target_cache(target_file);
+        let mut outdatedness = OutdatednessTracker::new(
+            &self.workspace,
+            cache.as_ref(),
+            &pattern_match.pattern.fragments,
+            recipe,
+        );
 
         // Evaluate direct dependencies (`out` is available).
         let mut deps = Vec::new();
         if let Some(ref build_deps) = recipe.in_files {
             let build_deps = eval(&scope, &*self.io, build_deps).await?;
-            outdated |= build_deps.outdatedness;
+            outdatedness.did_use(build_deps.used);
             build_deps.value.try_collect_strings_recursive(|s| {
                 let dep = self.get_build_or_command_spec(&s)?;
                 deps.push(dep);
@@ -460,8 +456,8 @@ impl Inner {
         } else {
             Value::List(in_values)
         };
-        tracing::debug!("in = {in_values:?}");
-        scope.set(String::from("in"), Eval::unchanged(in_values));
+        tracing::trace!("in = {in_values:?}");
+        scope.set(String::from("in"), Eval::inherent(in_values));
 
         // Check the target's mtime.
         let out_mtime = scope
@@ -470,34 +466,44 @@ impl Inner {
             .map(|entry| entry.metadata.mtime);
 
         // Rebuild if the target does not exist.
-        if out_mtime.is_none() {
-            outdated.insert(Reason::Missing(target_file.to_path_buf()));
+        match out_mtime {
+            Some(mtime) => {
+                tracing::debug!("Output exists, mtime: {mtime:?}");
+            }
+            None => {
+                tracing::debug!("Output file missing, target is outdated");
+                outdatedness.target_does_not_exist(target_file.to_path_buf());
+            }
         }
 
         let mut check_implicit_depfile_was_generated = None;
         if let Some(ref depfile) = recipe.depfile {
             let depfile_dep_eval = eval_string_expr(&scope, depfile)?;
             // Outdatedness of the `depfile` value itself.
-            outdated |= depfile_dep_eval.outdatedness.clone();
+            outdatedness.did_use(depfile_dep_eval.used.clone());
+
             let depfile_path =
                 werk_fs::Path::new(&depfile_dep_eval.value)?.absolutize(werk_fs::Path::ROOT)?;
             let dep = self.get_depfile_build_spec(&depfile_path)?;
+
             // Make the `depfile` variable available to the recipe body.
             scope.set(String::from("depfile"), depfile_dep_eval.map(Value::String));
+
             match dep {
                 DepfileSpec::Recipe(depfile_recipe_match_data) => {
                     tracing::debug!("Building depfile with recipe: {depfile_recipe_match_data}");
                     // Depfile is explicitly generated by a recipe - build it.
-                    outdated |= self
+                    let dep_reasons = self
                         .build_dependencies(
                             vec![TaskSpec::Recipe(depfile_recipe_match_data)],
                             dep_chain,
                             out_mtime,
                         )
                         .await?;
+                    outdatedness.add_reasons(dep_reasons);
                 }
                 DepfileSpec::ImplicitlyGenerated(path_buf) => {
-                    tracing::debug!("Assuming implicitly generated depfile: {path_buf}");
+                    tracing::debug!("Assuming implicitly generated depfile");
                     check_implicit_depfile_was_generated = Some(path_buf);
                 }
             }
@@ -507,9 +513,9 @@ impl Inner {
                 .workspace
                 .get_existing_output_file(&*self.io, &depfile_path)?
             {
-                // The depfile was generated, either by a build recipe OR
-                // implicitly by a previous run of this recipe. Parse it and add
-                // its dependencies!
+                // The depfile was generated, either by a build recipe or by a
+                // previous run of this recipe. Parse it and add its
+                // dependencies!
                 tracing::debug!("Parsing depfile: {}", depfile_entry.path.display());
                 let depfile_contents = self.io.read_file(&depfile_entry.path).await?;
                 let depfile = Depfile::parse(&depfile_contents)?;
@@ -527,7 +533,7 @@ impl Inner {
                     // or a previous run. Add that as a reason to rebuild the
                     // main recipe. Note that this causes the main recipe to
                     // always be outdated if it fails to generate the depfile!
-                    outdated.insert(Reason::Missing(
+                    outdatedness.add_reason(Reason::Missing(
                         depfile_path.absolutize(werk_fs::Path::ROOT)?,
                     ));
                 } else {
@@ -547,14 +553,15 @@ impl Inner {
         }
 
         // Build dependencies!
-        outdated |= self.build_dependencies(deps, dep_chain, out_mtime).await?;
+        let dep_reasons = self.build_dependencies(deps, dep_chain, out_mtime).await?;
+        outdatedness.add_reasons(dep_reasons);
 
         // Figure out what to run.
         let mut run_commands = Vec::with_capacity(recipe.command.len());
         for run_expr in recipe.command.iter() {
             let run_command =
                 eval_run_expr(&scope, &*self.io, run_expr, self.workspace.force_color).await?;
-            outdated |= run_command.outdatedness;
+            outdatedness.did_use(run_command.used);
             run_commands.push(run_command.value);
         }
 
@@ -575,6 +582,10 @@ impl Inner {
             .create_output_parent_dirs(&*self.io, target_file)
             .await?;
 
+        let (outdated, new_cache) = outdatedness.finish();
+        self.workspace
+            .store_build_target_cache(target_file.to_path_buf(), new_cache);
+
         self.watcher.will_build(
             task_id,
             run_commands.len(),
@@ -583,12 +594,12 @@ impl Inner {
         );
 
         let result = if outdated.is_outdated() {
-            tracing::debug!("Rebuilding: {task_id}");
+            tracing::debug!("Rebuilding");
             self.execute_recipe_commands(task_id, &run_commands, &scope, false)
                 .await
                 .map(|_| BuildStatus::Complete(task_id.clone(), outdated))
         } else {
-            tracing::debug!("Up to date: {task_id}");
+            tracing::debug!("Up to date");
             Ok(BuildStatus::Complete(task_id.clone(), outdated))
         };
 
@@ -754,14 +765,19 @@ impl Inner {
         mut dependencies: Vec<TaskSpec>,
         dependent: DepChainEntry<'a>,
         output_mtime: Option<SystemTime>,
-    ) -> Pin<Box<dyn Future<Output = Result<Outdatedness, Error>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Reason>, Error>> + Send + 'a>> {
         if dependencies.len() == 1 {
             // Boxing because of recursion.
             let dependency = dependencies.pop().unwrap();
             return Box::pin(async move {
                 self.run_task(dependency, DepChain::Ref(&dependent))
                     .await
-                    .map(|status| status.into_output_outdatedness(output_mtime))
+                    .map(|status| {
+                        status
+                            .into_outdated_reason(output_mtime)
+                            .into_iter()
+                            .collect()
+                    })
             });
         } else if !dependencies.is_empty() {
             let parent = dependent.collect();
@@ -774,12 +790,14 @@ impl Inner {
                     tasks.spawn(async move { this.run_task(dep, DepChain::Owned(&parent)).await });
                 }
 
-                let mut outdated = Outdatedness::unchanged();
+                let mut reasons = Vec::new();
                 let mut first_error = None;
                 while let Some(status) = tasks.join_next().await {
                     match status.unwrap() {
                         Ok(status) => {
-                            outdated |= status.into_output_outdatedness(output_mtime);
+                            if let Some(reason) = status.into_outdated_reason(output_mtime) {
+                                reasons.push(reason);
+                            }
                         }
                         Err(err) => {
                             // Don't interrupt other tasks if one fails.
@@ -790,11 +808,11 @@ impl Inner {
                 if let Some(first_error) = first_error {
                     Err(first_error)
                 } else {
-                    Ok(outdated)
+                    Ok(reasons)
                 }
             });
         } else {
-            return Box::pin(futures::future::ready(Ok(Outdatedness::unchanged())));
+            return Box::pin(futures::future::ready(Ok(vec![])));
         }
     }
 

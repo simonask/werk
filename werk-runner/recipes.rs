@@ -19,7 +19,7 @@ pub enum RecipeMatch<'a> {
     },
     Build {
         index: usize,
-        recipe: &'a ast::Recipe,
+        recipe: &'a ast::BuildRecipe,
         pattern_match: PatternMatch<'a>,
         target_file: werk_fs::PathBuf,
     },
@@ -118,7 +118,9 @@ impl Recipes {
         }
     }
 
-    pub fn build_recipes<'a>(&'a self) -> impl Iterator<Item = (&'a Pattern, &'a ast::Recipe)> {
+    pub fn build_recipes<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (&'a Pattern, &'a ast::BuildRecipe)> {
         self.build_recipe_patterns
             .iter()
             .zip(self.ast.recipes.values())
@@ -216,8 +218,8 @@ impl RecipeMatch<'_> {
     #[inline]
     pub fn to_task_id(&self) -> TaskId {
         match self {
-            RecipeMatch::Command { name, .. } => TaskId::Command(name.to_string()),
-            RecipeMatch::Build { target_file, .. } => TaskId::Build(target_file.clone()),
+            RecipeMatch::Command { name, .. } => TaskId::command(name.to_string()),
+            RecipeMatch::Build { target_file, .. } => TaskId::build(target_file.clone()),
         }
     }
 }
@@ -226,8 +228,8 @@ impl RecipeMatchData {
     #[inline]
     pub fn to_task_id(&self) -> TaskId {
         match self {
-            RecipeMatchData::Command { name, .. } => TaskId::Command(name.clone()),
-            RecipeMatchData::Build { target_file, .. } => TaskId::Build(target_file.clone()),
+            RecipeMatchData::Command { name, .. } => TaskId::command(name),
+            RecipeMatchData::Build { target_file, .. } => TaskId::build(target_file.clone()),
         }
     }
 }

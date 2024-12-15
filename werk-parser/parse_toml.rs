@@ -598,7 +598,7 @@ fn parse_command_recipe(
     })
 }
 
-fn parse_build_recipe(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Recipe, Error> {
+fn parse_build_recipe(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::BuildRecipe, Error> {
     let Some(table) = toml.as_table_like() else {
         return Err(Error::ExpectedTable(path.to_string()));
     };
@@ -639,7 +639,7 @@ fn parse_build_recipe(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Re
         }
     }
 
-    Ok(ast::Recipe {
+    Ok(ast::BuildRecipe {
         in_files,
         depfile,
         command,

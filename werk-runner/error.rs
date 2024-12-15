@@ -227,6 +227,8 @@ pub enum EvalError {
     UnexpectedExpressionType(&'static str),
     #[error("command not found: {0}: {1}")]
     CommandNotFound(String, which::Error),
+    #[error("`which` expression resulted in a non-UTF-8 path: {}", .0.display())]
+    NonUtf8Which(std::path::PathBuf),
     #[error(transparent)]
     Glob(Arc<globset::Error>),
     /// Shell command failed during evaluation. Note: This error is not reported

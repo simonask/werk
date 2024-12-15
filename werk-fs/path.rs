@@ -49,7 +49,8 @@ pub struct Path {
     path: str,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)] // TODO: Validate deserialized paths.
 pub struct PathBuf {
     path: String,
 }
@@ -89,7 +90,7 @@ impl Path {
     pub const PARENT: &'static Self = Self::new_unchecked("..");
 
     #[inline(always)]
-    pub(crate) const fn new_unchecked(path: &str) -> &Self {
+    pub const fn new_unchecked(path: &str) -> &Self {
         unsafe {
             // SAFETY: #[repr(transparent)]
             &*(path as *const str as *const Self)
@@ -601,6 +602,13 @@ impl TryFrom<&str> for PathBuf {
     #[inline(always)]
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         PathBuf::new(value.to_owned())
+    }
+}
+
+impl From<&Path> for PathBuf {
+    #[inline(always)]
+    fn from(path: &Path) -> Self {
+        path.to_path_buf()
     }
 }
 

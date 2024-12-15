@@ -9,3 +9,4 @@ path = "lib.rs"
 [dependencies]
 winnow.workspace = true
 thiserror.workspace = true
+serde.workspace = true

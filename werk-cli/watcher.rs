@@ -293,12 +293,7 @@ impl<'a> StdioLock<'a> {
                 task_width += 1 + num_width(*step) + 1 + num_width(*num_steps) + 2;
 
                 // Make space for the task name
-                task_width += match task {
-                    // Note: Conservative for UTF-8 sequences, but counting
-                    // chars here might be excessive. Could be cached in the map?
-                    TaskId::Command(cmd) => cmd.len(),
-                    TaskId::Build(path_buf) => path_buf.len(),
-                };
+                task_width += task.as_str().len();
 
                 if task_width > available_width {
                     if i != 0 {
@@ -348,22 +343,20 @@ impl<'a> StdioLock<'a> {
         self.clear_current_line();
 
         if self.settings.explain && outdated.is_outdated() {
-            match task_id {
-                TaskId::Command(name) => {
-                    _ = writeln!(
-                        self.stdout,
-                        "{} running task `{name}`",
-                        Bracketed(Step(0, num_steps)).bright_yellow(),
-                    );
-                }
-                TaskId::Build(path_buf) => {
-                    _ = writeln!(
-                        self.stdout,
-                        "{} rebuilding `{path_buf}`",
-                        Bracketed(Step(0, num_steps)).bright_yellow(),
-                    );
-                }
-            }
+            if let Some(path) = task_id.as_path() {
+                _ = writeln!(
+                    self.stdout,
+                    "{} rebuilding `{path}`",
+                    Bracketed(Step(0, num_steps)).bright_yellow(),
+                );
+            } else {
+                _ = writeln!(
+                    self.stdout,
+                    "{} running task `{}`",
+                    Bracketed(Step(0, num_steps)).bright_yellow(),
+                    task_id.as_str(),
+                );
+            };
 
             for reason in &outdated.reasons {
                 _ = writeln!(self.stdout, "  {} {reason}", "Cause:".yellow());

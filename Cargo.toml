@@ -19,3 +19,4 @@ tracing = "0.1.40"
 indexmap = { version = "2.6.0", features = ["serde"] }
 parking_lot = "0.12.3"
 regex = "1.11.1"
+serde = { version = "1.0.215", features = ["derive"] }

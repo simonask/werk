@@ -137,11 +137,11 @@ impl Scope for RootScope<'_> {
     #[inline]
     fn get<'b>(&'b self, name: &str) -> Option<Eval<&'b Value>> {
         let Some(local) = self.globals.get(name) else {
-            return default_global_constants().get(name).map(Eval::unchanged);
+            return default_global_constants().get(name).map(Eval::inherent);
         };
         Some(Eval {
             value: &local.value,
-            outdatedness: local.outdatedness.clone(),
+            used: local.used.clone(),
         })
     }
 
@@ -179,7 +179,7 @@ impl Scope for RecipeScope<'_> {
         };
         Some(Eval {
             value: &local.value,
-            outdatedness: local.outdatedness.clone(),
+            used: local.used.clone(),
         })
     }
 

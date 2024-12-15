@@ -1418,6 +1418,7 @@ dependencies = [
 name = "werk-fs"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "thiserror",
  "winnow",
 ]

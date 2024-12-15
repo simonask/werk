@@ -22,7 +22,7 @@ ahash = "0.8.11"
 ignore = "0.4.23"
 regex.workspace = true
 anyhow = "1.0.93"
-serde = { version = "1.0.215", features = ["derive"] }
+serde.workspace = true
 toml_edit = { version = "0.22.22", features = ["serde"] }
 rustc-stable-hash = "0.1.0"
 winnow.workspace = true

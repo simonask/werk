@@ -3,7 +3,11 @@ use std::{
     ops::{BitOr, BitOrAssign},
 };
 
-use crate::TaskId;
+use werk_parser::ast;
+
+use crate::{
+    cache::TargetOutdatednessCache, PatternFragment, TaskId, Used, UsedVariable, Workspace,
+};
 
 /// A reason why a variable or recipe is "outdated".
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -18,8 +22,10 @@ pub enum Reason {
     Env(String),
     /// The resolved path of a binary executable changed between runs.
     Which(String),
-    /// `werk.toml` is newer than `.werk-cache`.
-    RecipesModified(std::time::SystemTime),
+    /// Recipe changed.
+    RecipeChanged,
+    /// Manual define changed.
+    Define(String),
     /// The recipe has a dependency that was rebuilt.
     Rebuilt(TaskId),
 }
@@ -119,13 +125,120 @@ impl std::fmt::Display for Reason {
             Reason::Glob(pattern) => write!(f, "glob result '{pattern}' changed"),
             Reason::Env(env) => write!(f, "environment variable `{env}` changed"),
             Reason::Which(program) => write!(f, "resolved path of `{program}` changed"),
-            Reason::RecipesModified(_) => write!(f, "recipe file was changed"),
-            Reason::Rebuilt(TaskId::Command(name)) => {
-                write!(f, "`{name}` is a command recipe")
-            }
-            Reason::Rebuilt(TaskId::Build(path)) => {
-                write!(f, "dependency `{path}` was rebuilt")
+            Reason::RecipeChanged => f.write_str("recipe changed"),
+            Reason::Define(define) => write!(f, "variable `{define}` was manually overridden"),
+            Reason::Rebuilt(task_id) => {
+                if task_id.is_command() {
+                    write!(f, "`{task_id}` is a command recipe")
+                } else {
+                    write!(f, "dependency `{task_id}` was rebuilt")
+                }
             }
         }
+    }
+}
+
+pub struct OutdatednessTracker<'a> {
+    outdatedness: Outdatedness,
+    cache: Option<&'a TargetOutdatednessCache>,
+    new_cache: TargetOutdatednessCache,
+}
+
+impl<'a> OutdatednessTracker<'a> {
+    pub fn new(
+        workspace: &'a Workspace,
+        cache: Option<&'a TargetOutdatednessCache>,
+        pattern: &'a [PatternFragment],
+        recipe: &ast::BuildRecipe,
+    ) -> Self {
+        let mut outdatedness = Outdatedness::unchanged();
+        let recipe_hash = workspace.recipe_hash(pattern, recipe);
+        if let Some(cache) = cache {
+            if recipe_hash != cache.recipe_hash {
+                outdatedness.insert(Reason::RecipeChanged);
+            }
+        }
+        let new_cache = TargetOutdatednessCache {
+            recipe_hash,
+            glob: Default::default(),
+            which: Default::default(),
+            env: Default::default(),
+            define: Default::default(),
+        };
+
+        Self {
+            outdatedness,
+            cache,
+            new_cache,
+        }
+    }
+
+    pub fn did_use(&mut self, used: Used) {
+        for var in used.vars {
+            match var {
+                UsedVariable::Glob(glob, hash) => {
+                    if self
+                        .cache
+                        .is_some_and(|cache| cache.is_glob_outdated(&glob, hash))
+                    {
+                        self.outdatedness.insert(Reason::Glob(glob.clone()));
+                    }
+                    self.new_cache.glob.insert(glob, hash);
+                }
+                UsedVariable::Which(which, hash) => {
+                    if self
+                        .cache
+                        .is_some_and(|cache| cache.is_which_outdated(&which, hash))
+                    {
+                        self.outdatedness.insert(Reason::Which(which.clone()));
+                    }
+                    self.new_cache.which.insert(which.clone(), hash);
+                }
+                UsedVariable::Env(env, hash) => {
+                    if self
+                        .cache
+                        .is_some_and(|cache| cache.is_env_outdated(&env, hash))
+                    {
+                        self.outdatedness.insert(Reason::Env(env.clone()));
+                    }
+                    self.new_cache.env.insert(env.clone(), hash);
+                }
+                UsedVariable::Define(def, hash) => {
+                    if self
+                        .cache
+                        .is_some_and(|cache| cache.is_define_outdated(&def, hash))
+                    {
+                        self.outdatedness.insert(Reason::Define(def.clone()));
+                    }
+                    self.new_cache.env.insert(def.clone(), hash);
+                }
+            }
+        }
+    }
+
+    pub fn target_does_not_exist(&mut self, target: werk_fs::PathBuf) {
+        self.outdatedness.insert(Reason::Missing(target));
+    }
+
+    pub fn add_reason(&mut self, reason: Reason) {
+        self.outdatedness.insert(reason);
+    }
+
+    pub fn add_reasons(&mut self, reasons: impl IntoIterator<Item = Reason>) {
+        self.outdatedness.reasons.extend(reasons);
+    }
+
+    pub fn finish(mut self) -> (Outdatedness, TargetOutdatednessCache) {
+        // Any manual defines that were previously used, but were not used this
+        // time, should also contribute to outdatedness.
+        if let Some(cache) = self.cache {
+            for (def, _) in &cache.define {
+                if !self.new_cache.define.contains_key(def) {
+                    self.outdatedness.insert(Reason::Define(def.clone()));
+                }
+            }
+        }
+
+        (self.outdatedness, self.new_cache)
     }
 }

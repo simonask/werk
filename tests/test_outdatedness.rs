@@ -26,6 +26,23 @@ in.glob = "*.c"
 command = "{cc} <in*>"
 "#;
 
+static TOML_RECIPE_CHANGED: &str = r#"
+[global]
+profile.env = "PROFILE"
+cc.which = "clang"
+write.which = "write"
+
+[build.'env-dep']
+command = "{write} {profile} {out}"
+
+[build.'which-dep']
+command = "{cc} -o {out}"
+
+[build.'glob-dep']
+in.glob = "*.c"
+command = "{cc} <in*>"
+"#;
+
 fn make_io_context() -> Arc<MockIo> {
     Arc::new(
         MockIo::default()
@@ -87,11 +104,8 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::Build(PathBuf::try_from("/env-dep").unwrap()),
-            Outdatedness::new([
-                Reason::Missing(PathBuf::try_from("/env-dep")?),
-                Reason::Which(String::from("write"))
-            ])
+            TaskId::build(PathBuf::try_from("/env-dep").unwrap()),
+            Outdatedness::new([Reason::Missing(PathBuf::try_from("/env-dep")?),])
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -142,7 +156,7 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::Build(PathBuf::try_from("/env-dep").unwrap()),
+            TaskId::build(PathBuf::try_from("/env-dep").unwrap()),
             Outdatedness::new([Reason::Env(String::from("PROFILE")),])
         )
     );
@@ -175,11 +189,8 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::Build(PathBuf::try_from("/which-dep").unwrap()),
-            Outdatedness::new([
-                Reason::Missing(PathBuf::try_from("/which-dep")?),
-                Reason::Which(String::from("clang"))
-            ])
+            TaskId::build(PathBuf::try_from("/which-dep").unwrap()),
+            Outdatedness::new([Reason::Missing(PathBuf::try_from("/which-dep")?),])
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -239,10 +250,100 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::Build(PathBuf::try_from("/which-dep").unwrap()),
+            TaskId::build(PathBuf::try_from("/which-dep").unwrap()),
             Outdatedness::new([
                 Reason::Missing(PathBuf::try_from("/which-dep")?),
                 Reason::Which(String::from("clang"))
+            ])
+        )
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
+    _ = tracing_subscriber::fmt::try_init();
+
+    let io = make_io_context();
+    let watcher = Arc::new(MockWatcher::default());
+    let ast = werk_parser::parse_toml(TOML)?;
+    let workspace = werk_runner::Workspace::new(
+        &*io,
+        "/".into(),
+        WorkspaceSettings::default().ignore_explicitly(
+            GlobSet::builder()
+                .add("/target/**".parse().unwrap())
+                .build()
+                .unwrap(),
+        ),
+    )
+    .await?;
+    let mut runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
+
+    let status = runner.build_file(Path::new("which-dep")?).await?;
+
+    assert_eq!(
+        status,
+        BuildStatus::Complete(
+            TaskId::build(PathBuf::try_from("/which-dep").unwrap()),
+            Outdatedness::new([Reason::Missing(PathBuf::try_from("/which-dep")?),])
+        )
+    );
+    // println!("oplog = {:#?}", &*io.oplog.lock());
+    assert!(io.did_which("clang"));
+    assert!(io.did_run_during_build(&ShellCommandLine {
+        program: "/clang".into(),
+        arguments: vec![],
+        env: Default::default(),
+        env_remove: Default::default()
+    }));
+
+    // Write .werk-cache.
+    runner.workspace().finalize(&*io).await.unwrap();
+    // println!("oplog = {:#?}", &*io.oplog.lock());
+    assert!(io.did_write_file(&std::path::Path::new("target").join(".werk-cache")));
+
+    assert!(contains_file(
+        &*io.filesystem.lock(),
+        std::path::Path::new("/target/.werk-cache")
+    ));
+
+    // Change the environment!
+    io.clear_oplog();
+
+    // Initialize a new workspace.
+    let ast = werk_parser::parse_toml(TOML_RECIPE_CHANGED)?;
+    let workspace = werk_runner::Workspace::new(
+        &*io,
+        "/".into(),
+        WorkspaceSettings::default().ignore_explicitly(
+            GlobSet::builder()
+                .add("/target/**".parse().unwrap())
+                .build()
+                .unwrap(),
+        ),
+    )
+    .await?;
+    let mut runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
+
+    let status = runner.build_file(Path::new("which-dep")?).await?;
+
+    assert!(io.did_run_during_build(&ShellCommandLine {
+        program: "/clang".into(),
+        arguments: vec![String::from("-o"), String::from("/which-dep")],
+        env: Default::default(),
+        env_remove: Default::default()
+    }));
+
+    // println!("oplog = {:#?}", &*io.oplog.lock());
+    assert_eq!(
+        status,
+        BuildStatus::Complete(
+            TaskId::build(PathBuf::try_from("/which-dep").unwrap()),
+            Outdatedness::new([
+                Reason::Missing(PathBuf::try_from("/which-dep")?),
+                Reason::RecipeChanged
             ])
         )
     );
@@ -278,12 +379,8 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::Build(PathBuf::try_from("/glob-dep").unwrap()),
-            Outdatedness::new([
-                Reason::Missing(PathBuf::try_from("/glob-dep")?),
-                Reason::Glob(String::from("/*.c")),
-                Reason::Which(String::from("clang")),
-            ])
+            TaskId::build(PathBuf::try_from("/glob-dep").unwrap()),
+            Outdatedness::new([Reason::Missing(PathBuf::try_from("/glob-dep")?),])
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -337,7 +434,7 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::Build(PathBuf::try_from("/glob-dep").unwrap()),
+            TaskId::build(PathBuf::try_from("/glob-dep").unwrap()),
             Outdatedness::new([
                 Reason::Missing(PathBuf::try_from("/glob-dep")?),
                 Reason::Glob(String::from("/*.c"))
