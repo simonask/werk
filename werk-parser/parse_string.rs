@@ -4,8 +4,7 @@ use crate::{ast, ContextError, Expected, ParseError};
 use winnow::{
     ascii::{digit1, multispace1, space0},
     combinator::{
-        alt, cut_err, delimited, fail, opt, peek, preceded, repeat, separated, separated_pair,
-        terminated,
+        alt, cut_err, delimited, opt, peek, preceded, repeat, separated, separated_pair, terminated,
     },
     token::{one_of, take_till, take_while},
     Parser,

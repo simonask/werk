@@ -1,5 +1,3 @@
-use std::path;
-
 use indexmap::IndexMap;
 
 use crate::{ast, parse_string, Error};

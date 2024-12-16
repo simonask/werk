@@ -8,9 +8,9 @@ use werk_parser::ast;
 
 use crate::{
     compute_stable_hash, depfile::Depfile, eval, eval_run_expr, eval_string_expr, Error, Eval,
-    GlobalVar, GlobalVariables, Io, LocalVariables, Outdatedness, OutdatednessTracker,
-    PatternMatch, Reason, RecipeMatch, RecipeMatchData, RecipeScope, Recipes, RootScope,
-    Scope as _, ShellCommandLine, UsedVariable, Value, Workspace, WorkspaceSettings,
+    GlobalVar, GlobalVariables, Io, Outdatedness, OutdatednessTracker, PatternMatch, Reason,
+    RecipeMatch, RecipeMatchData, RecipeScope, Recipes, RootScope, Scope as _, ShellCommandLine,
+    UsedVariable, Value, Workspace, WorkspaceSettings,
 };
 
 pub struct Runner<'a> {
@@ -75,12 +75,7 @@ pub struct Settings {
 
 #[derive(Default)]
 struct State {
-    tasks: IndexMap<TaskId, TaskState>,
-}
-
-struct TaskState {
-    status: TaskStatus,
-    triggered_by: OwnedDependencyChain,
+    tasks: IndexMap<TaskId, TaskStatus>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -354,9 +349,9 @@ impl Inner {
             BuildNow(TaskSpec),
         }
 
-        fn schedule(this: &Inner, spec: TaskSpec, dep_chain: DepChain<'_>) -> Scheduling {
+        fn schedule(this: &Inner, spec: TaskSpec) -> Scheduling {
             match this.state.lock().tasks.entry(spec.to_task_id()) {
-                Entry::Occupied(mut entry) => match entry.get_mut().status {
+                Entry::Occupied(mut entry) => match entry.get_mut() {
                     TaskStatus::Built(ref result) => Scheduling::Done(result.clone()),
                     TaskStatus::Pending(ref mut waiters) => {
                         let (send, recv) = oneshot::channel();
@@ -365,10 +360,7 @@ impl Inner {
                     }
                 },
                 Entry::Vacant(entry) => {
-                    entry.insert(TaskState {
-                        status: TaskStatus::Pending(Vec::new()),
-                        triggered_by: dep_chain.collect(),
-                    });
+                    entry.insert(TaskStatus::Pending(Vec::new()));
                     Scheduling::BuildNow(spec)
                 }
             }
@@ -377,10 +369,10 @@ impl Inner {
         fn finish_built(this: &Inner, task_id: &TaskId, result: Result<BuildStatus, Error>) {
             // Notify dependents
             let mut lock = this.state.lock();
-            let task_state = lock.tasks.get_mut(task_id).expect("task not registered");
+            let status = lock.tasks.get_mut(task_id).expect("task not registered");
             // Set the task status as complete.
             let TaskStatus::Pending(waiters) =
-                std::mem::replace(&mut task_state.status, TaskStatus::Built(result.clone()))
+                std::mem::replace(status, TaskStatus::Built(result.clone()))
             else {
                 panic!("Task built multiple times: {task_id}");
             };
@@ -392,7 +384,7 @@ impl Inner {
             }
         }
 
-        match schedule(&self, spec, dep_chain) {
+        match schedule(&self, spec) {
             Scheduling::Done(result) => result,
             Scheduling::Pending(receiver) => receiver
                 .await
@@ -430,7 +422,7 @@ impl Inner {
             Eval::inherent(Value::String(target_file.to_string())),
         );
 
-        let mut cache = self.workspace.take_build_target_cache(target_file);
+        let cache = self.workspace.take_build_target_cache(target_file);
         let mut outdatedness = OutdatednessTracker::new(
             &self.workspace,
             cache.as_ref(),
@@ -909,12 +901,6 @@ enum DepChain<'a> {
 }
 
 impl<'a> DepChain<'a> {
-    fn collect(&self) -> OwnedDependencyChain {
-        OwnedDependencyChain {
-            vec: self.collect_vec(),
-        }
-    }
-
     fn collect_vec(&self) -> Vec<TaskId> {
         match self {
             DepChain::Empty => Vec::new(),

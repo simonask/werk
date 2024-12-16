@@ -1,7 +1,6 @@
 use ahash::HashMap;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
-use serde::de::value;
 use std::collections::hash_map;
 use werk_fs::PathError;
 

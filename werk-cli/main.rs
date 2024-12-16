@@ -1,7 +1,7 @@
 pub mod dry_run;
 mod watcher;
 
-use std::{io::Write as _, path::MAIN_SEPARATOR, sync::Arc};
+use std::{io::Write as _, sync::Arc};
 
 use anyhow::Result;
 use clap::Parser;

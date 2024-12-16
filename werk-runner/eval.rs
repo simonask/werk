@@ -6,8 +6,8 @@ use std::{borrow::Cow, sync::Arc};
 use werk_parser::ast;
 
 use crate::{
-    Error, EvalError, Io, Outdatedness, Pattern, PatternBuilder, PatternMatch, RecipeScope,
-    RunCommand, Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError, Value, Workspace,
+    Error, EvalError, Io, Pattern, PatternBuilder, PatternMatch, RecipeScope, RunCommand, Scope,
+    ShellCommandLine, ShellCommandLineBuilder, ShellError, Value, Workspace,
 };
 
 /// Evaluated value, which keeps track of "outdatedness" with respect to cached
