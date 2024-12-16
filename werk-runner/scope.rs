@@ -3,9 +3,15 @@ use ahash::HashMap;
 use crate::{Eval, PatternMatch, TaskId, Value, Watcher, Workspace};
 
 pub type LocalVariables = indexmap::IndexMap<String, Eval<Value>>;
+pub type GlobalVariables = indexmap::IndexMap<String, GlobalVar>;
+
+pub struct GlobalVar {
+    pub value: Eval<Value>,
+    pub comment: String,
+}
 
 pub struct RootScope<'a> {
-    globals: &'a LocalVariables,
+    globals: &'a GlobalVariables,
     pub workspace: &'a Workspace,
     pub watcher: &'a dyn Watcher,
 }
@@ -64,7 +70,7 @@ impl dyn Scope + '_ {
 impl<'a> RootScope<'a> {
     #[inline]
     pub fn new(
-        globals: &'a LocalVariables,
+        globals: &'a GlobalVariables,
         workspace: &'a Workspace,
         watcher: &'a dyn Watcher,
     ) -> Self {
@@ -140,8 +146,8 @@ impl Scope for RootScope<'_> {
             return default_global_constants().get(name).map(Eval::inherent);
         };
         Some(Eval {
-            value: &local.value,
-            used: local.used.clone(),
+            value: &local.value.value,
+            used: local.value.used.clone(),
         })
     }
 

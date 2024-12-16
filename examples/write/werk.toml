@@ -3,8 +3,10 @@ out-dir = "../../target/examples/write"
 default = "lines.txt"
 
 [global]
+# The list of lines to write to the file.
 list = ["a", "b", "c"]
 
+# Generate a file based on variables in werk.toml.
 [build.'lines.txt']
 command.write = "<out>"
 command.data = { from = "list", join = "\n" }

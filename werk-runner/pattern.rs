@@ -4,6 +4,8 @@ use crate::AmbiguousPatternError;
 
 #[derive(Debug, Clone)]
 pub struct Pattern {
+    /// The original string representation of the pattern.
+    pub string: String,
     pub fragments: Box<[PatternFragment]>,
     /// The regular expression used to match this pattern.
     pub regex: Box<regex::Regex>,
@@ -27,6 +29,7 @@ impl std::hash::Hash for Pattern {
 
 #[derive(Debug, Clone, Default)]
 pub struct PatternBuilder {
+    string: String,
     fragments: Vec<PatternFragment>,
 }
 
@@ -72,6 +75,7 @@ impl PatternMatchData {
 
 impl PatternBuilder {
     pub fn push_str(&mut self, s: &str) {
+        self.string.push_str(s);
         if let Some(PatternFragment::Literal(ref mut tail)) = self.fragments.last_mut() {
             tail.push_str(s);
         } else {
@@ -80,10 +84,20 @@ impl PatternBuilder {
     }
 
     pub fn push_one_of(&mut self, one_of: Vec<String>) {
+        self.string.push('(');
+        for (i, capture) in one_of.iter().enumerate() {
+            if i != 0 {
+                self.string.push('|');
+            }
+            self.string.push_str(capture);
+        }
+        self.string.push(')');
+
         self.fragments.push(PatternFragment::OneOf(one_of));
     }
 
     pub fn push_pattern_stem(&mut self) {
+        self.string.push('%');
         self.fragments.push(PatternFragment::PatternStem);
     }
 
@@ -93,9 +107,11 @@ impl PatternBuilder {
     pub fn ensure_absolute_path(&mut self) {
         if let Some(PatternFragment::Literal(first)) = self.fragments.first_mut() {
             if !first.starts_with('/') {
+                self.string.insert(0, '/');
                 first.insert(0, '/');
             }
         } else {
+            self.string.insert(0, '/');
             self.fragments
                 .insert(0, PatternFragment::Literal(String::from("/")));
         }
@@ -134,6 +150,7 @@ impl PatternBuilder {
             .unwrap();
 
         Pattern {
+            string: self.string,
             fragments: self.fragments.into(),
             regex: Box::new(regex),
             stem_capture_index,
@@ -189,23 +206,7 @@ impl Pattern {
 
 impl std::fmt::Display for Pattern {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for fragment in &self.fragments {
-            match fragment {
-                PatternFragment::Literal(s) => write!(f, "{}", s)?,
-                PatternFragment::PatternStem => write!(f, "%")?,
-                PatternFragment::OneOf(one_of) => {
-                    f.write_char('(')?;
-                    for (i, s) in one_of.iter().enumerate() {
-                        if i > 0 {
-                            f.write_char('|')?;
-                        }
-                        write!(f, "{}", s)?;
-                    }
-                    f.write_char(')')?;
-                }
-            }
-        }
-        Ok(())
+        f.write_str(&self.string)
     }
 }
 

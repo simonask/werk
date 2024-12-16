@@ -1,10 +1,11 @@
 pub mod dry_run;
 mod watcher;
 
-use std::sync::Arc;
+use std::{io::Write as _, path::MAIN_SEPARATOR, sync::Arc};
 
 use anyhow::Result;
 use clap::Parser;
+use owo_colors::OwoColorize as _;
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
 
 #[derive(Debug, clap::Parser)]
@@ -218,12 +219,103 @@ async fn try_main(args: Args) -> Result<()> {
     let mut runner = Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
     if args.list {
         let recipes = runner.recipes();
-        // TODO: Print doc comments from the TOML as well.
-        for (name, _) in &recipes.ast.commands {
-            println!("{name}");
+
+        let globals = runner
+            .globals()
+            .iter()
+            .map(|(k, v)| (k, format!("{}", v.value.display_friendly(80)), &v.comment))
+            .collect::<Vec<_>>();
+        let max_global_name_len = globals
+            .iter()
+            .map(|(name, _, _)| name.len())
+            .max()
+            .unwrap_or(0);
+        let max_global_value_len = globals
+            .iter()
+            .map(|(_, value, comment)| if !comment.is_empty() { value.len() } else { 0 })
+            .max()
+            .unwrap_or(0);
+
+        let max_command_len = recipes
+            .ast
+            .commands
+            .iter()
+            .map(|(name, _)| name.len())
+            .max()
+            .unwrap_or(0);
+        let max_pattern_len = recipes
+            .build_recipes()
+            .map(|(pattern, _)| pattern.string.len())
+            .max()
+            .unwrap_or(0);
+
+        let mut out_lock = watcher.lock();
+        let out = &mut out_lock.stdout;
+
+        if max_global_name_len != 0 {
+            _ = writeln!(out, "{}", "Global variables:".purple());
+
+            for (name, value, comment) in globals {
+                if comment.is_empty() {
+                    _ = writeln!(
+                        out,
+                        "  {} = {}",
+                        format_args!("{: <w$}", name, w = max_global_name_len).bright_yellow(),
+                        value,
+                    );
+                } else {
+                    _ = writeln!(
+                        out,
+                        "  {} = {} {}",
+                        format_args!("{: <w$}", name, w = max_global_name_len).bright_yellow(),
+                        format_args!("{: <w$}", value, w = max_global_value_len),
+                        comment,
+                    );
+                }
+            }
+
+            if max_command_len != 0 || max_pattern_len != 0 {
+                _ = writeln!(out);
+            }
         }
-        for (pattern, _recipe) in recipes.build_recipes() {
-            println!("{}", pattern);
+
+        if max_command_len != 0 {
+            _ = writeln!(out, "{}", "Available commands:".purple());
+            for (name, command) in &recipes.ast.commands {
+                if command.comment.is_empty() {
+                    _ = writeln!(out, "  {}", name.cyan());
+                } else {
+                    _ = writeln!(
+                        out,
+                        "  {} {}",
+                        format_args!("{: <w$}", name.bright_cyan(), w = max_command_len),
+                        command.comment,
+                    );
+                }
+            }
+            if max_pattern_len != 0 {
+                _ = writeln!(out);
+            }
+        }
+
+        if max_pattern_len != 0 {
+            _ = writeln!(out, "{}", "Available recipes:".purple());
+            for (pattern, recipe) in recipes.build_recipes() {
+                if recipe.comment.is_empty() {
+                    _ = writeln!(out, "  {}", pattern.bright_yellow());
+                } else {
+                    _ = writeln!(
+                        out,
+                        "  {} {}",
+                        format_args!(
+                            "{: <w$}",
+                            pattern.string.bright_yellow(),
+                            w = max_pattern_len
+                        ),
+                        recipe.comment,
+                    );
+                }
+            }
         }
         return Ok(());
     }
@@ -242,8 +334,7 @@ async fn try_main(args: Args) -> Result<()> {
 
     let write_cache = match result {
         Ok(_) => true,
-        Err(ref err) if err.should_still_write_werk_cache() => true,
-        Err(_) => false,
+        Err(ref err) => err.should_still_write_werk_cache(),
     };
 
     if write_cache {

@@ -3,9 +3,9 @@ use indexmap::IndexMap;
 #[derive(Debug, PartialEq)]
 pub struct Root {
     pub config: Config,
-    pub global: IndexMap<String, Expr>,
-    pub commands: IndexMap<String, CommandRecipe>,
-    pub recipes: IndexMap<PatternExpr, BuildRecipe>,
+    pub global: IndexMap<String, Commented<Expr>>,
+    pub commands: IndexMap<String, Commented<CommandRecipe>>,
+    pub recipes: IndexMap<PatternExpr, Commented<BuildRecipe>>,
 }
 
 /// The `[config]` section of werk.toml.
@@ -15,6 +15,32 @@ pub struct Config {
     pub output_directory: Option<String>,
     pub print_commands: Option<bool>,
     pub default: Option<String>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Commented<T> {
+    pub comment: String,
+    pub item: T,
+}
+
+impl<T> std::ops::Deref for Commented<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.item
+    }
+}
+
+impl<T> std::ops::DerefMut for Commented<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.item
+    }
+}
+
+impl<T: std::hash::Hash> std::hash::Hash for Commented<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.item.hash(state);
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]

@@ -209,6 +209,10 @@ impl Value {
 
         recursive_modify(self, &mut f);
     }
+
+    pub fn display_friendly(&self, max_width: usize) -> DisplayFriendly {
+        DisplayFriendly(self, max_width)
+    }
 }
 
 impl PartialEq<str> for Value {
@@ -248,5 +252,64 @@ where
     #[inline]
     fn eq(&self, other: &[T; N]) -> bool {
         self == other as &[T]
+    }
+}
+
+/// Display helper for values.
+pub struct DisplayFriendly<'a>(&'a Value, usize);
+impl std::fmt::Display for DisplayFriendly<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let DisplayFriendly(value, max_width) = self;
+
+        fn string_with_ellipsis(s: &str, max_width: usize) -> String {
+            let escaped = s.escape_default().to_string();
+            let escaped_len = escaped.chars().count();
+
+            if escaped_len + 2 <= max_width {
+                // The whole string fits.
+                format!("\"{}\"", escaped)
+            } else if max_width >= 8 {
+                // If we can write at least 3 chars from the string, write 8 chars.
+                let prefix = escaped.chars().take(3).collect::<String>();
+                format!("\"{}...\"", prefix)
+            } else {
+                String::from("\"...\"")
+            }
+        }
+
+        fn list_with_ellipsis(l: &[Value], max_width: usize) -> String {
+            let mut rem_width = max_width.saturating_sub(2); // '[' and ']'
+
+            let mut s = String::from("[");
+            for (i, item) in l.iter().enumerate() {
+                let is_first = i == 0;
+
+                if !is_first {
+                    s.push_str(", ");
+                    rem_width = rem_width.saturating_sub(2);
+                }
+
+                let item_string = value_with_ellipsis(item, max_width);
+                let item_len = item_string.chars().count();
+                if item_len > rem_width {
+                    s.push_str("...");
+                    break;
+                } else {
+                    s.push_str(&item_string);
+                    rem_width = rem_width.saturating_sub(item_len);
+                }
+            }
+            s.push(']');
+            s
+        }
+
+        fn value_with_ellipsis(value: &Value, max_width: usize) -> String {
+            match value {
+                Value::List(vec) => list_with_ellipsis(vec, max_width),
+                Value::String(s) => string_with_ellipsis(s, max_width),
+            }
+        }
+
+        f.write_str(&value_with_ellipsis(value, *max_width))
     }
 }

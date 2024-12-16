@@ -120,7 +120,7 @@ impl Recipes {
 
     pub fn build_recipes<'a>(
         &'a self,
-    ) -> impl Iterator<Item = (&'a Pattern, &'a ast::BuildRecipe)> {
+    ) -> impl Iterator<Item = (&'a Pattern, &'a ast::Commented<ast::BuildRecipe>)> {
         self.build_recipe_patterns
             .iter()
             .zip(self.ast.recipes.values())

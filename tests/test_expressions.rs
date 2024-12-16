@@ -18,19 +18,19 @@ fn parse_as_expected() -> anyhow::Result<()> {
     );
 
     assert_eq!(
-        ast.global["source-files"],
+        ast.global["source-files"].item,
         ast::Expr::Glob(ast::StringExpr::literal("*.{c,cpp}"))
     );
     assert_eq!(
-        ast.global["profile"],
+        ast.global["profile"].item,
         ast::Expr::Env(ast::StringExpr::literal("PROFILE"))
     );
     assert_eq!(
-        ast.global["cc"],
+        ast.global["cc"].item,
         ast::Expr::Which(ast::StringExpr::literal("clang"))
     );
     assert_eq!(
-        ast.global["object-files"],
+        ast.global["object-files"].item,
         ast::Expr::Patsubst(Box::new(ast::PatsubstExpr {
             input: ast::Expr::Ident(String::from("source-files")),
             pattern: parse_pattern_expr("%.c").unwrap(),
@@ -38,7 +38,7 @@ fn parse_as_expected() -> anyhow::Result<()> {
         }))
     );
     assert_eq!(
-        ast.global["cargo-profile"],
+        ast.global["cargo-profile"].item,
         ast::Expr::Match(Box::new(ast::MatchExpr {
             input: ast::Expr::Ident(String::from("profile")),
             patterns: [
@@ -97,11 +97,11 @@ async fn expressions() -> anyhow::Result<()> {
     let runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher).await?;
 
     let globals = runner.globals();
-    assert_eq!(globals["source-files"].value, ["/main.c"]);
-    assert_eq!(globals["profile"].value, "debug");
-    assert_eq!(globals["cc"].value, "/clang");
-    assert_eq!(globals["object-files"].value, ["/main.o"]);
-    assert_eq!(globals["cargo-profile"].value, "dev");
+    assert_eq!(globals["source-files"].value.value, ["/main.c"]);
+    assert_eq!(globals["profile"].value.value, "debug");
+    assert_eq!(globals["cc"].value.value, "/clang");
+    assert_eq!(globals["object-files"].value.value, ["/main.o"]);
+    assert_eq!(globals["cargo-profile"].value.value, "dev");
 
     Ok(())
 }

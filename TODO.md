@@ -1,7 +1,5 @@
 # TODO
 
-- [ ] Take command-line `--define`s into account in outdatedness.
-- [ ] Take `werk.toml` modification time into account in outdatedness.
 - [ ] Consider using pattern syntax for glob patterns instead of standard glob syntax.
 - [ ] Forward doc comments from TOML to `--list`.
 - [ ] Autoclean: Match files in the output directory against available recipes
@@ -21,3 +19,5 @@
   warning after building the recipe (not an error). Recipes that have the
   `depfile` field, but never actually generate a depfile (either by an explicit
   recipe or implicitly) will always be outdated.
+- [x] Take `werk.toml` modification time into account in outdatedness.
+- [x] Take command-line `--define`s into account in outdatedness.

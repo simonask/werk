@@ -13,12 +13,16 @@ pub struct TargetOutdatednessCache {
     /// Hash of the recipe AST.
     pub recipe_hash: Hash128,
     /// Hash of used glob patterns.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub glob: BTreeMap<String, Hash128>,
     /// Hash of resolved binary paths.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub which: BTreeMap<String, Hash128>,
     /// Hash of environment variables.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, Hash128>,
     /// Hash of `define` variables.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub define: BTreeMap<String, Hash128>,
 }
 

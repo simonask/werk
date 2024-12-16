@@ -24,16 +24,16 @@ pub struct OutputSettings {
 }
 
 #[cfg(not(windows))]
-trait ConWrite: Write + AsLockedWrite {}
+pub trait ConWrite: Write + AsLockedWrite {}
 #[cfg(not(windows))]
 impl<S> ConWrite for S where S: Write + AsLockedWrite {}
 #[cfg(windows)]
-trait ConWrite: Write + AsLockedWrite + anstyle_wincon::WinconStream {}
+pub trait ConWrite: Write + AsLockedWrite + anstyle_wincon::WinconStream {}
 #[cfg(windows)]
 impl<S> ConWrite for S where S: Write + AsLockedWrite + anstyle_wincon::WinconStream {}
 
 /// Similar to `anstream::AutoStream`, but with a predetermined choice.
-enum AutoStream<S: ConWrite> {
+pub enum AutoStream<S: ConWrite> {
     Passthrough(S),
     Strip(anstream::StripStream<S>),
     #[cfg(windows)]
@@ -103,7 +103,7 @@ impl<S: ConWrite> Write for AutoStream<S> {
 }
 
 #[derive(Clone, Copy, Debug)]
-enum AutoStreamKind {
+pub enum AutoStreamKind {
     Ansi,
     Strip,
     #[cfg(windows)]
@@ -211,7 +211,7 @@ struct Inner {
 
 pub struct StdioLock<'a> {
     inner: MutexGuard<'a, Inner>,
-    stdout: AutoStream<std::io::StdoutLock<'static>>,
+    pub stdout: AutoStream<std::io::StdoutLock<'static>>,
     settings: &'a OutputSettings,
 }
 

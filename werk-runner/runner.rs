@@ -7,10 +7,10 @@ use werk_fs::{Path, PathBuf};
 use werk_parser::ast;
 
 use crate::{
-    compute_stable_hash, depfile::Depfile, eval, eval_run_expr, eval_string_expr, Error, Eval, Io,
-    LocalVariables, Outdatedness, OutdatednessTracker, PatternMatch, Reason, RecipeMatch,
-    RecipeMatchData, RecipeScope, Recipes, RootScope, Scope as _, ShellCommandLine, UsedVariable,
-    Value, Workspace, WorkspaceSettings,
+    compute_stable_hash, depfile::Depfile, eval, eval_run_expr, eval_string_expr, Error, Eval,
+    GlobalVar, GlobalVariables, Io, LocalVariables, Outdatedness, OutdatednessTracker,
+    PatternMatch, Reason, RecipeMatch, RecipeMatchData, RecipeScope, Recipes, RootScope,
+    Scope as _, ShellCommandLine, UsedVariable, Value, Workspace, WorkspaceSettings,
 };
 
 pub struct Runner<'a> {
@@ -21,7 +21,7 @@ pub struct Runner<'a> {
 struct Inner {
     io: Arc<dyn Io>,
     // Variables from the global scope.
-    globals: LocalVariables,
+    globals: GlobalVariables,
     recipes: Recipes,
     workspace: Workspace,
     watcher: Arc<dyn Watcher>,
@@ -198,15 +198,20 @@ impl<'a> Runner<'a> {
         workspace: Workspace,
         watcher: Arc<dyn Watcher>,
     ) -> Result<Self, Error> {
-        let mut globals = LocalVariables::new();
+        let mut globals = GlobalVariables::new();
         for (name, value) in &ast.global {
+            let doc = &value.comment;
+
             if let Some(def) = workspace.defines.get(name) {
                 globals.insert(
                     name.to_owned(),
-                    Eval::using_var(
-                        Value::String(def.clone()),
-                        UsedVariable::Define(name.clone(), compute_stable_hash(def)),
-                    ),
+                    GlobalVar {
+                        value: Eval::using_var(
+                            Value::String(def.clone()),
+                            UsedVariable::Define(name.clone(), compute_stable_hash(def)),
+                        ),
+                        comment: doc.clone(),
+                    },
                 );
                 continue;
             }
@@ -220,7 +225,13 @@ impl<'a> Runner<'a> {
                 value.value,
                 value.used
             );
-            globals.insert(name.to_owned(), value);
+            globals.insert(
+                name.to_owned(),
+                GlobalVar {
+                    value,
+                    comment: doc.clone(),
+                },
+            );
         }
 
         // Warn about defines set on the command-line that have no effect.
@@ -258,7 +269,7 @@ impl<'a> Runner<'a> {
     }
 
     #[inline]
-    pub fn globals(&self) -> &LocalVariables {
+    pub fn globals(&self) -> &GlobalVariables {
         &self.inner.globals
     }
 

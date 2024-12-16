@@ -13,11 +13,13 @@ match.'debug' = ["-g", "-O0", "-fcolor-diagnostics"]
 match.'release' = ["-O3", "-fcolor-diagnostics"]
 match.'%' = { error = "Unknown profile; valid options are 'debug' and 'release'" }
 
+# Build an object file from a C source file.
 [build.'{profile}/%.o']
 in = "{%}.c"
 depfile = "/{profile}/{%}.c.d"
 command = "{cc} -c {cflags*} -o <out> <in>"
 
+# Build the depfile for an object file.
 [build.'{profile}/%.c.d']
 in = "{%}.c"
 # Note: For werk to understand the depfile, it must be in the format of a
@@ -26,14 +28,17 @@ in = "{%}.c"
 # workspace-relative or out-dir-relative abstract paths.
 command = "{cc} -MM -MT <in> -MF <out> <in>"
 
-[build.'{profile}/example{EXE_SUFFIX}']
+# Build the executable.
+[build.'{executable}']
 in = { glob = "*.c", then = "/{profile}{:.c=.o}" }
 command = "{ld} -o <out> <in*>"
 
+# Build the executable.
 [command.build]
 build = ["{executable}"]
 post-message = "Build done for profile '{profile}'"
 
+# Build and run the executable.
 [command.run]
 build = "build"
 command = "<executable>"

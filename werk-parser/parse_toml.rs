@@ -36,7 +36,10 @@ pub fn parse_toml_document(toml: &toml_edit::DocumentMut) -> Result<ast::Root, E
                     .ok_or_else(|| Error::ExpectedTable("global".to_owned()))?;
                 for (key, value) in global_table {
                     let path = path.ident(key);
-                    global.insert(parse_ident(&path, key)?, parse_item_expr(&path, value)?);
+                    global.insert(
+                        parse_ident(&path, key)?,
+                        parse_commented_item_expr(&path, value)?,
+                    );
                 }
             }
             "command" => {
@@ -420,6 +423,29 @@ fn parse_item_expr(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Expr,
     }
 }
 
+fn get_item_doc(toml: &toml_edit::Item) -> &str {
+    let raw_str = match toml {
+        toml_edit::Item::None | toml_edit::Item::ArrayOfTables(_) => return "",
+        toml_edit::Item::Value(value) => value.decor().prefix(),
+        toml_edit::Item::Table(table) => table.decor().prefix(),
+    };
+    raw_str
+        .and_then(|raw| raw.as_str())
+        .map(|s| s.trim())
+        .unwrap_or("")
+}
+
+fn parse_commented_item_expr(
+    path: &TomlPath,
+    toml: &toml_edit::Item,
+) -> Result<ast::Commented<ast::Expr>, Error> {
+    let doc_string = get_item_doc(toml);
+    parse_item_expr(path, toml).map(|expr| ast::Commented {
+        comment: doc_string.to_owned(),
+        item: expr,
+    })
+}
+
 fn parse_item_run_expr(
     path: &TomlPath,
     toml: &toml_edit::Item,
@@ -545,11 +571,12 @@ fn parse_item_pattern_expr(
 fn parse_command_recipe(
     path: &TomlPath,
     toml: &toml_edit::Item,
-) -> Result<ast::CommandRecipe, Error> {
+) -> Result<ast::Commented<ast::CommandRecipe>, Error> {
     let Some(table) = toml.as_table_like() else {
         return Err(Error::ExpectedTable(path.to_string()));
     };
 
+    let doc = get_item_doc(toml);
     let mut build = None;
     let mut command = Vec::new();
     let mut pre_message = None;
@@ -589,20 +616,27 @@ fn parse_command_recipe(
         }
     }
 
-    Ok(ast::CommandRecipe {
-        build,
-        command,
-        pre_message,
-        post_message,
-        capture,
+    Ok(ast::Commented {
+        comment: doc.to_owned(),
+        item: ast::CommandRecipe {
+            build,
+            command,
+            pre_message,
+            post_message,
+            capture,
+        },
     })
 }
 
-fn parse_build_recipe(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::BuildRecipe, Error> {
+fn parse_build_recipe(
+    path: &TomlPath,
+    toml: &toml_edit::Item,
+) -> Result<ast::Commented<ast::BuildRecipe>, Error> {
     let Some(table) = toml.as_table_like() else {
         return Err(Error::ExpectedTable(path.to_string()));
     };
 
+    let doc = get_item_doc(toml);
     let mut in_files = None;
     let mut depfile = None;
     let mut command = Vec::new();
@@ -639,12 +673,15 @@ fn parse_build_recipe(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Bu
         }
     }
 
-    Ok(ast::BuildRecipe {
-        in_files,
-        depfile,
-        command,
-        pre_message,
-        post_message,
+    Ok(ast::Commented {
+        comment: doc.to_owned(),
+        item: ast::BuildRecipe {
+            in_files,
+            depfile,
+            command,
+            pre_message,
+            post_message,
+        },
     })
 }
 
