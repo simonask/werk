@@ -8,8 +8,9 @@ path = "lib.rs"
 
 [dependencies]
 indexmap.workspace = true
-toml_edit = "0.22.22"
+toml_edit.workspace = true
 thiserror.workspace = true
 unicode-ident = "1.0.13"
 winnow.workspace = true
 regex.workspace = true
+annotate-snippets = "0.11.5"

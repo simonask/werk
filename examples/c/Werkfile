@@ -1,4 +1,4 @@
-config out-dir = "../../target/examples/c"
+config out-dir = "../../target/examples/c-werk"
 
 let cc = which "clang"
 let ld = cc
@@ -10,29 +10,35 @@ let cflags = profile => match {
     "%" => error "Unknown profile '{}'; valid options are 'debug' and 'release'"
 }
 
+# Build an object file from a C source file.
 build "{profile}/%.o" {
     from "{%}.c"
     depfile "/{profile}/{%}.c.d"
-    run "{cc} -c {cflags*} -o <out> <in>"
+    run "{cc} -c {cflags*} <out> <in>"
 }
 
+# Build the depfile for an object file.
 build "{profile}/%.c.d" {
     from "{%}.c"
-    run "{cc} -MM -MT <in> -MF <out> <in>"
+    run "{cc} -MM -MT <in> -MF <out> <in>
 }
 
+# Build the executable.
 build executable {
-    from glob "%.c" => "/{profile}/{%:.c=.o}"
+    from glob "*.c" => match {
+        "%.c" => "/profile{%}.o"
+    }
     run "{ld} -o <out> <in*>"
 }
 
+# Build the executable (shorthand).
 task build {
     build executable
-    post-message "Build done for profile '{profile}'"
+    run { info "Build done for profile '{profile}' }
 }
 
+# Build and run the executable.
 task run {
     build "build"
     run "<executable>"
-    capture = false
 }

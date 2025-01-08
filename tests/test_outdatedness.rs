@@ -1,13 +1,11 @@
+use macro_rules_attribute::apply;
 use tests::mock_io;
 
 use std::sync::Arc;
 
 use mock_io::*;
-use werk_fs::{Path, PathBuf};
-use werk_runner::{
-    globset::GlobSet, BuildStatus, Metadata, Outdatedness, Reason, ShellCommandLine, TaskId,
-    WorkspaceSettings,
-};
+use werk_fs::{Absolute, Path, PathBuf};
+use werk_runner::{BuildStatus, Metadata, Outdatedness, Reason, ShellCommandLine, TaskId};
 
 static TOML: &str = r#"
 [global]
@@ -16,7 +14,7 @@ cc.which = "clang"
 write.which = "write"
 
 [build.'env-dep']
-command = "{write} {profile} {out}"
+command = "{write} {profile} <out>"
 
 [build.'which-dep']
 command = "{cc}"
@@ -33,10 +31,10 @@ cc.which = "clang"
 write.which = "write"
 
 [build.'env-dep']
-command = "{write} {profile} {out}"
+command = "{write} {profile} <out>"
 
 [build.'which-dep']
-command = "{cc} -o {out}"
+command = "{cc} -o <out>"
 
 [build.'glob-dep']
 in.glob = "*.c"
@@ -46,20 +44,22 @@ command = "{cc} <in*>"
 fn make_io_context() -> Arc<MockIo> {
     Arc::new(
         MockIo::default()
+            .with_default_workspace_dir()
             .with_envs([("PROFILE", "debug")])
-            .with_program("clang", "/clang", |_cmd, _fs| {
+            .with_program("clang", program_path("clang"), |_cmd, _fs| {
                 Ok(std::process::Output {
                     status: Default::default(),
                     stdout: Default::default(),
                     stderr: Default::default(),
                 })
             })
-            .with_program("write", "/write", |cmdline, fs| {
+            .with_program("write", program_path("write"), |cmdline, fs| {
                 let contents = cmdline.arguments[0].as_str();
-                let file = cmdline.arguments[1].as_str();
+                let file = output_file(cmdline.arguments[1].as_str());
+                tracing::trace!("write {}", file.display());
                 insert_fs(
                     fs,
-                    &std::path::PathBuf::from(format!("/target{}", file)),
+                    &file,
                     (
                         Metadata {
                             mtime: make_mtime(1),
@@ -79,32 +79,33 @@ fn make_io_context() -> Arc<MockIo> {
     )
 }
 
-#[tokio::test]
+#[apply(smol_macros::test)]
 async fn test_outdated_env() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
 
     let io = make_io_context();
     let watcher = Arc::new(MockWatcher::default());
-    let ast = werk_parser::parse_toml(TOML)?;
+    let toml = toml_edit::ImDocument::parse(TOML)?;
+    let ast = werk_parser::parse_toml("werk.toml".as_ref(), TOML, &toml)
+        .map_err(|err| err.to_string())
+        .map_err(anyhow::Error::msg)?;
     let workspace = werk_runner::Workspace::new(
         &*io,
-        "/".into(),
-        WorkspaceSettings::default().ignore_explicitly(
-            GlobSet::builder()
-                .add("/target/**".parse().unwrap())
-                .build()
-                .unwrap(),
-        ),
+        test_workspace_dir().to_path_buf(),
+        &test_workspace_settings(),
     )
     .await?;
-    let mut runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
+    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
+    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
 
     let status = runner.build_file(Path::new("env-dep")?).await?;
 
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(PathBuf::try_from("/env-dep").unwrap()),
+            TaskId::build(
+                Absolute::new_unchecked(PathBuf::try_from("/env-dep").unwrap()).into_boxed_path()
+            ),
             Outdatedness::new([Reason::Missing(PathBuf::try_from("/env-dep")?),])
         )
     );
@@ -112,24 +113,24 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     assert!(io.did_read_env("PROFILE"));
     assert!(io.did_which("write"));
     assert!(io.did_run_during_build(&ShellCommandLine {
-        program: "/write".into(),
-        arguments: vec!["debug".into(), "/env-dep".into()],
+        program: program_path("write"),
+        arguments: vec!["debug".into(), output_file("env-dep").display().to_string()],
         env: Default::default(),
         env_remove: Default::default()
     }));
 
     // Write .werk-cache.
-    runner.workspace().finalize(&*io).await.unwrap();
+    workspace.finalize(&*io).await.unwrap();
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(io.did_write_file(&std::path::Path::new("target").join(".werk-cache")));
+    assert!(io.did_write_file(".werk-cache"));
 
     assert!(contains_file(
         &*io.filesystem.lock(),
-        std::path::Path::new("/target/.werk-cache")
+        &output_file(".werk-cache")
     ));
     assert!(contains_file(
         &*io.filesystem.lock(),
-        std::path::Path::new("/target/env-dep")
+        &output_file("env-dep")
     ));
 
     // Change the environment!
@@ -137,26 +138,26 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     io.clear_oplog();
 
     // Initialize a new workspace.
-    let ast = werk_parser::parse_toml(TOML)?;
     let workspace = werk_runner::Workspace::new(
         &*io,
-        "/".into(),
-        WorkspaceSettings::default().ignore_explicitly(
-            GlobSet::builder()
-                .add("/target/**".parse().unwrap())
-                .build()
-                .unwrap(),
-        ),
+        test_workspace_dir().to_path_buf(),
+        &test_workspace_settings(),
     )
     .await?;
-    let mut runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
+    let ast = werk_parser::parse_toml("werk.toml".as_ref(), TOML, &toml)
+        .map_err(|err| err.to_string())
+        .map_err(anyhow::Error::msg)?;
+    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
+    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
 
     let status = runner.build_file(Path::new("env-dep")?).await?;
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(PathBuf::try_from("/env-dep").unwrap()),
+            TaskId::build(
+                Absolute::new_unchecked(PathBuf::try_from("/env-dep").unwrap()).into_boxed_path()
+            ),
             Outdatedness::new([Reason::Env(String::from("PROFILE")),])
         )
     );
@@ -164,56 +165,57 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[apply(smol_macros::test)]
 async fn test_outdated_which() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
 
     let io = make_io_context();
     let watcher = Arc::new(MockWatcher::default());
-    let ast = werk_parser::parse_toml(TOML)?;
+    let toml = toml_edit::ImDocument::parse(TOML)?;
+    let ast = werk_parser::parse_toml("werk.toml".as_ref(), TOML, &toml)
+        .map_err(|err| err.to_string())
+        .map_err(anyhow::Error::msg)?;
     let workspace = werk_runner::Workspace::new(
         &*io,
-        "/".into(),
-        WorkspaceSettings::default().ignore_explicitly(
-            GlobSet::builder()
-                .add("/target/**".parse().unwrap())
-                .build()
-                .unwrap(),
-        ),
+        test_workspace_dir().to_path_buf(),
+        &test_workspace_settings(),
     )
     .await?;
-    let mut runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
+    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
+    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
 
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(PathBuf::try_from("/which-dep").unwrap()),
+            TaskId::build(
+                Absolute::new_unchecked(PathBuf::try_from("/which-dep").unwrap()).into_boxed_path()
+            ),
             Outdatedness::new([Reason::Missing(PathBuf::try_from("/which-dep")?),])
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert!(io.did_which("clang"));
     assert!(io.did_run_during_build(&ShellCommandLine {
-        program: "/clang".into(),
+        program: program_path("clang"),
         arguments: vec![],
         env: Default::default(),
         env_remove: Default::default()
     }));
 
     // Write .werk-cache.
-    runner.workspace().finalize(&*io).await.unwrap();
+    workspace.finalize(&*io).await.unwrap();
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(io.did_write_file(&std::path::Path::new("target").join(".werk-cache")));
+    assert!(io.did_write_file(".werk-cache"));
 
     assert!(contains_file(
         &*io.filesystem.lock(),
-        std::path::Path::new("/target/.werk-cache")
+        &output_file(".werk-cache")
     ));
 
     // Change the environment!
-    io.set_program("clang", "/path/to/clang", |_cmd, _fs| {
+    io.set_program("clang", program_path("path/to/clang"), |_cmd, _fs| {
         Ok(std::process::Output {
             status: Default::default(),
             stdout: Default::default(),
@@ -223,24 +225,23 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     io.clear_oplog();
 
     // Initialize a new workspace.
-    let ast = werk_parser::parse_toml(TOML)?;
+    let toml = toml_edit::ImDocument::parse(TOML)?;
+    let ast = werk_parser::parse_toml("werk.toml".as_ref(), TOML, &toml)
+        .map_err(|err| err.to_string())
+        .map_err(anyhow::Error::msg)?;
     let workspace = werk_runner::Workspace::new(
         &*io,
-        "/".into(),
-        WorkspaceSettings::default().ignore_explicitly(
-            GlobSet::builder()
-                .add("/target/**".parse().unwrap())
-                .build()
-                .unwrap(),
-        ),
+        test_workspace_dir().to_path_buf(),
+        &test_workspace_settings(),
     )
     .await?;
-    let mut runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
+    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
+    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
 
     assert!(io.did_run_during_build(&ShellCommandLine {
-        program: "/path/to/clang".into(),
+        program: program_path("path/to/clang"),
         arguments: vec![],
         env: Default::default(),
         env_remove: Default::default()
@@ -250,7 +251,9 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(PathBuf::try_from("/which-dep").unwrap()),
+            TaskId::build(
+                Absolute::new_unchecked(PathBuf::try_from("/which-dep").unwrap()).into_boxed_path()
+            ),
             Outdatedness::new([
                 Reason::Missing(PathBuf::try_from("/which-dep")?),
                 Reason::Which(String::from("clang"))
@@ -261,77 +264,80 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[apply(smol_macros::test)]
 async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
 
     let io = make_io_context();
     let watcher = Arc::new(MockWatcher::default());
-    let ast = werk_parser::parse_toml(TOML)?;
+    let toml = toml_edit::ImDocument::parse(TOML)?;
+    let ast = werk_parser::parse_toml("werk.toml".as_ref(), TOML, &toml)
+        .map_err(|err| err.to_string())
+        .map_err(anyhow::Error::msg)?;
     let workspace = werk_runner::Workspace::new(
         &*io,
-        "/".into(),
-        WorkspaceSettings::default().ignore_explicitly(
-            GlobSet::builder()
-                .add("/target/**".parse().unwrap())
-                .build()
-                .unwrap(),
-        ),
+        test_workspace_dir().to_path_buf(),
+        &test_workspace_settings(),
     )
     .await?;
-    let mut runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
+    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
+    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
 
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(PathBuf::try_from("/which-dep").unwrap()),
+            TaskId::build(
+                Absolute::new_unchecked(PathBuf::try_from("/which-dep").unwrap()).into_boxed_path()
+            ),
             Outdatedness::new([Reason::Missing(PathBuf::try_from("/which-dep")?),])
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert!(io.did_which("clang"));
     assert!(io.did_run_during_build(&ShellCommandLine {
-        program: "/clang".into(),
+        program: program_path("clang"),
         arguments: vec![],
         env: Default::default(),
         env_remove: Default::default()
     }));
 
     // Write .werk-cache.
-    runner.workspace().finalize(&*io).await.unwrap();
+    workspace.finalize(&*io).await.unwrap();
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(io.did_write_file(&std::path::Path::new("target").join(".werk-cache")));
+    assert!(io.did_write_file(".werk-cache"));
 
     assert!(contains_file(
         &*io.filesystem.lock(),
-        std::path::Path::new("/target/.werk-cache")
+        &output_file(".werk-cache"),
     ));
 
     // Change the environment!
     io.clear_oplog();
 
     // Initialize a new workspace.
-    let ast = werk_parser::parse_toml(TOML_RECIPE_CHANGED)?;
+    let toml = toml_edit::ImDocument::parse(TOML_RECIPE_CHANGED)?;
+    let ast = werk_parser::parse_toml("werk.toml".as_ref(), TOML_RECIPE_CHANGED, &toml)
+        .map_err(|err| err.to_string())
+        .map_err(anyhow::Error::msg)?;
+    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
     let workspace = werk_runner::Workspace::new(
         &*io,
-        "/".into(),
-        WorkspaceSettings::default().ignore_explicitly(
-            GlobSet::builder()
-                .add("/target/**".parse().unwrap())
-                .build()
-                .unwrap(),
-        ),
+        test_workspace_dir().to_path_buf(),
+        &test_workspace_settings(),
     )
     .await?;
-    let mut runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
+    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
 
     assert!(io.did_run_during_build(&ShellCommandLine {
-        program: "/clang".into(),
-        arguments: vec![String::from("-o"), String::from("/which-dep")],
+        program: program_path("clang"),
+        arguments: vec![
+            String::from("-o"),
+            output_file("which-dep").display().to_string()
+        ],
         env: Default::default(),
         env_remove: Default::default()
     }));
@@ -340,7 +346,9 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(PathBuf::try_from("/which-dep").unwrap()),
+            TaskId::build(
+                Absolute::new_unchecked(PathBuf::try_from("/which-dep").unwrap()).into_boxed_path()
+            ),
             Outdatedness::new([
                 Reason::Missing(PathBuf::try_from("/which-dep")?),
                 Reason::RecipeChanged
@@ -351,81 +359,77 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[apply(smol_macros::test)]
 async fn test_outdated_glob() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
 
     let io = make_io_context();
-    io.set_file("a.c", "void foo() {}").unwrap();
-    io.set_file("b.c", "int main() { return 0; }\n").unwrap();
+    io.set_workspace_file("a.c", "void foo() {}").unwrap();
+    io.set_workspace_file("b.c", "int main() { return 0; }\n")
+        .unwrap();
 
     let watcher = Arc::new(MockWatcher::default());
-    let ast = werk_parser::parse_toml(TOML)?;
+    let toml = toml_edit::ImDocument::parse(TOML)?;
+    let ast = werk_parser::parse_toml("werk.toml".as_ref(), TOML, &toml)
+        .map_err(|err| err.to_string())
+        .map_err(anyhow::Error::msg)?;
     let workspace = werk_runner::Workspace::new(
         &*io,
-        "/".into(),
-        WorkspaceSettings::default().ignore_explicitly(
-            GlobSet::builder()
-                .add("/target/**".parse().unwrap())
-                .build()
-                .unwrap(),
-        ),
+        test_workspace_dir().to_path_buf(),
+        &test_workspace_settings(),
     )
     .await?;
-    let mut runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
+    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
+    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
 
     let status = runner.build_file(Path::new("glob-dep")?).await?;
 
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(PathBuf::try_from("/glob-dep").unwrap()),
+            TaskId::build(
+                Absolute::new_unchecked(PathBuf::try_from("/glob-dep").unwrap()).into_boxed_path()
+            ),
             Outdatedness::new([Reason::Missing(PathBuf::try_from("/glob-dep")?),])
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert!(io.did_which("clang"));
     assert!(io.did_run_during_build(&ShellCommandLine {
-        program: "/clang".into(),
-        arguments: vec![String::from("/a.c"), String::from("/b.c")],
+        program: program_path("clang"),
+        arguments: vec![workspace_file_str("a.c"), workspace_file_str("b.c")],
         env: Default::default(),
         env_remove: Default::default()
     }));
 
     // Write .werk-cache.
-    runner.workspace().finalize(&*io).await.unwrap();
+    workspace.finalize(&*io).await.unwrap();
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(io.did_write_file(&std::path::Path::new("target").join(".werk-cache")));
+    assert!(io.did_write_file(".werk-cache"));
 
     assert!(contains_file(
         &*io.filesystem.lock(),
-        std::path::Path::new("/target/.werk-cache")
+        &output_file(".werk-cache")
     ));
 
     // Change the environment!
-    io.delete_file("b.c").unwrap();
+    io.delete_file(workspace_file("b.c")).unwrap();
     io.clear_oplog();
 
     // Initialize a new workspace.
-    let ast = werk_parser::parse_toml(TOML)?;
     let workspace = werk_runner::Workspace::new(
         &*io,
-        "/".into(),
-        WorkspaceSettings::default().ignore_explicitly(
-            GlobSet::builder()
-                .add("/target/**".parse().unwrap())
-                .build()
-                .unwrap(),
-        ),
+        test_workspace_dir().to_path_buf(),
+        &test_workspace_settings(),
     )
     .await?;
-    let mut runner = werk_runner::Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
+    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
 
     let status = runner.build_file(Path::new("glob-dep")?).await?;
 
     assert!(io.did_run_during_build(&ShellCommandLine {
-        program: "/clang".into(),
-        arguments: vec![String::from("/a.c")],
+        program: program_path("clang"),
+        arguments: vec![workspace_file_str("a.c")],
         env: Default::default(),
         env_remove: Default::default()
     }));
@@ -434,7 +438,9 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(PathBuf::try_from("/glob-dep").unwrap()),
+            TaskId::build(
+                Absolute::new_unchecked(PathBuf::try_from("/glob-dep").unwrap()).into_boxed_path()
+            ),
             Outdatedness::new([
                 Reason::Missing(PathBuf::try_from("/glob-dep")?),
                 Reason::Glob(String::from("/*.c"))

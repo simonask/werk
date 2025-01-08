@@ -26,11 +26,12 @@ in = "{%}.c"
 # Makefile, and the paths mentioned inside must be absolute and native OS paths.
 # Werk automatically interprets its contents and re-translates it back into
 # workspace-relative or out-dir-relative abstract paths.
-command = "{cc} -MM -MT <in> -MF <out> <in>"
+command = "{cc} -MM -MT <in*> -MF <out> <in>"
 
 # Build the executable.
 [build.'{executable}']
-in = { glob = "*.c", then = "/{profile}{:.c=.o}" }
+# in = { glob = "*.c", then = "/{profile}{:.c=.o}" }
+in = { glob = "*.c", match.'%.c' = "/{profile}{%}.o" }
 command = "{ld} -o <out> <in*>"
 
 # Build the executable.

@@ -8,11 +8,14 @@ publish = false
 werk-runner.workspace = true
 werk-parser.workspace = true
 werk-fs.workspace = true
-tokio.workspace = true
 anyhow = "1"
 parking_lot.workspace = true
 ahash.workspace = true
+tracing.workspace = true
 tracing-subscriber = "0.3.18"
+smol-macros = "0.1.1"
+macro_rules_attribute = "0.2.0"
+toml_edit.workspace = true
 
 [lib]
 path = "lib.rs"

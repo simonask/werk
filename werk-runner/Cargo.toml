@@ -10,7 +10,6 @@ path = "lib.rs"
 werk-parser.workspace = true
 werk-fs.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
 indexmap.workspace = true
@@ -23,6 +22,7 @@ ignore = "0.4.23"
 regex.workspace = true
 anyhow = "1.0.93"
 serde.workspace = true
-toml_edit = { version = "0.22.22", features = ["serde"] }
+toml_edit = { workspace = true, features = ["serde"] }
 rustc-stable-hash = "0.1.0"
 winnow.workspace = true
+smol.workspace = true

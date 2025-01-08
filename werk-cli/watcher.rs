@@ -7,7 +7,8 @@ use anstream::stream::{AsLockedWrite, IsTerminal};
 use indexmap::IndexMap;
 use owo_colors::OwoColorize;
 use parking_lot::{Mutex, MutexGuard};
-use werk_runner::{BuildStatus, Outdatedness, RunCommand, TaskId};
+use werk_fs::Absolute;
+use werk_runner::{BuildStatus, Outdatedness, RunCommand, ShellCommandLine, TaskId};
 
 use crate::ColorChoice;
 
@@ -330,13 +331,7 @@ impl<'a> StdioLock<'a> {
         }
     }
 
-    fn will_build(
-        &mut self,
-        task_id: &TaskId,
-        num_steps: usize,
-        pre_message: Option<&str>,
-        outdated: &Outdatedness,
-    ) {
+    fn will_build(&mut self, task_id: &TaskId, num_steps: usize, outdated: &Outdatedness) {
         self.inner
             .current_tasks
             .insert(task_id.clone(), (0, num_steps));
@@ -363,10 +358,6 @@ impl<'a> StdioLock<'a> {
             }
         }
 
-        if let Some(pre_message) = pre_message {
-            _ = writeln!(self.stdout, "{} {}", "[info]".cyan(), pre_message);
-        }
-
         self.render();
     }
 
@@ -374,7 +365,6 @@ impl<'a> StdioLock<'a> {
         &mut self,
         task_id: &TaskId,
         result: &Result<werk_runner::BuildStatus, werk_runner::Error>,
-        post_message: Option<&str>,
     ) {
         self.inner
             .current_tasks
@@ -395,9 +385,6 @@ impl<'a> StdioLock<'a> {
                             ""
                         }
                     );
-                    if let Some(post_message) = post_message {
-                        _ = writeln!(self.stdout, "{} {}", "[info]".cyan(), post_message);
-                    }
                 } else if self.settings.print_fresh {
                     _ = writeln!(
                         &mut self.stdout,
@@ -423,7 +410,7 @@ impl<'a> StdioLock<'a> {
     fn will_execute(
         &mut self,
         task_id: &TaskId,
-        command: &RunCommand,
+        command: &ShellCommandLine,
         step: usize,
         num_steps: usize,
     ) {
@@ -436,8 +423,9 @@ impl<'a> StdioLock<'a> {
         if self.settings.dry_run || self.settings.print_recipe_commands {
             _ = writeln!(
                 self.stdout,
-                "{} {task_id}: {command}",
-                Bracketed(Step(step + 1, num_steps)).bright_yellow()
+                "{} {task_id}: {}",
+                Bracketed(Step(step + 1, num_steps)).bright_yellow(),
+                command.display()
             );
         }
         self.render();
@@ -446,8 +434,8 @@ impl<'a> StdioLock<'a> {
     fn did_execute(
         &mut self,
         task_id: &TaskId,
-        command: &RunCommand,
-        result: &Result<std::process::Output, werk_runner::Error>,
+        command: &ShellCommandLine,
+        result: &Result<std::process::Output, std::io::Error>,
         step: usize,
         num_steps: usize,
         print_successful: bool,
@@ -458,8 +446,9 @@ impl<'a> StdioLock<'a> {
                     self.clear_current_line();
                     _ = writeln!(
                         self.stdout,
-                        "{} Command failed while building '{task_id}': {command}\nstderr:\n{}",
+                        "{} Command failed while building '{task_id}': {}\nstderr:\n{}",
                         Bracketed(Step(step, num_steps)).red(),
+                        command.display(),
                         String::from_utf8_lossy(&output.stderr)
                     );
                     self.render();
@@ -482,8 +471,9 @@ impl<'a> StdioLock<'a> {
                 self.clear_current_line();
                 _ = writeln!(
                     self.stdout,
-                    "{} Error evaluating command while building '{task_id}': {command}\n{err}",
+                    "{} Error evaluating command while building '{task_id}': {}\n{err}",
                     Bracketed(Step(step + 1, num_steps)).red(),
+                    command.display(),
                 );
                 self.render();
             }
@@ -512,47 +502,37 @@ impl<'a> StdioLock<'a> {
 }
 
 impl werk_runner::Watcher for StdoutWatcher {
-    fn will_build(
-        &self,
-        task_id: &TaskId,
-        num_steps: usize,
-        pre_message: Option<&str>,
-        outdated: &Outdatedness,
-    ) {
-        self.lock()
-            .will_build(task_id, num_steps, pre_message, outdated);
+    fn will_build(&self, task_id: &TaskId, num_steps: usize, outdated: &Outdatedness) {
+        self.lock().will_build(task_id, num_steps, outdated);
     }
 
     fn did_build(
         &self,
         task_id: &TaskId,
         result: &Result<werk_runner::BuildStatus, werk_runner::Error>,
-        post_message: Option<&str>,
     ) {
-        self.lock().did_build(task_id, result, post_message);
+        self.lock().did_build(task_id, result);
     }
 
-    fn will_execute(&self, task_id: &TaskId, command: &RunCommand, step: usize, num_steps: usize) {
-        if let RunCommand::Echo(_) = command {
-            return;
-        }
-
+    fn will_execute(
+        &self,
+        task_id: &TaskId,
+        command: &ShellCommandLine,
+        step: usize,
+        num_steps: usize,
+    ) {
         self.lock().will_execute(task_id, command, step, num_steps);
     }
 
     fn did_execute(
         &self,
         task_id: &TaskId,
-        command: &RunCommand,
-        result: &Result<std::process::Output, werk_runner::Error>,
+        command: &ShellCommandLine,
+        result: &Result<std::process::Output, std::io::Error>,
         step: usize,
         num_steps: usize,
         print_successful: bool,
     ) {
-        if let RunCommand::Echo(_) = command {
-            return;
-        }
-
         self.lock()
             .did_execute(task_id, command, result, step, num_steps, print_successful);
     }

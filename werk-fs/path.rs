@@ -1,11 +1,13 @@
 mod validate;
 
 use std::{
-    borrow::Borrow,
+    borrow::{Borrow, Cow},
     fmt::{Debug, Display},
     ops::Deref,
     str::FromStr,
 };
+
+use crate::{Absolute, Absolutize, IsAbsolute};
 
 /// Virtual path in a werkspace.
 ///
@@ -85,7 +87,7 @@ pub enum PathError {
 
 impl Path {
     pub const SEPARATOR: char = '/';
-    pub const ROOT: &'static Path = Self::new_unchecked("/");
+    pub const ROOT: &'static Absolute<Path> = Absolute::new_ref_unchecked(Self::new_unchecked("/"));
     pub const CURRENT: &'static Self = Self::new_unchecked(".");
     pub const PARENT: &'static Self = Self::new_unchecked("..");
 
@@ -262,8 +264,13 @@ impl Path {
     /// Resolve all `.` and `..` components in the path. If the path is
     /// relative, resolve it relative to `base`. `base` must be an absolute
     /// path, and can be e.g. `Path::ROOT`.
-    pub fn absolutize(&self, base: &Path) -> Result<PathBuf, PathError> {
-        assert!(base.is_absolute(), "base path must be an absolute path");
+    pub fn absolutize<'a>(
+        &'a self,
+        base: &Absolute<Path>,
+    ) -> Result<Cow<'a, Absolute<Path>>, PathError> {
+        if self.is_absolute() {
+            return Ok(Cow::Borrowed(Absolute::new_ref_unchecked(self)));
+        }
 
         // Components excluding the root.
         let mut components = Vec::<&Path>::with_capacity(16);
@@ -304,9 +311,7 @@ impl Path {
         }
 
         if components.is_empty() {
-            return Ok(PathBuf {
-                path: String::from("/"),
-            });
+            return Ok(Cow::Borrowed(Self::ROOT));
         }
 
         let mut buf = String::with_capacity(strcap + components.len());
@@ -315,7 +320,9 @@ impl Path {
             buf.push(Path::SEPARATOR);
             buf.push_str(component.as_ref());
         }
-        Ok(PathBuf::new_unchecked(buf))
+        Ok(Cow::Owned(Absolute::new_unchecked(PathBuf::new_unchecked(
+            buf,
+        ))))
     }
 
     /// Build a filesystem path from an abstract relative to `root`.
@@ -323,9 +330,9 @@ impl Path {
     /// This does not access the filesystem.
     pub fn resolve(
         &self,
-        working_dir: &Path,
-        root: &std::path::Path,
-    ) -> Result<std::path::PathBuf, PathError> {
+        working_dir: &Absolute<Path>,
+        root: &Absolute<std::path::Path>,
+    ) -> Result<Absolute<std::path::PathBuf>, PathError> {
         if !working_dir.is_absolute() {
             return Err(PathError::ResolveRelative(working_dir.to_path_buf()));
         }
@@ -338,7 +345,7 @@ impl Path {
         };
         debug_assert!(path.is_absolute());
 
-        let mut buf = root.to_path_buf();
+        let mut buf = root.to_path_buf().into_inner();
         for component in path.components() {
             match component {
                 Component::Root => {}
@@ -354,7 +361,7 @@ impl Path {
             }
         }
 
-        Ok(buf)
+        Ok(Absolute::new_unchecked(buf))
     }
 
     /// Get the workspace-relative path from an OS path. If `path` is absolute,
@@ -365,7 +372,10 @@ impl Path {
     /// will be returned.
     ///
     /// `root` must be an absolute path.
-    pub fn unresolve(path: &std::path::Path, root: &std::path::Path) -> Result<PathBuf, PathError> {
+    pub fn unresolve(
+        path: &std::path::Path,
+        root: &Absolute<std::path::Path>,
+    ) -> Result<Absolute<PathBuf>, PathError> {
         // Resolve `..` and `.` so strip_prefix is reliable.
         fn resolve_cur_and_parent(
             input: &std::path::Path,
@@ -394,7 +404,7 @@ impl Path {
             .strip_prefix(root)
             .map_err(|_| PathError::UnresolveBeyondRoot)?;
 
-        let mut buf = Path::ROOT.to_path_buf();
+        let mut buf: PathBuf = Path::ROOT.to_owned().into_inner();
         for component in relative_to_root.components() {
             match component {
                 std::path::Component::Prefix(_) => return Err(PathError::UnresolveBeyondRoot),
@@ -408,12 +418,80 @@ impl Path {
             }
         }
 
-        Ok(buf)
+        Ok(Absolute::new_unchecked(buf))
     }
 
     #[inline]
     pub fn components(&self) -> Components {
         Components { path: Some(self) }
+    }
+
+    #[inline]
+    pub fn into_boxed_str(self: Box<Self>) -> Box<str> {
+        unsafe {
+            // SAFETY: #[repr(transparent)]
+            Box::from_raw(Box::into_raw(self) as *mut str)
+        }
+    }
+
+    #[inline]
+    pub fn from_boxed_str_unchecked(s: Box<str>) -> Box<Self> {
+        unsafe {
+            // SAFETY: #[repr(transparent)]
+            Box::from_raw(Box::into_raw(s) as *mut Self)
+        }
+    }
+}
+
+impl IsAbsolute for Path {
+    #[inline(always)]
+    fn is_absolute(&self) -> bool {
+        Path::is_absolute(self)
+    }
+}
+
+impl IsAbsolute for PathBuf {
+    #[inline(always)]
+    fn is_absolute(&self) -> bool {
+        Path::is_absolute(self)
+    }
+}
+
+impl Absolutize for Path {
+    type Err = PathError;
+
+    #[inline(always)]
+    fn absolutize<'a>(
+        &'a self,
+        base: &Absolute<Self>,
+    ) -> Result<Cow<'a, Absolute<Self>>, Self::Err> {
+        Path::absolutize(self, base)
+    }
+}
+
+impl Clone for Box<Path> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        let s: &Box<str> = unsafe {
+            // SAFETY: #[repr(transparent)]
+            &*(self as *const Box<Path> as *const Box<str>)
+        };
+        Path::from_boxed_str_unchecked(s.clone())
+    }
+}
+
+impl From<&Path> for Box<Path> {
+    #[inline(always)]
+    fn from(path: &Path) -> Self {
+        let s: Box<str> = path.path.into();
+        Path::from_boxed_str_unchecked(s)
+    }
+}
+
+impl From<PathBuf> for Box<Path> {
+    #[inline(always)]
+    fn from(path: PathBuf) -> Self {
+        path.into_boxed_path()
     }
 }
 
@@ -772,6 +850,20 @@ impl PartialEq<Path> for PathBuf {
 impl PartialEq<&Path> for PathBuf {
     #[inline(always)]
     fn eq(&self, other: &&Path) -> bool {
+        self.path == other.path
+    }
+}
+
+impl PartialEq<PathBuf> for Path {
+    #[inline(always)]
+    fn eq(&self, other: &PathBuf) -> bool {
+        self.path == other.path
+    }
+}
+
+impl PartialEq<&PathBuf> for Path {
+    #[inline(always)]
+    fn eq(&self, other: &&PathBuf) -> bool {
         self.path == other.path
     }
 }

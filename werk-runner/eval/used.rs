@@ -14,13 +14,25 @@ pub struct Used {
 }
 
 impl Used {
+    pub const NONE: Self = Self {
+        vars: BTreeSet::new(),
+    };
+
     #[inline]
-    pub fn none() -> Self {
-        Self::default()
+    pub const fn none() -> Self {
+        Self {
+            vars: BTreeSet::new(),
+        }
     }
 
+    #[inline]
     pub fn insert(&mut self, var: UsedVariable) {
         self.vars.insert(var);
+    }
+
+    #[inline]
+    pub fn iter(&self) -> std::collections::btree_set::Iter<'_, UsedVariable> {
+        self.vars.iter()
     }
 }
 
@@ -37,6 +49,26 @@ impl FromIterator<UsedVariable> for Used {
         Used {
             vars: BTreeSet::from_iter(iter),
         }
+    }
+}
+
+impl<'a> IntoIterator for &'a Used {
+    type IntoIter = std::collections::btree_set::Iter<'a, UsedVariable>;
+    type Item = &'a UsedVariable;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl IntoIterator for Used {
+    type IntoIter = std::collections::btree_set::IntoIter<UsedVariable>;
+    type Item = UsedVariable;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.vars.into_iter()
     }
 }
 

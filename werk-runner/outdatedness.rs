@@ -3,11 +3,7 @@ use std::{
     ops::{BitOr, BitOrAssign},
 };
 
-use werk_parser::ast;
-
-use crate::{
-    cache::TargetOutdatednessCache, PatternFragment, TaskId, Used, UsedVariable, Workspace,
-};
+use crate::{cache::TargetOutdatednessCache, ir, TaskId, Used, UsedVariable, Workspace};
 
 /// A reason why a variable or recipe is "outdated".
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -148,11 +144,10 @@ impl<'a> OutdatednessTracker<'a> {
     pub fn new(
         workspace: &'a Workspace,
         cache: Option<&'a TargetOutdatednessCache>,
-        pattern: &'a [PatternFragment],
-        recipe: &ast::BuildRecipe,
+        recipe: &ir::BuildRecipe,
     ) -> Self {
         let mut outdatedness = Outdatedness::unchanged();
-        let recipe_hash = workspace.recipe_hash(pattern, recipe);
+        let recipe_hash = workspace.register_used_recipe_hash(recipe);
         if let Some(cache) = cache {
             if recipe_hash != cache.recipe_hash {
                 outdatedness.insert(Reason::RecipeChanged);

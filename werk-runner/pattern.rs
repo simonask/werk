@@ -1,54 +1,50 @@
-use crate::AmbiguousPatternError;
+use std::borrow::Cow;
+
+use werk_parser::parser::Span;
 
 #[derive(Debug, Clone)]
-pub struct Pattern {
+pub struct Pattern<'a> {
     /// The original string representation of the pattern.
     pub string: String,
-    pub fragments: Box<[PatternFragment]>,
+    /// The source span for the pattern.
+    pub span: Span,
+    /// Parsed fragments of the pattern.
+    pub fragments: Box<[PatternFragment<'a>]>,
     /// The regular expression used to match this pattern.
     pub regex: Box<regex::Regex>,
     /// The index of the regex capture group that represents the pattern stem.
     pub stem_capture_index: Option<usize>,
+    /// The number of "one-of" capture groups in the pattern.
+    pub num_capture_groups: usize,
 }
 
-impl PartialEq for Pattern {
+impl PartialEq for Pattern<'_> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.fragments == other.fragments
+        self.string == other.string
     }
 }
 
-impl Eq for Pattern {}
+impl Eq for Pattern<'_> {}
 
-impl std::hash::Hash for Pattern {
+impl std::hash::Hash for Pattern<'_> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.fragments.hash(state);
+        self.string.hash(state);
     }
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct PatternBuilder {
+pub struct PatternBuilder<'a> {
+    span: Span,
     string: String,
-    fragments: Vec<PatternFragment>,
+    fragments: Vec<PatternFragment<'a>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum PatternFragment {
-    Literal(String),
+pub enum PatternFragment<'a> {
+    Literal(Cow<'a, str>),
     PatternStem,
-    OneOf(Vec<String>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct PatternMatch<'a> {
-    pub pattern: &'a Pattern,
-    pub data: PatternMatchData,
-}
-
-impl PartialEq<PatternMatchData> for PatternMatch<'_> {
-    #[inline]
-    fn eq(&self, other: &PatternMatchData) -> bool {
-        self.data == *other
-    }
+    OneOf(Vec<Cow<'a, str>>),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -56,40 +52,46 @@ pub struct PatternMatchData {
     /// The matched stem, if the pattern has a stem.
     pub stem: Option<Box<str>>,
     /// One entry for each `OneOf` capture group `(a|b|...)` in the pattern.
-    pub captures: Box<[String]>,
+    pub captures: Box<[Box<str>]>,
 }
 
 impl PatternMatchData {
     pub fn new(
-        stem: Option<impl Into<String>>,
-        captures: impl IntoIterator<Item = String>,
+        stem: Option<impl Into<Box<str>>>,
+        captures: impl IntoIterator<Item: Into<Box<str>>>,
     ) -> Self {
         Self {
-            stem: stem.map(Into::into).map(String::into_boxed_str),
+            stem: stem.map(Into::into),
             captures: captures.into_iter().map(Into::into).collect(),
         }
     }
 }
 
-impl PatternBuilder {
+impl<'a> PatternBuilder<'a> {
+    pub fn set_span(&mut self, span: Span) {
+        self.span = span;
+    }
+
     pub fn push_str(&mut self, s: &str) {
         self.string.push_str(s);
         if let Some(PatternFragment::Literal(ref mut tail)) = self.fragments.last_mut() {
-            tail.push_str(s);
+            tail.to_mut().push_str(s);
         } else {
-            self.fragments.push(PatternFragment::Literal(s.to_owned()));
+            self.fragments
+                .push(PatternFragment::Literal(s.to_owned().into()));
         }
     }
 
-    pub fn push_one_of(&mut self, one_of: Vec<String>) {
-        self.string.push('(');
+    pub fn push_one_of(&mut self, one_of: Vec<Cow<'a, str>>) {
+        let string = &mut self.string;
+        string.push('(');
         for (i, capture) in one_of.iter().enumerate() {
             if i != 0 {
-                self.string.push('|');
+                string.push('|');
             }
-            self.string.push_str(capture);
+            string.push_str(capture);
         }
-        self.string.push(')');
+        string.push(')');
 
         self.fragments.push(PatternFragment::OneOf(one_of));
     }
@@ -106,19 +108,20 @@ impl PatternBuilder {
         if let Some(PatternFragment::Literal(first)) = self.fragments.first_mut() {
             if !first.starts_with('/') {
                 self.string.insert(0, '/');
-                first.insert(0, '/');
+                first.to_mut().insert(0, '/');
             }
         } else {
             self.string.insert(0, '/');
             self.fragments
-                .insert(0, PatternFragment::Literal(String::from("/")));
+                .insert(0, PatternFragment::Literal("/".into()));
         }
     }
 
-    pub fn build(self) -> Pattern {
+    pub fn build(self) -> Pattern<'a> {
         let mut regex_pattern = String::from("^");
         let mut capture_count = 0;
         let mut stem_capture_index = None;
+        let mut num_capture_groups = 0;
         for fragment in &self.fragments {
             match fragment {
                 PatternFragment::Literal(lit) => regex_pattern.push_str(&regex::escape(lit)),
@@ -137,6 +140,7 @@ impl PatternBuilder {
                     }
                     regex_pattern.push(')');
                     capture_count += 1;
+                    num_capture_groups += 1;
                 }
             }
         }
@@ -148,16 +152,18 @@ impl PatternBuilder {
             .unwrap();
 
         Pattern {
+            span: self.span,
             string: self.string,
             fragments: self.fragments.into(),
             regex: Box::new(regex),
             stem_capture_index,
+            num_capture_groups,
         }
     }
 }
 
-impl Pattern {
-    pub fn parse(pattern: &str) -> Result<Pattern, werk_parser::ParseError> {
+impl<'a> Pattern<'a> {
+    pub fn parse(pattern: &'a str) -> Result<Self, werk_parser::ParseError> {
         let parsed = werk_parser::parse_string::parse_pattern_expr(pattern)?;
         let mut builder = PatternBuilder::default();
         for fragment in parsed.fragments {
@@ -175,7 +181,7 @@ impl Pattern {
 
     pub fn match_string(&self, string: &str) -> Option<PatternMatchData> {
         let m = self.regex.captures(string)?;
-        let mut capture_groups = Vec::new();
+        let mut capture_groups = Vec::with_capacity(self.num_capture_groups);
         let mut stem = None;
 
         let mut group_matches = m.iter();
@@ -185,99 +191,24 @@ impl Pattern {
         for (index, group) in group_matches.enumerate() {
             let group_str = group.unwrap().as_str();
             if self.stem_capture_index == Some(index) {
-                stem = Some(group_str.to_owned());
+                stem = Some(group_str);
             } else {
-                capture_groups.push(group_str.to_owned());
+                capture_groups.push(group_str);
             }
         }
 
-        Some(PatternMatchData {
-            stem: stem.map(Into::into),
-            captures: capture_groups.into(),
-        })
+        Some(PatternMatchData::new(stem, capture_groups))
     }
+
     pub fn match_path(&self, path: &werk_fs::Path) -> Option<PatternMatchData> {
         tracing::trace!("Matching '{path}' against {:?}", self.regex);
         self.match_string(path.as_str())
     }
 }
 
-impl std::fmt::Display for Pattern {
+impl std::fmt::Display for Pattern<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.string)
-    }
-}
-
-impl std::fmt::Display for PatternMatch<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut captures = self.data.captures.iter();
-        for fragment in &self.pattern.fragments {
-            match fragment {
-                PatternFragment::Literal(s) => f.write_str(s)?,
-                PatternFragment::PatternStem => {
-                    write!(f, "{}", self.data.stem.as_deref().unwrap_or(""))?
-                }
-                PatternFragment::OneOf(_) => {
-                    let capture: &str = captures.next().map(|s| &**s).unwrap_or("");
-                    f.write_str(capture)?;
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-impl<'a> PatternMatch<'a> {
-    pub fn from_pattern_and_data(pattern: &'a Pattern, data: PatternMatchData) -> Self {
-        Self { pattern, data }
-    }
-
-    pub fn to_path_buf(&self) -> werk_fs::PathBuf {
-        let mut path = String::new();
-        let mut captures = self.data.captures.iter();
-        for fragment in &self.pattern.fragments {
-            match fragment {
-                PatternFragment::Literal(s) => path.push_str(s),
-                PatternFragment::PatternStem => {
-                    path.push_str(
-                        self.data
-                            .stem
-                            .as_deref()
-                            .expect("invalid pattern match for pattern; no stem"),
-                    );
-                }
-                PatternFragment::OneOf(_) => {
-                    let capture: &str = captures
-                        .next()
-                        .map(|s| &**s)
-                        .expect("invalid pattern match for pattern; not enough captures");
-                    path.push_str(capture);
-                }
-            }
-        }
-
-        werk_fs::PathBuf::new_unchecked(path)
-    }
-
-    /// True if the pattern did not contain a stem.
-    #[inline]
-    pub fn is_verbatim(&self) -> bool {
-        self.data.is_verbatim()
-    }
-
-    #[inline]
-    pub fn stem(&self) -> Option<&str> {
-        self.data.stem()
-    }
-
-    #[inline]
-    pub fn captures(&self) -> &[String] {
-        self.data.captures()
-    }
-
-    #[inline]
-    pub fn capture_group(&self, group: usize) -> Option<&str> {
-        self.data.capture_group(group)
     }
 }
 
@@ -294,118 +225,13 @@ impl PatternMatchData {
     }
 
     #[inline]
-    pub fn captures(&self) -> &[String] {
+    pub fn captures(&self) -> &[Box<str>] {
         &self.captures
     }
 
     #[inline]
     pub fn capture_group(&self, group: usize) -> Option<&str> {
         self.captures.get(group).map(|s| &**s)
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct PatternSet {
-    // Could use `regex::RegexSet`, but the main benefit of that is that it only
-    // needs to traverse the haystack once. But our "haystack" (paths and match
-    // arms) are almost always very short, and `RegexSet` requires that
-    // individual patterns are re-matched to get capture groups, so in total it
-    // is unlikely that `RegexSet` would be faster in total.
-    patterns: Vec<Pattern>,
-}
-
-impl PatternSet {
-    pub fn new(patterns: impl IntoIterator<Item = Pattern>) -> Self {
-        Self {
-            patterns: patterns.into_iter().collect(),
-        }
-    }
-
-    #[inline]
-    pub fn push(&mut self, pattern: Pattern) {
-        self.patterns.push(pattern);
-    }
-
-    pub fn matches<'a: 'b, 'b>(
-        &'a self,
-        haystack: &'b str,
-    ) -> impl Iterator<Item = (usize, PatternMatch<'a>)> + 'b {
-        self.patterns
-            .iter()
-            .enumerate()
-            .filter_map(move |(index, pattern)| {
-                pattern
-                    .match_string(haystack)
-                    .map(|data| (index, PatternMatch::from_pattern_and_data(pattern, data)))
-            })
-    }
-
-    pub fn best_match_string<'a>(
-        &'a self,
-        haystack: &str,
-    ) -> Result<Option<(usize, PatternMatch<'a>)>, AmbiguousPatternError> {
-        let mut best_match = None;
-
-        for (index, pattern_match) in self.matches(haystack) {
-            match best_match {
-                None => {
-                    // No match yet, pick this candidate.
-                    best_match = Some((index, pattern_match));
-                }
-                Some((_, ref best)) => match (best.stem(), pattern_match.stem()) {
-                    (None, Some(_)) => {
-                        // Best match is exact, do nothing.
-                    }
-                    (Some(_), None) => {
-                        // Candidate is exact, do nothing.
-                        best_match = Some((index, pattern_match))
-                    }
-                    (Some(best_stem), Some(candidate_stem))
-                        if candidate_stem.len() < best_stem.len() =>
-                    {
-                        // Candidate has a shorter stem, so it's better.
-                        best_match = Some((index, pattern_match));
-                    }
-                    (Some(best_stem), Some(candidate_stem))
-                        if candidate_stem.len() > best_stem.len() =>
-                    {
-                        // Candidate has a longer stem, so it's worse; do nothing.
-                    }
-                    _ => {
-                        // Candidate and best have the same length, or both are
-                        // exact.
-                        return Err(AmbiguousPatternError {
-                            pattern1: best.pattern.to_string(),
-                            pattern2: pattern_match.pattern.to_string(),
-                            path: haystack.to_string(),
-                        });
-                    }
-                },
-            }
-        }
-
-        Ok(best_match)
-    }
-
-    #[inline]
-    pub fn best_match_path<'a>(
-        &'a self,
-        path: &werk_fs::Path,
-    ) -> Result<Option<(usize, PatternMatch<'a>)>, AmbiguousPatternError> {
-        self.best_match_string(path.as_str())
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &Pattern> {
-        self.patterns.iter()
-    }
-}
-
-impl std::ops::Index<usize> for PatternSet {
-    type Output = Pattern;
-
-    #[inline]
-    fn index(&self, index: usize) -> &Self::Output {
-        &self.patterns[index]
     }
 }
 
@@ -433,7 +259,7 @@ mod tests {
             &*pattern.fragments,
             &[
                 PatternFragment::PatternStem,
-                PatternFragment::Literal(String::from(".c"))
+                PatternFragment::Literal(".c".into())
             ] as &[_]
         );
 

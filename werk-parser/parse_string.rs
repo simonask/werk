@@ -1,6 +1,10 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
-use crate::{ast, ContextError, Expected, ParseError};
+use crate::{
+    ast,
+    parser::{Input, TokenParserExt as _},
+    ContextError, Expected, ParseError,
+};
 use winnow::{
     ascii::{digit1, multispace1, space0},
     combinator::{
@@ -21,7 +25,7 @@ fn is_identifier_continue(ch: char) -> bool {
     ch == '-' || unicode_ident::is_xid_continue(ch)
 }
 
-pub fn parse_ident(input: &str) -> Result<String, ParseError> {
+pub fn parse_ident(input: &str) -> Result<&str, ParseError> {
     let mut chars = input.chars();
     let Some(first) = chars.next() else {
         return Err(ParseError::EmptyIdentifier);
@@ -37,53 +41,56 @@ pub fn parse_ident(input: &str) -> Result<String, ParseError> {
         }
     }
 
-    Ok(input.to_owned())
+    Ok(input)
 }
 
-pub fn parse_string_expr(input: &str) -> Result<ast::StringExpr, ParseError> {
-    string_expr.parse(input).map_err(Into::into)
+pub fn parse_string_expr(input: &str) -> Result<ast::StringExpr<'_>, ParseError> {
+    string_expr_inside_quotes
+        .parse(Input::new(input))
+        .map_err(Into::into)
 }
 
 pub fn parse_pattern_expr(input: &str) -> Result<ast::PatternExpr, ParseError> {
-    pattern_expr.parse(input).map_err(Into::into)
+    pattern_expr_inside_quotes
+        .parse(Input::new(input))
+        .map_err(Into::into)
 }
 
-fn ident(input: &mut &str) -> PResult<String> {
+fn ident<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
     (
         take_while(1, |ch| is_identifier_start(ch)),
         take_while(0.., |ch| is_identifier_continue(ch)),
     )
         .take()
         .parse_next(input)
-        .map(ToOwned::to_owned)
 }
 
 #[derive(Debug, Clone)]
-enum StringFragment<'a> {
+pub(crate) enum StringFragment<'a> {
     Literal(&'a str),
     EscapedChar(char),
     EscapedWhitespace,
-    Interpolation(ast::Interpolation),
+    Interpolation(ast::Interpolation<'a>),
     PatternStem,
-    OneOf(Vec<String>),
+    OneOf(Vec<Cow<'a, str>>),
 }
 
-fn push_string_fragment(expr: &mut ast::StringExpr, frag: StringFragment) {
+pub(crate) fn push_string_fragment<'a>(expr: &mut ast::StringExpr<'a>, frag: StringFragment<'a>) {
     match frag {
         StringFragment::Literal(lit) => {
             if let Some(ast::StringFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
-                last.push_str(lit);
+                last.to_mut().push_str(lit);
             } else {
                 expr.fragments
-                    .push(ast::StringFragment::Literal(lit.to_owned()));
+                    .push(ast::StringFragment::Literal(Cow::Borrowed(lit)));
             }
         }
         StringFragment::EscapedChar(ch) => {
             if let Some(ast::StringFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
-                last.push(ch);
+                last.to_mut().push(ch);
             } else {
                 expr.fragments
-                    .push(ast::StringFragment::Literal(ch.to_string()));
+                    .push(ast::StringFragment::Literal(Cow::Owned(ch.to_string())));
             }
         }
         StringFragment::EscapedWhitespace => {}
@@ -96,22 +103,22 @@ fn push_string_fragment(expr: &mut ast::StringExpr, frag: StringFragment) {
     }
 }
 
-fn push_pattern_fragment(expr: &mut ast::PatternExpr, frag: StringFragment) {
+pub(crate) fn push_pattern_fragment<'a>(expr: &mut ast::PatternExpr<'a>, frag: StringFragment<'a>) {
     match frag {
         StringFragment::Literal(lit) => {
             if let Some(ast::PatternFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
-                last.push_str(lit);
+                last.to_mut().push_str(lit);
             } else {
                 expr.fragments
-                    .push(ast::PatternFragment::Literal(lit.to_owned()));
+                    .push(ast::PatternFragment::Literal(Cow::Borrowed(lit)));
             }
         }
         StringFragment::EscapedChar(ch) => {
             if let Some(ast::PatternFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
-                last.push(ch);
+                last.to_mut().push(ch);
             } else {
                 expr.fragments
-                    .push(ast::PatternFragment::Literal(ch.to_string()));
+                    .push(ast::PatternFragment::Literal(Cow::Owned(ch.to_string())));
             }
         }
         StringFragment::EscapedWhitespace => {}
@@ -124,25 +131,31 @@ fn push_pattern_fragment(expr: &mut ast::PatternExpr, frag: StringFragment) {
     }
 }
 
-fn string_expr(input: &mut &str) -> PResult<ast::StringExpr> {
-    let mut build_string =
-        repeat(0.., string_fragment).fold(ast::StringExpr::default, |mut expr, fragment| {
+fn string_expr_inside_quotes<'a>(input: &mut Input<'a>) -> PResult<ast::StringExpr<'a>> {
+    let (mut expr, span) = repeat(0.., string_fragment)
+        .fold(ast::StringExpr::default, |mut expr, fragment| {
             push_string_fragment(&mut expr, fragment);
             expr
-        });
-    build_string.parse_next(input)
+        })
+        .with_token_span()
+        .parse_next(input)?;
+    expr.span = span;
+    Ok(expr)
 }
 
-fn pattern_expr(input: &mut &str) -> PResult<ast::PatternExpr> {
-    let mut build_pattern =
-        repeat(0.., pattern_fragment).fold(ast::PatternExpr::default, |mut expr, fragment| {
+fn pattern_expr_inside_quotes<'a>(input: &mut Input<'a>) -> PResult<ast::PatternExpr<'a>> {
+    let (mut expr, span) = repeat(0.., pattern_fragment)
+        .fold(ast::PatternExpr::default, |mut expr, fragment| {
             push_pattern_fragment(&mut expr, fragment);
             expr
-        });
-    build_pattern.parse_next(input)
+        })
+        .with_token_span()
+        .parse_next(input)?;
+    expr.span = span;
+    Ok(expr)
 }
 
-fn string_fragment<'a>(input: &mut &'a str) -> PResult<StringFragment<'a>> {
+fn string_fragment<'a>(input: &mut Input<'a>) -> PResult<StringFragment<'a>> {
     // TODO: Consider escape sequences etc.
     alt((
         string_literal::<false>.map(StringFragment::Literal),
@@ -155,7 +168,7 @@ fn string_fragment<'a>(input: &mut &'a str) -> PResult<StringFragment<'a>> {
     .parse_next(input)
 }
 
-fn pattern_fragment<'a>(input: &mut &'a str) -> PResult<StringFragment<'a>> {
+fn pattern_fragment<'a>(input: &mut Input<'a>) -> PResult<StringFragment<'a>> {
     // TODO: Consider escape sequences etc.
     alt((
         '%'.value(StringFragment::PatternStem),
@@ -170,7 +183,7 @@ fn pattern_fragment<'a>(input: &mut &'a str) -> PResult<StringFragment<'a>> {
     .parse_next(input)
 }
 
-fn string_literal<'a, const IS_PATTERN: bool>(input: &mut &'a str) -> PResult<&'a str> {
+fn string_literal<'a, const IS_PATTERN: bool>(input: &mut Input<'a>) -> PResult<&'a str> {
     let until = if IS_PATTERN {
         &['\\', '{', '}', '<', '>', '(', ')', '%'] as &[char]
     } else {
@@ -182,7 +195,7 @@ fn string_literal<'a, const IS_PATTERN: bool>(input: &mut &'a str) -> PResult<&'
         .parse_next(input)
 }
 
-fn escaped_char(input: &mut &str) -> PResult<char> {
+fn escaped_char(input: &mut Input) -> PResult<char> {
     preceded(
         '\\',
         alt((
@@ -199,21 +212,21 @@ fn escaped_char(input: &mut &str) -> PResult<char> {
     .parse_next(input)
 }
 
-fn escaped_whitespace<'a>(input: &mut &'a str) -> PResult<&'a str> {
+fn escaped_whitespace<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
     preceded('\\', multispace1).parse_next(input)
 }
 
-fn pattern_one_of(input: &mut &str) -> PResult<Vec<String>> {
+pub(crate) fn pattern_one_of<'a>(input: &mut Input<'a>) -> PResult<Vec<Cow<'a, str>>> {
     delimited(
         '(',
         // TODO: Allow more than just identifiers here.
-        separated(1.., cut_err(ident), '|'),
+        separated(1.., cut_err(ident).map(Cow::Borrowed), '|'),
         cut_err(')').context(Expected::ExpectedChar(')')),
     )
     .parse_next(input)
 }
 
-fn string_interpolation(input: &mut &str) -> PResult<ast::Interpolation> {
+pub(crate) fn string_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation<'a>> {
     delimited(
         '{',
         cut_err(interpolation_inner::<'}'>).context("interpolation contents"),
@@ -223,7 +236,7 @@ fn string_interpolation(input: &mut &str) -> PResult<ast::Interpolation> {
     .parse_next(input)
 }
 
-fn path_interpolation(input: &mut &str) -> PResult<ast::Interpolation> {
+pub(crate) fn path_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation<'a>> {
     let mut interp = delimited(
         '<',
         cut_err(interpolation_inner::<'>'>),
@@ -232,40 +245,46 @@ fn path_interpolation(input: &mut &str) -> PResult<ast::Interpolation> {
     .context("<...> interpolation")
     .parse_next(input)?;
 
-    interp.options.ops.push(ast::InterpolationOp::ResolveOsPath);
+    interp
+        .options
+        .get_or_insert_default()
+        .ops
+        .push(ast::InterpolationOp::ResolveOsPath);
 
     Ok(interp)
 }
 
-fn interpolation_inner<const TERMINATE: char>(input: &mut &str) -> PResult<ast::Interpolation> {
+fn interpolation_inner<'a, const TERMINATE: char>(
+    input: &mut Input<'a>,
+) -> PResult<ast::Interpolation<'a>> {
     alt((
         // Interpolation with stem
         interpolation_inner_with_stem::<TERMINATE>,
         // Implied value with options: {join:options}
         interpolation_options.map(|options| ast::Interpolation {
             stem: ast::InterpolationStem::Implied,
-            options,
+            options: options.map(Box::new),
         }),
         // Just the implied value with no options `{}`.
         preceded(space0, peek(TERMINATE)).map(|_| ast::Interpolation {
             stem: ast::InterpolationStem::Implied,
-            options: ast::InterpolationOptions::default(),
+            options: None,
         }),
     ))
     .context(Expected::Expected(&"interpolation expression"))
     .parse_next(input)
 }
 
-fn interpolation_inner_with_stem<const TERMINATE: char>(
-    input: &mut &str,
-) -> PResult<ast::Interpolation> {
+fn interpolation_inner_with_stem<'a, const TERMINATE: char>(
+    input: &mut Input<'a>,
+) -> PResult<ast::Interpolation<'a>> {
     (
         interpolation_stem.context(Expected::Expected(&"interpolation stem")),
         alt((
             // {stem*}, {stem:...}, or {stem*:...}
-            interpolation_options,
+            interpolation_options.map(|options| options.map(Box::new)),
             // No options
-            preceded(space0, peek(TERMINATE)).value(ast::InterpolationOptions::default()),
+            preceded(space0, peek(TERMINATE)).value(None),
         ))
         .context(Expected::Expected(
             &"interpolation options or end of interpolation",
@@ -276,13 +295,13 @@ fn interpolation_inner_with_stem<const TERMINATE: char>(
         .parse_next(input)
 }
 
-fn interpolation_stem(input: &mut &str) -> PResult<ast::InterpolationStem> {
+fn interpolation_stem<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationStem<'a>> {
     alt((
-        '%'.map(|_| ast::InterpolationStem::PatternCapture),
+        '%'.value(ast::InterpolationStem::PatternCapture),
         digit1
             .try_map(str::parse)
             .map(ast::InterpolationStem::CaptureGroup),
-        ident.map(ast::InterpolationStem::Ident),
+        ident.map(Cow::Borrowed).map(ast::InterpolationStem::Ident),
     ))
     .context(Expected::Expected(
         &"one of %, a capture group number, or an identifier",
@@ -290,43 +309,50 @@ fn interpolation_stem(input: &mut &str) -> PResult<ast::InterpolationStem> {
     .parse_next(input)
 }
 
-fn interpolation_options(input: &mut &str) -> PResult<ast::InterpolationOptions> {
+fn interpolation_options<'a>(
+    input: &mut Input<'a>,
+) -> PResult<Option<ast::InterpolationOptions<'a>>> {
     let join = opt(interpolation_join).parse_next(input)?;
     let ops = if join.is_some() {
         opt(interpolation_ops).parse_next(input)?
     } else {
         // If there is no join operator, `interpolation_options` should only
-        // succeed if there are no other options.
+        // succeed if there are other options.
         Some(interpolation_ops.parse_next(input)?)
     };
-    Ok(ast::InterpolationOptions {
-        join,
-        ops: ops.unwrap_or_default(),
+    Ok(match (join, ops) {
+        (None, None) => None,
+        (Some(join), None) => Some(ast::InterpolationOptions {
+            join: Some(join),
+            ops: Vec::new(),
+        }),
+        (None, Some(ops)) if ops.is_empty() => None,
+        (join, Some(ops)) => Some(ast::InterpolationOptions { join, ops }),
     })
 }
 
-fn interpolation_join(input: &mut &str) -> PResult<String> {
+fn interpolation_join<'a>(input: &mut Input<'a>) -> PResult<Cow<'a, str>> {
     const VALID_JOIN_SEPARATORS: &[char] = &['+', ',', '.', '|', '/', '\\', ':', ';', ' '];
-    let mut sep: String = terminated(repeat(0.., one_of(VALID_JOIN_SEPARATORS)), '*')
+    let sep: String = terminated(repeat(0.., one_of(VALID_JOIN_SEPARATORS)), '*')
         .context("join separator")
         .parse_next(input)?;
     if sep.is_empty() {
-        sep = String::from(" ");
+        return Ok(Cow::Borrowed(" "));
     }
-    Ok(sep)
+    Ok(Cow::Owned(sep))
 }
 
 // At least one interpolation option
-fn interpolation_ops(input: &mut &str) -> PResult<Vec<ast::InterpolationOp>> {
+fn interpolation_ops<'a>(input: &mut Input<'a>) -> PResult<Vec<ast::InterpolationOp<'a>>> {
     preceded(':', separated(0.., interpolation_op, ','))
         .context("interpolation options")
         .parse_next(input)
 }
 
-fn interpolation_op(input: &mut &str) -> PResult<ast::InterpolationOp> {
+fn interpolation_op<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationOp<'a>> {
     alt((
         interpolation_op_replace_ext.map(|(from, to)| {
-            ast::InterpolationOp::ReplaceExtension(from.to_string(), to.to_string())
+            ast::InterpolationOp::ReplaceExtension(Cow::from(from), Cow::from(to))
         }),
         interpolation_op_regex_replace
             .map(|regex_interpolation| ast::InterpolationOp::RegexReplace(regex_interpolation)),
@@ -334,7 +360,7 @@ fn interpolation_op(input: &mut &str) -> PResult<ast::InterpolationOp> {
     .parse_next(input)
 }
 
-fn interpolation_op_replace_ext<'a>(input: &mut &'a str) -> PResult<(&'a str, &'a str)> {
+fn interpolation_op_replace_ext<'a>(input: &mut Input<'a>) -> PResult<(&'a str, &'a str)> {
     separated_pair(file_extension, '=', file_extension)
         .context(Expected::Expected(
             &"replace extension operation in the form of '.ext1=.ext2' (periods required)",
@@ -342,18 +368,20 @@ fn interpolation_op_replace_ext<'a>(input: &mut &'a str) -> PResult<(&'a str, &'
         .parse_next(input)
 }
 
-fn interpolation_op_regex_replace(input: &mut &str) -> PResult<ast::RegexInterpolationOp> {
+fn interpolation_op_regex_replace<'a>(
+    input: &mut Input<'a>,
+) -> PResult<ast::RegexInterpolationOp<'a>> {
     winnow::combinator::seq! { ast::RegexInterpolationOp {
         _: "s/",
         regex: cut_err(regex_replace_pattern),
         _: '/',
-        replacer: take_till(0.., ['/']).map(|s: &str| s.to_owned()),
+        replacer: take_till(0.., ['/']).map(Cow::Borrowed),
         _: '/'
     }}
     .parse_next(input)
 }
 
-fn regex_replace_pattern(input: &mut &str) -> PResult<regex::Regex> {
+fn regex_replace_pattern(input: &mut Input) -> PResult<regex::Regex> {
     let regex_pattern = take_till(1.., ['/']).parse_next(input)?;
 
     regex::Regex::new(&regex_pattern).map_err(|err| {
@@ -364,7 +392,7 @@ fn regex_replace_pattern(input: &mut &str) -> PResult<regex::Regex> {
     })
 }
 
-fn file_extension<'a>(input: &mut &'a str) -> PResult<&'a str> {
+fn file_extension<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
     preceded(
         '.',
         take_while(1.., |ch: char| {
@@ -378,36 +406,36 @@ fn file_extension<'a>(input: &mut &'a str) -> PResult<&'a str> {
 
 #[cfg(test)]
 mod tests {
+    use crate::parser::span;
+
     use super::*;
 
     #[test]
     fn test_string_expr() {
         let input = "hello %world% {name} <1:.ext1=.ext2>";
         let expected = ast::StringExpr {
+            span: span(0..input.len()),
             fragments: vec![
-                ast::StringFragment::Literal("hello %world% ".to_owned()),
+                ast::StringFragment::Literal("hello %world% ".into()),
                 ast::StringFragment::Interpolation(ast::Interpolation {
-                    stem: ast::InterpolationStem::Ident("name".to_owned()),
-                    options: ast::InterpolationOptions::default(),
+                    stem: ast::InterpolationStem::Ident("name".into()),
+                    options: None,
                 }),
-                ast::StringFragment::Literal(" ".to_owned()),
+                ast::StringFragment::Literal(" ".into()),
                 ast::StringFragment::Interpolation(ast::Interpolation {
                     stem: ast::InterpolationStem::CaptureGroup(1),
-                    options: ast::InterpolationOptions {
+                    options: Some(Box::new(ast::InterpolationOptions {
                         ops: vec![
-                            ast::InterpolationOp::ReplaceExtension(
-                                ".ext1".to_owned(),
-                                ".ext2".to_owned(),
-                            ),
+                            ast::InterpolationOp::ReplaceExtension(".ext1".into(), ".ext2".into()),
                             ast::InterpolationOp::ResolveOsPath,
                         ],
                         join: None,
-                    },
+                    })),
                 }),
             ],
         };
 
-        let result = string_expr.parse(input).unwrap();
+        let result = string_expr_inside_quotes.parse(Input::new(input)).unwrap();
         assert_eq!(result, expected);
     }
 
@@ -415,44 +443,59 @@ mod tests {
     fn test_string_escape() {
         let input = "*.\\{c,cpp\\}";
         let expected = ast::StringExpr {
-            fragments: vec![ast::StringFragment::Literal(String::from("*.{c,cpp}"))],
+            span: span(0..input.len()),
+            fragments: vec![ast::StringFragment::Literal("*.{c,cpp}".into())],
         };
-        let result = string_expr.parse(input).unwrap();
+        let result = string_expr_inside_quotes.parse(Input::new(input)).unwrap();
         assert_eq!(result, expected);
     }
 
     #[test]
     fn test_join() {
         let plain_expansion = "*";
-        assert_eq!(interpolation_join.parse(plain_expansion).unwrap(), " ");
+        assert_eq!(
+            interpolation_join
+                .parse(Input::new(plain_expansion))
+                .unwrap(),
+            " "
+        );
 
         let explicit_space = " *";
-        assert_eq!(interpolation_join.parse(explicit_space).unwrap(), " ");
+        assert_eq!(
+            interpolation_join
+                .parse(Input::new(explicit_space))
+                .unwrap(),
+            " "
+        );
 
         let comma = ",*";
-        assert_eq!(interpolation_join.parse(comma).unwrap(), ",");
+        assert_eq!(interpolation_join.parse(Input::new(comma)).unwrap(), ",");
 
         let colon = ":*";
-        assert_eq!(interpolation_join.parse(colon).unwrap(), ":");
+        assert_eq!(interpolation_join.parse(Input::new(colon)).unwrap(), ":");
     }
 
     #[test]
     fn test_stem() {
         let stem_ident = "name";
         assert_eq!(
-            interpolation_stem.parse(stem_ident).unwrap(),
-            ast::InterpolationStem::Ident(String::from("name"))
+            interpolation_stem.parse(Input::new(stem_ident)).unwrap(),
+            ast::InterpolationStem::Ident("name".into())
         );
 
         let stem_pattern_stem = "%";
         assert_eq!(
-            interpolation_stem.parse(stem_pattern_stem).unwrap(),
+            interpolation_stem
+                .parse(Input::new(stem_pattern_stem))
+                .unwrap(),
             ast::InterpolationStem::PatternCapture
         );
 
         let stem_pattern_stem = "123";
         assert_eq!(
-            interpolation_stem.parse(stem_pattern_stem).unwrap(),
+            interpolation_stem
+                .parse(Input::new(stem_pattern_stem))
+                .unwrap(),
             ast::InterpolationStem::CaptureGroup(123)
         );
     }
@@ -461,10 +504,10 @@ mod tests {
     fn simple_interpolation() {
         let input = "{name}";
         assert_eq!(
-            string_interpolation.parse(input).unwrap(),
+            string_interpolation.parse(Input::new(input)).unwrap(),
             ast::Interpolation {
-                stem: ast::InterpolationStem::Ident(String::from("name")),
-                options: ast::InterpolationOptions::default(),
+                stem: ast::InterpolationStem::Ident("name".into()),
+                options: None
             }
         );
     }
@@ -473,63 +516,66 @@ mod tests {
     fn test_interpolation_options_implicit() {
         let empty_options = "{:}";
         assert_eq!(
-            string_interpolation.parse(empty_options).unwrap(),
+            string_interpolation
+                .parse(Input::new(empty_options))
+                .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
-                options: ast::InterpolationOptions::default(),
+                options: None
             }
         );
 
         let replace_ext_option = "{:.ext1=.ext2}";
         assert_eq!(
-            string_interpolation.parse(replace_ext_option).unwrap(),
+            string_interpolation
+                .parse(Input::new(replace_ext_option))
+                .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
-                options: ast::InterpolationOptions {
+                options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![ast::InterpolationOp::ReplaceExtension(
-                        ".ext1".to_owned(),
-                        ".ext2".to_owned()
+                        ".ext1".into(),
+                        ".ext2".into()
                     )],
                     join: None,
-                },
+                })),
             }
         );
 
         let regex_replace_option = "{:s/regex/replacement/}";
         assert_eq!(
-            string_interpolation.parse(regex_replace_option).unwrap(),
+            string_interpolation
+                .parse(Input::new(regex_replace_option))
+                .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
-                options: ast::InterpolationOptions {
+                options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![ast::InterpolationOp::RegexReplace(
                         ast::RegexInterpolationOp {
                             regex: regex::Regex::new("regex").unwrap(),
-                            replacer: String::from("replacement"),
+                            replacer: "replacement".into(),
                         }
                     )],
                     join: None,
-                },
+                })),
             }
         );
 
         let both = "{:.ext1=.ext2,s/regex/replacement/}";
         assert_eq!(
-            string_interpolation.parse(both).unwrap(),
+            string_interpolation.parse(Input::new(both)).unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
-                options: ast::InterpolationOptions {
+                options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![
-                        ast::InterpolationOp::ReplaceExtension(
-                            ".ext1".to_owned(),
-                            ".ext2".to_owned()
-                        ),
+                        ast::InterpolationOp::ReplaceExtension(".ext1".into(), ".ext2".into()),
                         ast::InterpolationOp::RegexReplace(ast::RegexInterpolationOp {
                             regex: regex::Regex::new("regex").unwrap(),
-                            replacer: String::from("replacement"),
+                            replacer: "replacement".into(),
                         }),
                     ],
                     join: None,
-                },
+                })),
             }
         );
     }
@@ -538,63 +584,66 @@ mod tests {
     fn test_interpolation_options_var() {
         let empty_options = "{name:}";
         assert_eq!(
-            string_interpolation.parse(empty_options).unwrap(),
+            string_interpolation
+                .parse(Input::new(empty_options))
+                .unwrap(),
             ast::Interpolation {
-                stem: ast::InterpolationStem::Ident(String::from("name")),
-                options: ast::InterpolationOptions::default(),
+                stem: ast::InterpolationStem::Ident("name".into()),
+                options: None
             }
         );
 
         let replace_ext_option = "{name:.ext1=.ext2}";
         assert_eq!(
-            string_interpolation.parse(replace_ext_option).unwrap(),
+            string_interpolation
+                .parse(Input::new(replace_ext_option))
+                .unwrap(),
             ast::Interpolation {
-                stem: ast::InterpolationStem::Ident(String::from("name")),
-                options: ast::InterpolationOptions {
+                stem: ast::InterpolationStem::Ident("name".into()),
+                options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![ast::InterpolationOp::ReplaceExtension(
-                        ".ext1".to_owned(),
-                        ".ext2".to_owned()
+                        ".ext1".into(),
+                        ".ext2".into()
                     )],
                     join: None,
-                },
+                })),
             }
         );
 
         let regex_replace_option = "{name:s/regex/replacement/}";
         assert_eq!(
-            string_interpolation.parse(regex_replace_option).unwrap(),
+            string_interpolation
+                .parse(Input::new(regex_replace_option))
+                .unwrap(),
             ast::Interpolation {
-                stem: ast::InterpolationStem::Ident(String::from("name")),
-                options: ast::InterpolationOptions {
+                stem: ast::InterpolationStem::Ident("name".into()),
+                options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![ast::InterpolationOp::RegexReplace(
                         ast::RegexInterpolationOp {
                             regex: regex::Regex::new("regex").unwrap(),
-                            replacer: String::from("replacement"),
+                            replacer: "replacement".into(),
                         }
                     )],
                     join: None,
-                },
+                })),
             }
         );
 
         let both = "{name:.ext1=.ext2,s/regex/replacement/}";
         assert_eq!(
-            string_interpolation.parse(both).unwrap(),
+            string_interpolation.parse(Input::new(both)).unwrap(),
             ast::Interpolation {
-                stem: ast::InterpolationStem::Ident(String::from("name")),
-                options: ast::InterpolationOptions {
+                stem: ast::InterpolationStem::Ident("name".into()),
+                options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![
-                        ast::InterpolationOp::ReplaceExtension(
-                            ".ext1".to_owned(),
-                            ".ext2".to_owned()
-                        ),
+                        ast::InterpolationOp::ReplaceExtension(".ext1".into(), ".ext2".into()),
                         ast::InterpolationOp::RegexReplace(ast::RegexInterpolationOp {
                             regex: regex::Regex::new("regex").unwrap(),
-                            replacer: String::from("replacement"),
+                            replacer: "replacement".into(),
                         }),
                     ],
                     join: None,
-                },
+                })),
             }
         );
     }
@@ -603,41 +652,43 @@ mod tests {
     fn test_expansion_implicit() {
         let implicit_expansion = "{*}";
         assert_eq!(
-            string_interpolation.parse(implicit_expansion).unwrap(),
+            string_interpolation
+                .parse(Input::new(implicit_expansion))
+                .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
-                options: ast::InterpolationOptions {
+                options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
-                    join: Some(String::from(" ")),
-                },
+                    join: Some(Cow::from(" ")),
+                })),
             }
         );
 
         let implicit_expansion_with_space = "{ *}";
         assert_eq!(
             string_interpolation
-                .parse(implicit_expansion_with_space)
+                .parse(Input::new(implicit_expansion_with_space))
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
-                options: ast::InterpolationOptions {
+                options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
-                    join: Some(String::from(" ")),
-                },
+                    join: Some(Cow::from(" ")),
+                })),
             }
         );
 
         let implicit_expansion_comma = "{,*}";
         assert_eq!(
             string_interpolation
-                .parse(implicit_expansion_comma)
+                .parse(Input::new(implicit_expansion_comma))
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
-                options: ast::InterpolationOptions {
+                options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
-                    join: Some(String::from(",")),
-                },
+                    join: Some(Cow::from(",")),
+                })),
             }
         );
     }
@@ -646,41 +697,43 @@ mod tests {
     fn test_expansion_var() {
         let implicit_expansion = "{name*}";
         assert_eq!(
-            string_interpolation.parse(implicit_expansion).unwrap(),
+            string_interpolation
+                .parse(Input::new(implicit_expansion))
+                .unwrap(),
             ast::Interpolation {
-                stem: ast::InterpolationStem::Ident(String::from("name")),
-                options: ast::InterpolationOptions {
+                stem: ast::InterpolationStem::Ident("name".into()),
+                options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
-                    join: Some(String::from(" ")),
-                },
+                    join: Some(Cow::from(" ")),
+                })),
             }
         );
 
         let implicit_expansion_with_space = "{name *}";
         assert_eq!(
             string_interpolation
-                .parse(implicit_expansion_with_space)
+                .parse(Input::new(implicit_expansion_with_space))
                 .unwrap(),
             ast::Interpolation {
-                stem: ast::InterpolationStem::Ident(String::from("name")),
-                options: ast::InterpolationOptions {
+                stem: ast::InterpolationStem::Ident("name".into()),
+                options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
-                    join: Some(String::from(" ")),
-                },
+                    join: Some(Cow::from(" ")),
+                })),
             }
         );
 
         let implicit_expansion_comma = "{name,*}";
         assert_eq!(
             string_interpolation
-                .parse(implicit_expansion_comma)
+                .parse(Input::new(implicit_expansion_comma))
                 .unwrap(),
             ast::Interpolation {
-                stem: ast::InterpolationStem::Ident(String::from("name")),
-                options: ast::InterpolationOptions {
+                stem: ast::InterpolationStem::Ident("name".into()),
+                options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
-                    join: Some(String::from(",")),
-                },
+                    join: Some(Cow::from(",")),
+                })),
             }
         );
     }

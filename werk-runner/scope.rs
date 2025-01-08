@@ -1,6 +1,6 @@
 use ahash::HashMap;
 
-use crate::{Eval, PatternMatch, TaskId, Value, Watcher, Workspace};
+use crate::{ir, Eval, PatternMatchData, TaskId, Used, Value, Watcher, Workspace};
 
 pub type LocalVariables = indexmap::IndexMap<String, Eval<Value>>;
 pub type GlobalVariables = indexmap::IndexMap<String, GlobalVar>;
@@ -16,55 +16,116 @@ pub struct RootScope<'a> {
     pub watcher: &'a dyn Watcher,
 }
 
-pub struct RecipeScope<'a> {
+pub struct TaskRecipeScope<'a> {
     parent: &'a RootScope<'a>,
     vars: LocalVariables,
-    pattern_match: Option<&'a PatternMatch<'a>>,
     task_id: &'a TaskId,
+    recipe: &'a ir::TaskRecipe<'a>,
+}
+
+pub struct BuildRecipeScope<'a> {
+    parent: &'a RootScope<'a>,
+    vars: LocalVariables,
+    task_id: &'a TaskId,
+    recipe_match: &'a ir::BuildRecipeMatch<'a>,
+    input_files: Value,
+    output_file: Value,
 }
 
 pub struct SubexprScope<'a> {
     parent: &'a dyn Scope,
-    pub implied_value: Option<Eval<Value>>,
+    pub implied_value: &'a Eval<Value>,
 }
 
-pub struct PatsubstScope<'a> {
+pub struct MatchScope<'a> {
     parent: &'a dyn Scope,
-    pattern_match: &'a PatternMatch<'a>,
+    pattern_match: &'a PatternMatchData,
+    pub implied_value: &'a Eval<Value>,
+}
+
+/// Look up a variable in a scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lookup<'a> {
+    /// The scope's implied value (forwarded from another expression). An empty
+    /// stem in a string interpolation.
+    Implied,
+    /// The stem of the current pattern. `{%}` in string interpolation.
+    PatternStem,
+    /// The captured value of a one-of pattern in the current pattern. `{1}` in
+    /// string interpolation.
+    CaptureGroup(u32),
+    /// Lookup by identifier. `{ident}` in string interpolation.
+    Ident(&'a str),
+    /// The `^` special variable in build recipes. Cannot be shadowed.
+    InputFile,
+    /// The `@` special variable in build recipes. Cannot be shadowed.
+    OutputFile,
+}
+
+#[derive(Debug, Clone)]
+pub enum LookupValue<'a> {
+    Owned(Eval<Value>),
+    EvalRef(&'a Eval<Value>),
+    ValueRef(Eval<&'a Value>),
+    Ref(&'a Value, &'a Used),
+}
+
+impl LookupValue<'_> {
+    #[inline]
+    pub fn used(&self) -> &Used {
+        match self {
+            LookupValue::Owned(value) => &value.used,
+            LookupValue::EvalRef(value) => &value.used,
+            LookupValue::ValueRef(value) => &value.used,
+            LookupValue::Ref(_, used) => used,
+        }
+    }
+
+    pub fn into_value(self) -> Value {
+        match self {
+            LookupValue::Owned(eval) => eval.value,
+            LookupValue::EvalRef(eval) => eval.value.clone(),
+            LookupValue::ValueRef(eval) => eval.value.clone(),
+            LookupValue::Ref(value, _) => value.clone(),
+        }
+    }
+
+    pub fn into_owned(self) -> Eval<Value> {
+        match self {
+            LookupValue::Owned(eval) => eval,
+            LookupValue::EvalRef(eval) => eval.clone(),
+            LookupValue::ValueRef(eval) => Eval {
+                value: eval.value.clone(),
+                used: eval.used,
+            },
+            LookupValue::Ref(value, used) => Eval {
+                value: value.clone(),
+                used: used.clone(),
+            },
+        }
+    }
+}
+
+impl std::ops::Deref for LookupValue<'_> {
+    type Target = Value;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        match self {
+            LookupValue::Owned(value) => value,
+            LookupValue::EvalRef(value) => value,
+            LookupValue::ValueRef(value) => value,
+            LookupValue::Ref(value, _) => value,
+        }
+    }
 }
 
 pub trait Scope: Send + Sync {
-    fn implied_value(&self) -> Option<&Eval<Value>>;
-    fn pattern_match(&self) -> Option<&PatternMatch<'_>>;
-    fn get<'b>(&'b self, name: &str) -> Option<Eval<&'b Value>>;
+    fn get<'b>(&'b self, name: Lookup<'_>) -> Option<LookupValue<'b>>;
     fn workspace(&self) -> &Workspace;
-
-    fn pattern_stem(&self) -> Option<&str> {
-        self.pattern_match().and_then(|pm| pm.stem())
-    }
-
-    fn capture_group(&self, group: usize) -> Option<&str> {
-        self.pattern_match().and_then(|pm| pm.capture_group(group))
-    }
 
     fn task_id(&self) -> Option<&TaskId>;
     fn watcher(&self) -> &dyn Watcher;
-}
-
-impl dyn Scope + '_ {
-    pub fn subexpr(&self, implied_value: Option<Eval<Value>>) -> SubexprScope<'_> {
-        SubexprScope {
-            parent: self,
-            implied_value,
-        }
-    }
-
-    pub fn patsubst<'a>(&'a self, pattern_match: &'a PatternMatch<'a>) -> PatsubstScope<'a> {
-        PatsubstScope {
-            parent: self,
-            pattern_match,
-        }
-    }
 }
 
 impl<'a> RootScope<'a> {
@@ -82,18 +143,18 @@ impl<'a> RootScope<'a> {
     }
 }
 
-impl<'a> RecipeScope<'a> {
+impl<'a> TaskRecipeScope<'a> {
     #[inline]
     pub fn new(
         root: &'a RootScope<'a>,
         task_id: &'a TaskId,
-        pattern_match: Option<&'a PatternMatch<'a>>,
+        recipe: &'a ir::TaskRecipe<'a>,
     ) -> Self {
-        RecipeScope {
+        Self {
             parent: root,
             vars: LocalVariables::new(),
             task_id,
-            pattern_match,
+            recipe,
         }
     }
 
@@ -105,12 +166,68 @@ impl<'a> RecipeScope<'a> {
     }
 }
 
+impl<'a> BuildRecipeScope<'a> {
+    #[inline]
+    pub fn new(
+        root: &'a RootScope<'a>,
+        task_id: &'a TaskId,
+        recipe_match: &'a ir::BuildRecipeMatch<'a>,
+    ) -> Self {
+        Self {
+            parent: root,
+            vars: LocalVariables::new(),
+            task_id,
+            recipe_match,
+            input_files: Value::List(Vec::new()),
+            output_file: Value::String(recipe_match.target_file.to_string()),
+        }
+    }
+
+    pub fn set(&mut self, name: String, value: Eval<Value>) {
+        if default_global_constants().contains_key(&name) {
+            tracing::warn!("Shadowing built-in constant `{}`", name);
+        }
+        self.vars.insert(name.to_owned(), value);
+    }
+
+    pub fn push_input_file(&mut self, name: String) {
+        let Value::List(ref mut input_files) = self.input_files else {
+            unreachable!()
+        };
+        input_files.push(Value::String(name));
+    }
+
+    pub fn push_input_files(&mut self, names: &[String]) {
+        let Value::List(ref mut input_files) = self.input_files else {
+            unreachable!()
+        };
+        for name in names {
+            input_files.push(Value::String(name.clone()));
+        }
+    }
+}
+
 impl<'a> SubexprScope<'a> {
     #[inline]
-    pub fn new(parent: &'a dyn Scope, implied_value: Option<Eval<Value>>) -> Self {
+    pub fn new(parent: &'a dyn Scope, implied_value: &'a Eval<Value>) -> Self {
         SubexprScope {
             parent,
             implied_value,
+        }
+    }
+}
+
+impl<'a> MatchScope<'a> {
+    #[inline]
+    pub fn new(
+        parent: &'a dyn Scope,
+        pattern_match: &'a PatternMatchData,
+        matched_string: &'a Eval<Value>,
+    ) -> Self {
+        MatchScope {
+            parent,
+            pattern_match,
+            implied_value: matched_string,
         }
     }
 }
@@ -131,24 +248,19 @@ pub fn default_global_constants() -> &'static HashMap<String, Value> {
 
 impl Scope for RootScope<'_> {
     #[inline]
-    fn implied_value(&self) -> Option<&Eval<Value>> {
-        None
-    }
-
-    #[inline]
-    fn pattern_match(&self) -> Option<&PatternMatch<'_>> {
-        None
-    }
-
-    #[inline]
-    fn get<'b>(&'b self, name: &str) -> Option<Eval<&'b Value>> {
-        let Some(local) = self.globals.get(name) else {
-            return default_global_constants().get(name).map(Eval::inherent);
+    fn get<'b>(&'b self, name: Lookup<'_>) -> Option<LookupValue<'b>> {
+        let Lookup::Ident(name) = name else {
+            return None;
         };
-        Some(Eval {
-            value: &local.value.value,
-            used: local.value.used.clone(),
-        })
+
+        let Some(global) = self.globals.get(name) else {
+            return default_global_constants()
+                .get(name)
+                .map(Eval::inherent)
+                .map(LookupValue::ValueRef);
+        };
+
+        Some(LookupValue::Ref(&global.value.value, &global.value.used))
     }
 
     #[inline]
@@ -167,26 +279,66 @@ impl Scope for RootScope<'_> {
     }
 }
 
-impl Scope for RecipeScope<'_> {
+impl Scope for TaskRecipeScope<'_> {
     #[inline]
-    fn implied_value(&self) -> Option<&Eval<Value>> {
-        None
-    }
-
-    #[inline]
-    fn pattern_match(&self) -> Option<&PatternMatch<'_>> {
-        self.pattern_match
-    }
-
-    #[inline]
-    fn get<'b>(&'b self, name: &str) -> Option<Eval<&'b Value>> {
-        let Some(local) = self.vars.get(name) else {
-            return self.parent.get(name);
+    fn get<'b>(&'b self, lookup: Lookup<'_>) -> Option<LookupValue<'b>> {
+        let Lookup::Ident(name) = lookup else {
+            return None;
         };
-        Some(Eval {
-            value: &local.value,
-            used: local.used.clone(),
-        })
+
+        let Some(local) = self.vars.get(name) else {
+            return self.parent.get(lookup);
+        };
+
+        Some(LookupValue::Ref(&local.value, &local.used))
+    }
+
+    #[inline]
+    fn workspace(&self) -> &Workspace {
+        self.parent.workspace
+    }
+
+    #[inline]
+    fn task_id(&self) -> Option<&TaskId> {
+        Some(self.task_id)
+    }
+
+    #[inline]
+    fn watcher(&self) -> &dyn Watcher {
+        self.parent.watcher
+    }
+}
+
+impl Scope for BuildRecipeScope<'_> {
+    #[inline]
+    fn get<'b>(&'b self, lookup: Lookup<'_>) -> Option<LookupValue<'b>> {
+        match lookup {
+            Lookup::Implied => None,
+            Lookup::PatternStem => {
+                let stem = self.recipe_match.match_data.stem()?;
+                Some(LookupValue::Owned(Eval::inherent(Value::String(
+                    stem.to_owned(),
+                ))))
+            }
+            Lookup::CaptureGroup(index) => {
+                let group = self.recipe_match.match_data.capture_group(index as usize)?;
+                Some(LookupValue::Owned(Eval::inherent(Value::String(
+                    group.to_owned(),
+                ))))
+            }
+            Lookup::InputFile | Lookup::Ident("in") => {
+                Some(LookupValue::ValueRef(Eval::inherent(&self.input_files)))
+            }
+            Lookup::OutputFile | Lookup::Ident("out") => {
+                Some(LookupValue::ValueRef(Eval::inherent(&self.output_file)))
+            }
+            Lookup::Ident(name) => {
+                let Some(local) = self.vars.get(name) else {
+                    return self.parent.get(lookup);
+                };
+                Some(LookupValue::EvalRef(local))
+            }
+        }
     }
 
     #[inline]
@@ -207,20 +359,11 @@ impl Scope for RecipeScope<'_> {
 
 impl Scope for SubexprScope<'_> {
     #[inline]
-    fn implied_value(&self) -> Option<&Eval<Value>> {
-        self.implied_value
-            .as_ref()
-            .or_else(|| self.parent.implied_value())
-    }
-
-    #[inline]
-    fn pattern_match(&self) -> Option<&PatternMatch<'_>> {
-        self.parent.pattern_match()
-    }
-
-    #[inline]
-    fn get<'b>(&'b self, name: &str) -> Option<Eval<&'b Value>> {
-        self.parent.get(name)
+    fn get<'b>(&'b self, lookup: Lookup<'_>) -> Option<LookupValue<'b>> {
+        match lookup {
+            Lookup::Implied => Some(LookupValue::EvalRef(&self.implied_value)),
+            _ => self.parent.get(lookup),
+        }
     }
 
     #[inline]
@@ -239,20 +382,24 @@ impl Scope for SubexprScope<'_> {
     }
 }
 
-impl Scope for PatsubstScope<'_> {
+impl Scope for MatchScope<'_> {
     #[inline]
-    fn implied_value(&self) -> Option<&Eval<Value>> {
-        self.parent.implied_value()
-    }
-
-    #[inline]
-    fn pattern_match(&self) -> Option<&PatternMatch<'_>> {
-        Some(self.pattern_match)
-    }
-
-    #[inline]
-    fn get<'b>(&'b self, name: &str) -> Option<Eval<&'b Value>> {
-        self.parent.get(name)
+    fn get<'b>(&'b self, lookup: Lookup<'_>) -> Option<LookupValue<'b>> {
+        match lookup {
+            Lookup::PatternStem => {
+                let stem = self.pattern_match.stem()?;
+                Some(LookupValue::Owned(Eval::inherent(Value::String(
+                    stem.to_owned(),
+                ))))
+            }
+            Lookup::CaptureGroup(index) => {
+                let group = self.pattern_match.capture_group(index as usize)?;
+                Some(LookupValue::Owned(Eval::inherent(Value::String(
+                    group.to_owned(),
+                ))))
+            }
+            _ => self.parent.get(lookup),
+        }
     }
 
     #[inline]

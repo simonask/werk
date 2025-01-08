@@ -324,7 +324,7 @@ All of these may also be used with formatting options.
 - `{%}`: The matched stem of the pattern. For example, when `src/test.c` has
   been matched against the pattern `%.c`, this is `src/test`. Only valid in
   build recipes. *Note: This mnemonic differs from `$%` in Make, which is only
-  useful in archive operations.* 
+  useful in archive operations.*
 - `{+}` or `<+>`: Same as `in`, except that duplicate entries are preserved in
   the order they were declared. This is primarily useful for use in linking
   commands where it is meaningful to repeat library file names in a particular
@@ -344,22 +344,22 @@ By convention, built-in constants are UPPER_SNAKE_CASE.
 - `{EXE_SUFFIX}`: On Windows, this is `.exe`. On other systems, this is the
   empty string.
 - `{OS}`: The host operating system.
-    - `windows`
-    - `linux`
-    - `macos`
-    - `freebsd`
-    - `dragonfly`
-    - `openbsd`
-    - `netbsd`
+  - `windows`
+  - `linux`
+  - `macos`
+  - `freebsd`
+  - `dragonfly`
+  - `openbsd`
+  - `netbsd`
 - `{OS_FAMILY}`: The host operating system family.
-    - `windows` on Windows.
-    - `unix` on Linux, macOS, and the BSDs.
+  - `windows` on Windows.
+  - `unix` on Linux, macOS, and the BSDs.
 - `{ARCH}`: The host architecture.
-    - `x86_64`
-    - `aarch64`
+  - `x86_64`
+  - `aarch64`
 - `{ARCH_FAMILY}`:
-    - `x86`
-    - `arm`
+  - `x86`
+  - `arm`
 - `{EMPTY}`: The empty string. This exists because TOML does not support empty
   strings in some contexts, like keys in tables.
 

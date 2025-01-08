@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::{depfile::DepfileError, OwnedDependencyChain, Pattern, ShellCommandLine, TaskId};
+use werk_parser::parser::Span;
+
+use crate::{depfile::DepfileError, OwnedDependencyChain, ShellCommandLine, TaskId};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
@@ -25,7 +27,7 @@ pub enum Error {
     #[error("duplicate command: {0}")]
     DuplicateCommand(String),
     #[error("duplicate pattern: {0}")]
-    DuplicateTarget(Pattern),
+    DuplicateTarget(String),
     #[error(transparent)]
     AmbiguousPattern(Arc<AmbiguousPatternError>),
     /// A shell command failed while executing a rule. Note that the
@@ -41,6 +43,10 @@ pub enum Error {
     DepfileError(#[from] DepfileError),
     #[error(".werk-cache file found in workspace; please add its directory to .gitignore")]
     ClobberedWorkspace(std::path::PathBuf),
+    #[error("invalid target path `{0}`: {1}")]
+    InvalidTargetPath(String, werk_fs::PathError),
+    #[error("invalid path in depfile `{0}`: {1}")]
+    InvalidPathInDepfile(String, werk_fs::PathError),
     #[error(transparent)]
     Custom(Arc<anyhow::Error>),
 }
@@ -71,6 +77,8 @@ impl Error {
             | Error::AmbiguousPattern(_)
             | Error::OutputDirectoryNotAvailable
             | Error::ClobberedWorkspace(_)
+            | Error::InvalidTargetPath(..)
+            | Error::InvalidPathInDepfile(..)
             | Error::Custom(_) => false,
         }
     }
@@ -115,13 +123,6 @@ impl From<std::io::Error> for Error {
     }
 }
 
-impl From<ShellError> for Error {
-    #[inline]
-    fn from(err: ShellError) -> Self {
-        Self::Eval(err.into())
-    }
-}
-
 impl From<AmbiguousPatternError> for Error {
     #[inline]
     fn from(err: AmbiguousPatternError) -> Self {
@@ -140,13 +141,6 @@ impl From<ignore::Error> for Error {
     #[inline]
     fn from(err: ignore::Error) -> Self {
         Self::Walk(Arc::new(err))
-    }
-}
-
-impl From<werk_fs::PathError> for Error {
-    #[inline]
-    fn from(err: werk_fs::PathError) -> Self {
-        Self::Eval(err.into())
     }
 }
 
@@ -179,7 +173,7 @@ impl std::error::Error for ShellError {}
 
 impl std::fmt::Display for ShellError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "command failed: {}", self.command)?;
+        write!(f, "command failed: {}", self.command.program.display())?;
         match &*self.result {
             Ok(ref output) => {
                 if !output.stderr.is_empty() {
@@ -195,62 +189,92 @@ impl std::fmt::Display for ShellError {
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 pub enum EvalError {
+    #[error("invalid edition identifier; expected `v1`")]
+    InvalidEdition(Span),
+    #[error("expected a string value")]
+    ExpectedConfigString(Span),
+    #[error("expected a boolean value")]
+    ExpectedConfigBool(Span),
+    #[error("unknown config key")]
+    UnknownConfigKey(Span),
     #[error("no pattern stem in this rule")]
-    NoPatternStem,
+    NoPatternStem(Span),
     #[error("one-of patterns not allowed in this context")]
-    IllegalOneOfPattern,
+    IllegalOneOfPattern(Span),
+    #[error("duplicate pattern")]
+    DuplicatePattern(Span, Span),
     #[error("no implied interpolation value in this context; provide an identifier or a capture group index")]
-    NoImpliedValue,
-    #[error("no capture group with index {0}")]
-    NoSuchCaptureGroup(usize),
-    #[error("no identifier with name {0}")]
-    NoSuchIdentifier(String),
+    NoImpliedValue(Span),
+    #[error("no capture group with index {1}")]
+    NoSuchCaptureGroup(Span, usize),
+    #[error("no identifier with name {1}")]
+    NoSuchIdentifier(Span, String),
     #[error("unexpected list; perhaps a join operation `{{var*}}` is missing?")]
-    UnexpectedList,
+    UnexpectedList(Span),
     #[error("pattern stems `{{%}}` cannot be interpolated in patterns")]
-    PatternStemInterpolationInPattern,
+    PatternStemInterpolationInPattern(Span),
     #[error("path resolution `<...>` interpolations cannot be used in patterns")]
-    ResolvePathInPattern,
+    ResolvePathInPattern(Span),
     #[error("join interpolations `{{...*}}` cannot be used in patterns")]
-    JoinInPattern,
+    JoinInPattern(Span),
     #[error("unexpected list in pattern")]
-    ListInPattern,
+    ListInPattern(Span),
     #[error("invalid path interpolation within quotes; path arguments are automatically quoted")]
-    PathWithinQuotes,
+    PathWithinQuotes(Span),
     #[error("empty command")]
-    EmptyCommand,
+    EmptyCommand(Span),
     #[error("empty list")]
-    EmptyList,
+    EmptyList(Span),
     #[error("unterminated quote")]
-    UnterminatedQuote,
-    #[error("`{0}` expressions are not allowed in this context")]
-    UnexpectedExpressionType(&'static str),
-    #[error("command not found: {0}: {1}")]
-    CommandNotFound(String, which::Error),
-    #[error("`which` expression resulted in a non-UTF-8 path: {}", .0.display())]
-    NonUtf8Which(std::path::PathBuf),
-    #[error(transparent)]
-    Glob(Arc<globset::Error>),
+    UnterminatedQuote(Span),
+    #[error("`{1}` expressions are not allowed in this context")]
+    UnexpectedExpressionType(Span, &'static str),
+    #[error("command not found: {1}: {2}")]
+    CommandNotFound(Span, String, which::Error),
+    #[error("`which` expression resulted in a non-UTF-8 path: {}", .1.display())]
+    NonUtf8Which(Span, std::path::PathBuf),
+    #[error("{1}")]
+    Glob(Span, Arc<globset::Error>),
     /// Shell command failed during evaluation. Note: This error is not reported
     /// when executing commands as part of a rule, only when executing commands
     /// during evaluation (settings variables etc.)
-    #[error(transparent)]
-    Shell(Arc<ShellError>),
-    #[error(transparent)]
-    Path(#[from] werk_fs::PathError),
-    #[error("{0}")]
-    ErrorExpression(String),
+    #[error("{1}")]
+    Shell(Span, Arc<ShellError>),
+    #[error("{1}")]
+    Path(Span, werk_fs::PathError),
+    #[error("{1}")]
+    ErrorExpression(Span, String),
 }
 
-impl From<ShellError> for EvalError {
-    fn from(err: ShellError) -> Self {
-        EvalError::Shell(Arc::new(err))
-    }
-}
-
-impl From<globset::Error> for EvalError {
-    #[inline]
-    fn from(err: globset::Error) -> Self {
-        EvalError::Glob(Arc::new(err))
+impl werk_parser::parser::Spanned for EvalError {
+    fn span(&self) -> Span {
+        match self {
+            EvalError::InvalidEdition(span)
+            | EvalError::ExpectedConfigString(span)
+            | EvalError::ExpectedConfigBool(span)
+            | EvalError::UnknownConfigKey(span)
+            | EvalError::NoPatternStem(span)
+            | EvalError::IllegalOneOfPattern(span)
+            | EvalError::DuplicatePattern(span, _)
+            | EvalError::NoImpliedValue(span)
+            | EvalError::NoSuchCaptureGroup(span, _)
+            | EvalError::NoSuchIdentifier(span, _)
+            | EvalError::UnexpectedList(span)
+            | EvalError::PatternStemInterpolationInPattern(span)
+            | EvalError::ResolvePathInPattern(span)
+            | EvalError::JoinInPattern(span)
+            | EvalError::ListInPattern(span)
+            | EvalError::PathWithinQuotes(span)
+            | EvalError::EmptyCommand(span)
+            | EvalError::EmptyList(span)
+            | EvalError::UnterminatedQuote(span)
+            | EvalError::UnexpectedExpressionType(span, _)
+            | EvalError::CommandNotFound(span, _, _)
+            | EvalError::NonUtf8Which(span, _)
+            | EvalError::Glob(span, _)
+            | EvalError::Shell(span, _)
+            | EvalError::Path(span, _)
+            | EvalError::ErrorExpression(span, _) => *span,
+        }
     }
 }

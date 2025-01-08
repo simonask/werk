@@ -2,16 +2,16 @@ use ahash::HashMap;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::collections::hash_map;
-use werk_fs::PathError;
+use werk_fs::{Absolute, PathError};
 
 use crate::{
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
-    DirEntry, Error, Io, PatternFragment,
+    ir, DirEntry, Error, Io, UsedVariable,
 };
 
 #[derive(Clone)]
 pub struct WorkspaceSettings {
-    pub output_directory: std::path::PathBuf,
+    pub output_directory: Absolute<std::path::PathBuf>,
     /// Settings for globbing the workspace directory. Note that the
     /// `output_directory` is not automatically ignored, and must either be
     /// present in `.gitignore` or explicitly ignored here.
@@ -24,11 +24,10 @@ pub struct WorkspaceSettings {
     pub force_color: bool,
 }
 
-impl Default for WorkspaceSettings {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            output_directory: std::path::PathBuf::from("target"),
+impl WorkspaceSettings {
+    pub fn new(output_dir: Absolute<std::path::PathBuf>) -> Self {
+        WorkspaceSettings {
+            output_directory: output_dir,
             glob: GlobSettings::default(),
             defines: HashMap::default(),
             force_color: false,
@@ -83,12 +82,12 @@ impl WorkspaceSettings {
 pub struct Workspace {
     // Project root - note that the workspace only accesses this directory
     // through the `Io` trait, and never directly.
-    project_root: std::path::PathBuf,
+    project_root: Absolute<std::path::PathBuf>,
     // Project root - note that the workspace only accesses this directory
     // through the `Io` trait, and never directly.
-    output_directory: std::path::PathBuf,
+    output_directory: Absolute<std::path::PathBuf>,
     // Using IndexMap to ensure that the ordering of glob results is well-defined.
-    workspace_files: IndexMap<werk_fs::PathBuf, DirEntry, ahash::RandomState>,
+    workspace_files: IndexMap<Absolute<werk_fs::PathBuf>, DirEntry, ahash::RandomState>,
     /// The contents of `<out-dir>/.werk-cache.toml`.
     werk_cache: Mutex<WerkCache>,
     /// Caches of expensive runtime values (glob, which, env).
@@ -100,10 +99,10 @@ pub struct Workspace {
 
 #[derive(Default)]
 struct Caches {
-    glob_cache: HashMap<String, (Vec<werk_fs::PathBuf>, Hash128)>,
-    which_cache: HashMap<String, Result<(std::path::PathBuf, Hash128), which::Error>>,
+    glob_cache: HashMap<String, (Vec<Absolute<werk_fs::PathBuf>>, Hash128)>,
+    which_cache: HashMap<String, Result<(Absolute<std::path::PathBuf>, Hash128), which::Error>>,
     env_cache: HashMap<String, (String, Hash128)>,
-    build_recipe_hashes: HashMap<Box<[PatternFragment]>, Hash128>,
+    build_recipe_hashes: HashMap<String, Hash128>,
 }
 
 pub const WERK_CACHE_FILENAME: &str = ".werk-cache";
@@ -111,25 +110,34 @@ pub const WERK_CACHE_FILENAME: &str = ".werk-cache";
 impl Workspace {
     pub async fn new(
         io: &dyn Io,
-        project_root: std::path::PathBuf,
+        project_root: Absolute<std::path::PathBuf>,
         settings: &WorkspaceSettings,
     ) -> Result<Self, Error> {
-        let werk_cache = read_workspace_cache(io, &settings.output_directory).await;
+        let werk_cache = read_workspace_cache(io, settings.output_directory.as_deref()).await;
 
         let mut workspace_files =
             IndexMap::with_capacity_and_hasher(1024, ahash::RandomState::default());
 
-        for entry in io.glob_workspace(&project_root, &settings.glob).await? {
+        for entry in io
+            .glob_workspace(project_root.as_deref(), &settings.glob)
+            .await?
+        {
             if entry.path.file_name() == Some(WERK_CACHE_FILENAME.as_ref()) {
-                return Err(Error::ClobberedWorkspace(entry.path));
+                return Err(Error::ClobberedWorkspace(entry.path.into_inner()));
             }
 
-            let path_in_project = match werk_fs::Path::unresolve(&entry.path, &project_root) {
-                Ok(path_in_project) => path_in_project,
-                // This should not be possible.
-                Err(err @ PathError::UnresolveBeyondRoot) => return Err(err.into()),
-                Err(_) => continue,
-            };
+            let path_in_project =
+                match werk_fs::Path::unresolve(&entry.path, project_root.as_path()) {
+                    Ok(path_in_project) => path_in_project,
+                    // This should not be possible.
+                    Err(err @ PathError::UnresolveBeyondRoot) => {
+                        return Err(Error::InvalidTargetPath(
+                            entry.path.display().to_string(),
+                            err,
+                        ))
+                    }
+                    Err(_) => continue,
+                };
             tracing::trace!("Workspace file: {path_in_project}");
             workspace_files.insert(path_in_project, entry);
         }
@@ -157,12 +165,12 @@ impl Workspace {
     /// Write outdatedness cache (`which` and `glob`)  to "<out-dir>/.werk-cache".
     pub async fn finalize(&self, io: &dyn Io) -> std::io::Result<()> {
         let cache = self.werk_cache.lock();
-        write_workspace_cache(io, &self.output_directory, &*cache).await
+        write_workspace_cache(io, self.output_directory.as_deref(), &*cache).await
     }
 
     #[inline]
-    pub fn project_root(&self) -> &std::path::Path {
-        &self.project_root
+    pub fn project_root(&self) -> &Absolute<std::path::Path> {
+        self.project_root.as_deref()
     }
 
     #[inline]
@@ -170,14 +178,14 @@ impl Workspace {
         &self.output_directory
     }
 
-    pub fn get_project_file(&self, path: &werk_fs::Path) -> Option<&DirEntry> {
+    pub fn get_project_file(&self, path: &Absolute<werk_fs::Path>) -> Option<&DirEntry> {
         self.workspace_files.get(path)
     }
 
     pub fn get_existing_project_or_output_file(
         &self,
         io: &dyn Io,
-        path: &werk_fs::Path,
+        path: &Absolute<werk_fs::Path>,
     ) -> Result<Option<DirEntry>, Error> {
         if let Some(dir_entry) = self.get_project_file(path) {
             return Ok(Some(dir_entry.clone()));
@@ -189,10 +197,12 @@ impl Workspace {
     pub fn get_existing_output_file(
         &self,
         io: &dyn Io,
-        path: &werk_fs::Path,
+        path: &Absolute<werk_fs::Path>,
     ) -> Result<Option<DirEntry>, Error> {
-        let fs_path = path.resolve(werk_fs::Path::ROOT, &self.output_directory)?;
-        match io.metadata(&fs_path) {
+        let fs_path = path
+            .resolve(werk_fs::Path::ROOT, self.output_directory.as_deref())
+            .expect("out dir resolve error");
+        match io.metadata(fs_path.as_deref()) {
             Ok(metadata) => Ok(Some(DirEntry {
                 path: fs_path,
                 metadata,
@@ -208,49 +218,58 @@ impl Workspace {
         }
     }
 
+    pub fn get_output_file_path(
+        &self,
+        path: &werk_fs::Path,
+    ) -> Result<Absolute<std::path::PathBuf>, PathError> {
+        path.resolve(werk_fs::Path::ROOT, self.output_directory.as_deref())
+    }
+
     pub async fn create_output_parent_dirs(
         &self,
         io: &dyn Io,
         path: &werk_fs::Path,
     ) -> Result<(), Error> {
-        let fs_path = path.resolve(werk_fs::Path::ROOT, &self.output_directory)?;
-        io.create_parent_dirs(&fs_path).await.map_err(Into::into)
+        let fs_path = path
+            .resolve(werk_fs::Path::ROOT, self.output_directory.as_deref())
+            .expect("out dir resolve error");
+        io.create_parent_dirs(fs_path.as_deref())
+            .await
+            .map_err(Into::into)
     }
 
     /// Resolve abstract path. If the path exists in the workspace, return the
     /// input file path. Otherwise, return the file path in the output
     /// directory, regardless of whether it exists.
-    pub fn resolve_path(&self, path: &werk_fs::Path) -> Result<std::path::PathBuf, PathError> {
-        let abs_path;
-        let path = if !path.is_absolute() {
-            abs_path = path.absolutize(werk_fs::Path::ROOT)?;
-            &abs_path
-        } else {
-            path
-        };
-
+    pub fn resolve_path(
+        &self,
+        path: &Absolute<werk_fs::Path>,
+    ) -> Result<Absolute<std::path::PathBuf>, PathError> {
         if self.workspace_files.contains_key(path) {
-            path.resolve(werk_fs::Path::ROOT, &self.project_root)
+            path.resolve(werk_fs::Path::ROOT, self.project_root.as_deref())
         } else {
-            path.resolve(werk_fs::Path::ROOT, &self.output_directory)
+            path.resolve(werk_fs::Path::ROOT, self.output_directory.as_deref())
         }
     }
 
-    pub fn unresolve_path(&self, path: &std::path::Path) -> Result<werk_fs::PathBuf, PathError> {
-        match werk_fs::Path::unresolve(path, &self.output_directory) {
+    pub fn unresolve_path(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<Absolute<werk_fs::PathBuf>, PathError> {
+        match werk_fs::Path::unresolve(path, self.output_directory.as_deref()) {
             Ok(path) => return Ok(path),
             // The path is not in the output directory, try the project root.
             Err(werk_fs::PathError::UnresolveBeyondRoot) => {}
             Err(err) => return Err(err),
         }
 
-        werk_fs::Path::unresolve(path, &self.project_root)
+        werk_fs::Path::unresolve(path, self.project_root.as_deref())
     }
 
     pub fn glob_workspace_files(
         &self,
         pattern: &str,
-    ) -> Result<(Vec<werk_fs::PathBuf>, Hash128), globset::Error> {
+    ) -> Result<(Vec<Absolute<werk_fs::PathBuf>>, Hash128), globset::Error> {
         let mut state = self.runtime_caches.lock();
         let state = &mut *state;
         match state.glob_cache.entry(pattern.to_owned()) {
@@ -287,11 +306,18 @@ impl Workspace {
         &self,
         io: &dyn Io,
         command: &str,
-    ) -> Result<(std::path::PathBuf, Hash128), which::Error> {
+    ) -> Result<(Absolute<std::path::PathBuf>, Option<Hash128>), which::Error> {
+        let path = std::path::Path::new(command);
+        if path.is_absolute() {
+            return Ok((Absolute::new_unchecked(path.to_path_buf()), None));
+        }
+
         let mut state = self.runtime_caches.lock();
         let state = &mut *state;
         match state.which_cache.entry(command.to_owned()) {
-            hash_map::Entry::Occupied(entry) => entry.get().clone(),
+            hash_map::Entry::Occupied(entry) => {
+                entry.get().clone().map(|(path, hash)| (path, Some(hash)))
+            }
             hash_map::Entry::Vacant(entry) => {
                 let result = io.which(command).map(|path| {
                     let hash = compute_stable_hash(&path);
@@ -299,7 +325,7 @@ impl Workspace {
                 });
 
                 entry.insert(result.clone());
-                result
+                result.map(|(path, hash)| (path, Some(hash)))
             }
         }
     }
@@ -321,17 +347,16 @@ impl Workspace {
         }
     }
 
-    pub fn recipe_hash(
-        &self,
-        pattern: &[PatternFragment],
-        recipe: &werk_parser::ast::BuildRecipe,
-    ) -> Hash128 {
+    pub fn register_used_recipe_hash(&self, recipe: &ir::BuildRecipe) -> Hash128 {
         let mut state = self.runtime_caches.lock();
         let state = &mut *state;
-        match state.build_recipe_hashes.entry(pattern.into()) {
+        match state
+            .build_recipe_hashes
+            .entry(recipe.pattern.string.clone())
+        {
             hash_map::Entry::Occupied(entry) => *entry.get(),
             hash_map::Entry::Vacant(entry) => {
-                let hash = compute_stable_hash(recipe);
+                let hash = recipe.hash;
                 entry.insert(hash);
                 hash
             }
@@ -360,27 +385,42 @@ pub(crate) fn compute_stable_hash<T: std::hash::Hash + ?Sized>(value: &T) -> Has
     hasher.finish()
 }
 
-fn compute_glob_hash(files: &[werk_fs::PathBuf]) -> Hash128 {
+pub(crate) fn compute_stable_semantic_hash<T: werk_parser::SemanticHash + ?Sized>(
+    value: &T,
+) -> Hash128 {
+    let mut hasher = rustc_stable_hash::StableSipHasher128::new();
+    value.semantic_hash(&mut hasher);
+    hasher.finish()
+}
+
+fn compute_glob_hash(files: &[Absolute<werk_fs::PathBuf>]) -> Hash128 {
     compute_stable_hash(files)
 }
 
-async fn read_workspace_cache(io: &dyn Io, output_dir: &std::path::Path) -> WerkCache {
-    let data = match io.read_file(&output_dir.join(WERK_CACHE_FILENAME)).await {
+async fn read_workspace_cache(io: &dyn Io, output_dir: &Absolute<std::path::Path>) -> WerkCache {
+    let werk_cache_path = Absolute::new_unchecked(output_dir.join(WERK_CACHE_FILENAME));
+    tracing::debug!("trying to read .werk-cache: {}", werk_cache_path.display());
+    let data = match io.read_file(werk_cache_path.as_deref()).await {
         Ok(data) => data,
         Err(err) => {
             if err.kind() != std::io::ErrorKind::NotFound {
                 tracing::error!("Failed to read workspace cache, even though it exists: {err}");
             }
+            tracing::debug!(".werk-cache does not exist");
             return WerkCache::default();
         }
     };
 
     if data.is_empty() {
+        tracing::debug!(".werk-cache is empty");
         return WerkCache::default();
     }
 
     match toml_edit::de::from_slice(&data) {
-        Ok(cache) => cache,
+        Ok(cache) => {
+            tracing::trace!(".werk-cache contents: {cache:#?}");
+            cache
+        }
         Err(err) => {
             tracing::error!("Failed to parse workspace cache: {err}");
             WerkCache::default()
@@ -390,7 +430,7 @@ async fn read_workspace_cache(io: &dyn Io, output_dir: &std::path::Path) -> Werk
 
 async fn write_workspace_cache(
     io: &dyn Io,
-    output_dir: &std::path::Path,
+    output_dir: &Absolute<std::path::Path>,
     cache: &WerkCache,
 ) -> std::io::Result<()> {
     let mut doc = match toml_edit::ser::to_document(cache) {
@@ -428,9 +468,10 @@ async fn write_workspace_cache(
 
     let toml = format!("# Generated by werk. It can be safely deleted.\n\n{}", doc);
 
-    let path = output_dir.join(WERK_CACHE_FILENAME);
+    let path = Absolute::new_unchecked(output_dir.join(WERK_CACHE_FILENAME));
+    tracing::debug!("writing .werk-cache to {}", path.display());
 
-    if let Err(err) = io.create_parent_dirs(&path).await {
+    if let Err(err) = io.create_parent_dirs(path.as_deref()).await {
         tracing::error!(
             "Error creating parent directory for .werk-cache '{}': {err}",
             output_dir.display()
@@ -438,7 +479,7 @@ async fn write_workspace_cache(
         return Err(err);
     }
 
-    match io.write_file(&path, toml.as_bytes()).await {
+    match io.write_file(path.as_deref(), toml.as_bytes()).await {
         Ok(()) => Ok(()),
         Err(err) => {
             tracing::error!("Error writing .werk-cache: {err}");

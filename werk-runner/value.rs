@@ -1,6 +1,6 @@
 use std::future::Future;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     List(Vec<Value>),
     String(String),
@@ -134,33 +134,30 @@ impl Value {
     }
 
     pub async fn try_recursive_map_strings_async<'a, F, E, Fut>(
-        &mut self,
+        &'a self,
         mut f: F,
-    ) -> Result<(), E>
+    ) -> Result<Value, E>
     where
-        F: FnMut(String) -> Fut + 'a,
+        F: FnMut(&'a str) -> Fut + 'a,
         Fut: Future<Output = Result<Value, E>> + 'a,
     {
-        async fn try_recursive_map<'a, F, E, Fut>(this: &mut Value, f: &mut F) -> Result<(), E>
+        async fn try_recursive_map<'a, F, E, Fut>(this: &'a Value, f: &mut F) -> Result<Value, E>
         where
-            F: FnMut(String) -> Fut + 'a,
+            F: FnMut(&'a str) -> Fut + 'a,
             Fut: Future<Output = Result<Value, E>>,
         {
             match this {
                 Value::List(v) => {
                     Box::pin(async move {
+                        let mut list = Vec::with_capacity(v.len());
                         for item in v {
-                            try_recursive_map(item, f).await?;
+                            list.push(try_recursive_map(item, f).await?);
                         }
-                        Ok(())
+                        Ok(Value::List(list))
                     })
                     .await
                 }
-                Value::String(s) => {
-                    let value = std::mem::replace(s, String::new());
-                    *this = f(value).await?;
-                    Ok(())
-                }
+                Value::String(s) => f(s).await,
             }
         }
 

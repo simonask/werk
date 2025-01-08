@@ -3,14 +3,17 @@ use std::{
     ffi::{OsStr, OsString},
 };
 
-use crate::{EvalError, Value};
+use werk_fs::Absolute;
+use werk_parser::parser::Span;
+
+use crate::{Eval, EvalError, Io, Used, UsedVariable, Value, Workspace};
 
 #[derive(Clone, PartialEq)]
 pub struct ShellCommandLine {
     /// The name of the program to run. Should be an absolute path, either from
     /// a `which` expression or an `<var>` interpolation when running an
     /// executable produced by another recipe.
-    pub program: std::path::PathBuf,
+    pub program: Absolute<std::path::PathBuf>,
     pub arguments: Vec<String>,
     pub env: BTreeMap<OsString, OsString>,
     /// Environment variables *not* to inherit from the parent process.
@@ -81,6 +84,12 @@ impl ShellCommandLine {
         self.env_remove.remove(OsStr::new("NO_COLOR"));
 
         self.env("NO_COLOR", "1");
+        self
+    }
+}
+
+impl ShellCommandLine {
+    pub fn display(&self) -> impl std::fmt::Display + '_ {
         self
     }
 }
@@ -213,27 +222,41 @@ impl ShellCommandLineBuilder {
     /// Append values recursively. If currently inside of quotes, the values are
     /// passed as a single argument. Otherwise, each value is passed as a
     /// separate argument.
-    pub fn push_all(&mut self, value: Value) -> &mut Self {
+    pub fn push_all(&mut self, value: &Value) -> &mut Self {
         value.for_each_string_recursive(|s| {
             self.push_arg(s);
         });
         self
     }
 
-    pub fn build(&mut self) -> Result<ShellCommandLine, EvalError> {
+    pub fn build(
+        &mut self,
+        span: Span,
+        workspace: &Workspace,
+        io: &dyn Io,
+    ) -> Result<(ShellCommandLine, Option<UsedVariable>), EvalError> {
         if self.in_quotes {
-            Err(EvalError::UnterminatedQuote.into())
+            Err(EvalError::UnterminatedQuote(span).into())
         } else {
             let mut parts = self.parts.drain(..);
             let Some(program) = parts.next() else {
-                return Err(EvalError::EmptyCommand.into());
+                return Err(EvalError::EmptyCommand(span).into());
             };
-            Ok(ShellCommandLine {
-                program: program.into(),
-                arguments: parts.collect(),
-                env: std::mem::take(&mut self.env),
-                env_remove: std::mem::take(&mut self.env_remove),
-            })
+
+            let (program_path, hash) = workspace
+                .which(io, &program)
+                .map_err(|err| EvalError::CommandNotFound(span, program.clone(), err))?;
+            let used = hash.map(|hash| UsedVariable::Which(program, hash));
+
+            Ok((
+                ShellCommandLine {
+                    program: program_path,
+                    arguments: parts.collect(),
+                    env: std::mem::take(&mut self.env),
+                    env_remove: std::mem::take(&mut self.env_remove),
+                },
+                used,
+            ))
         }
     }
 }

@@ -1,133 +1,206 @@
-use indexmap::IndexMap;
+use crate::{
+    ast::{self, kw_ignore, ws_ignore},
+    parse_string,
+    parser::{span, Offset, Span, Spanned as _, SpannedValue},
+    Error, LocatedError,
+};
 
-use crate::{ast, parse_string, Error};
-
-pub fn parse_toml(input: &str) -> Result<ast::Root, Error> {
-    let toml: toml_edit::DocumentMut = input.parse()?;
-    parse_toml_document(&toml)
+pub fn parse_toml<'a>(
+    file_name: &'a std::path::Path,
+    source: &'a str,
+    document: &'a toml_edit::ImDocument<&'a str>,
+) -> Result<crate::Document<'a>, LocatedError<'a, Error>> {
+    parse_toml_document(document).map_err(|error| error.with_location(file_name, source))
 }
 
-pub fn parse_toml_document(toml: &toml_edit::DocumentMut) -> Result<ast::Root, Error> {
+#[derive(Default)]
+struct SmuggledWhitespace(String);
+impl SmuggledWhitespace {
+    fn smuggle_decor(&mut self, decor: &str) -> ast::Whitespace {
+        if !decor.is_empty() {
+            let start = self.0.len();
+            let end = start + decor.len();
+            self.0.push_str(decor);
+            ast::Whitespace(span(start..end))
+        } else {
+            ws_ignore()
+        }
+    }
+}
+
+pub fn parse_toml_document<'a>(
+    toml: &'a toml_edit::ImDocument<&'a str>,
+) -> Result<crate::Document<'a>, Error> {
+    let mut smuggled_whitespace = SmuggledWhitespace::default();
+
     let root = toml.as_table();
 
-    let mut config = ast::Config::default();
-    let mut global = IndexMap::new();
-    let mut command_rules = IndexMap::new();
-    let mut out_rules = IndexMap::new();
+    let mut statements = Vec::new();
 
     for (key, value) in root {
-        let path = TomlPath {
-            here: TomlPathComponent::Ident(key),
-            parent: None,
-        };
+        let span = value.span().unwrap_or_default().into();
 
         match key {
             "config" => {
-                let config_table = value
-                    .as_table()
-                    .ok_or_else(|| Error::ExpectedTable("config".to_owned()))?;
-                parse_config_table(&path, config_table, &mut config)?;
+                let config_table = value.as_table().ok_or_else(|| Error::ExpectedTable(span))?;
+                parse_config_table(config_table, &mut statements, &mut smuggled_whitespace)?;
             }
             "global" => {
-                let global_table = value
-                    .as_table()
-                    .ok_or_else(|| Error::ExpectedTable("global".to_owned()))?;
+                let global_table = value.as_table().ok_or_else(|| Error::ExpectedTable(span))?;
                 for (key, value) in global_table {
-                    let path = path.ident(key);
-                    global.insert(
-                        parse_ident(&path, key)?,
-                        parse_commented_item_expr(&path, value)?,
-                    );
+                    let key_span = global_table
+                        .key(key)
+                        .and_then(|key| key.span())
+                        .unwrap_or_default()
+                        .into();
+                    let ident = parse_ident(key_span, key)?;
+                    let (decor, item) = parse_commented_item_expr(value)?;
+                    statements.push(ast::BodyStmt {
+                        ws_pre: smuggled_whitespace.smuggle_decor(decor),
+                        statement: ast::RootStmt::Let(ast::LetStmt {
+                            span,
+                            token_let: Default::default(),
+                            ws_1: ws_ignore(),
+                            ident,
+                            ws_2: ws_ignore(),
+                            token_eq: Default::default(),
+                            ws_3: ws_ignore(),
+                            value: item,
+                        }),
+                        ws_trailing: None,
+                    });
                 }
             }
             "command" => {
-                let command = value
-                    .as_table()
-                    .ok_or_else(|| Error::ExpectedTable("command".to_owned()))?;
+                let command = value.as_table().ok_or_else(|| Error::ExpectedTable(span))?;
                 for (key, value) in command {
-                    let path = path.ident(key);
-                    command_rules.insert(
-                        parse_ident(&path, key)?,
-                        parse_command_recipe(&path, value)?,
-                    );
+                    let key_span = command
+                        .key(key)
+                        .and_then(|key| key.span())
+                        .unwrap_or_default()
+                        .into();
+                    let name = parse_ident(key_span, key)?;
+                    let (decor, recipe) = parse_command_recipe(name, value)?;
+                    statements.push(ast::BodyStmt {
+                        ws_pre: smuggled_whitespace.smuggle_decor(decor),
+                        statement: ast::RootStmt::Task(recipe),
+                        ws_trailing: None,
+                    });
                 }
             }
             "build" => {
-                let out = value
-                    .as_table()
-                    .ok_or_else(|| Error::ExpectedTable("out".to_owned()))?;
+                let out = value.as_table().ok_or_else(|| Error::ExpectedTable(span))?;
                 for (key, value) in out {
-                    let path = path.ident(key);
-                    out_rules.insert(
-                        parse_pattern_expr(&path, key)?,
-                        parse_build_recipe(&path, value)?,
-                    );
+                    let key_span = out
+                        .key(key)
+                        .and_then(|key| key.span())
+                        .unwrap_or_default()
+                        .into();
+                    let pattern = parse_pattern_expr(key_span, key)?;
+                    let (decor, recipe) = parse_build_recipe(pattern, value)?;
+                    statements.push(ast::BodyStmt {
+                        ws_pre: smuggled_whitespace.smuggle_decor(decor),
+                        statement: ast::RootStmt::Build(recipe),
+                        ws_trailing: None,
+                    });
                 }
             }
-            _ => return Err(Error::InvalidKey(path.to_string())),
+            _ => {
+                let span = root.key(key).and_then(|key| key.span()).unwrap_or_default();
+                return Err(Error::InvalidKey(span.into()));
+            }
         }
     }
 
-    Ok(ast::Root {
-        config,
-        global,
-        commands: command_rules,
-        recipes: out_rules,
-    })
+    Ok(crate::Document::new(
+        ast::Root {
+            statements,
+            ws_trailing: Default::default(),
+        },
+        toml.raw(),
+        Some(smuggled_whitespace.0),
+    ))
 }
 
-fn parse_config_table(
-    path: &TomlPath,
-    table: &toml_edit::Table,
-    config: &mut ast::Config,
+fn parse_config_table<'a>(
+    table: &'a toml_edit::Table,
+    config: &mut Vec<ast::BodyStmt<ast::RootStmt<'a>>>,
+    smuggled_whitespace: &mut SmuggledWhitespace,
 ) -> Result<(), Error> {
-    for (key, value) in table.iter() {
-        match key {
+    for (key, item) in table.iter() {
+        let span = item.span().unwrap_or_default().into();
+        let value = match key {
             "out-dir" => {
-                let Some(value) = value.as_str() else {
-                    return Err(Error::ExpectedString(path.ident("out-dir").to_string()));
+                let Some(value) = item.as_str() else {
+                    return Err(Error::ExpectedString(span));
                 };
-                config.output_directory = Some(value.to_owned());
+                ast::ConfigValue::String(value)
             }
             "edition" => {
-                let Some(value) = value.as_str() else {
-                    return Err(Error::ExpectedString(path.ident("edition").to_string()));
+                let Some(value) = item.as_str() else {
+                    return Err(Error::ExpectedString(span));
                 };
-                config.edition = Some(value.to_owned());
+                ast::ConfigValue::String(value)
             }
             "print-commands" => {
-                let Some(value) = value.as_bool() else {
-                    return Err(Error::ExpectedString(
-                        path.ident("print-commands").to_string(),
-                    ));
+                let Some(value) = item.as_bool() else {
+                    return Err(Error::ExpectedString(span));
                 };
-                config.print_commands = Some(value);
+                ast::ConfigValue::Bool(value)
             }
             "default" => {
-                let Some(value) = value.as_str() else {
-                    return Err(Error::ExpectedString(path.ident("default").to_string()));
+                let Some(value) = item.as_str() else {
+                    return Err(Error::ExpectedString(span));
                 };
-                config.default = Some(value.to_owned());
+                ast::ConfigValue::String(value)
             }
             _ => {
-                return Err(Error::UnknownConfigKey(key.to_owned()));
+                let span = table
+                    .key(key)
+                    .and_then(|key| key.span())
+                    .map(Into::into)
+                    .unwrap_or(span);
+                return Err(Error::UnknownConfigKey(span));
             }
-        }
+        };
+
+        config.push(ast::BodyStmt {
+            ws_pre: smuggled_whitespace.smuggle_decor(get_item_decor(item)),
+            statement: ast::RootStmt::Config(ast::ConfigStmt {
+                span,
+                token_config: Default::default(),
+                ws_1: ws_ignore(),
+                ident: ast::Ident::new(span, key),
+                ws_2: ws_ignore(),
+                token_eq: Default::default(),
+                ws_3: ws_ignore(),
+                value,
+            }),
+            ws_trailing: None,
+        });
     }
 
     Ok(())
 }
 
-fn parse_ident(path: &TomlPath, s: &str) -> Result<String, Error> {
-    parse_string::parse_ident(s).map_err(|e| Error::InvalidIdent(path.to_string(), e))
+fn parse_ident(span: Span, s: &str) -> Result<ast::Ident, Error> {
+    parse_string::parse_ident(s)
+        .map(|ident| ast::Ident { span, ident })
+        .map_err(|e| Error::InvalidIdent(span, e))
 }
 
-fn parse_string_expr(path: &TomlPath, s: &str) -> Result<ast::StringExpr, Error> {
-    parse_string::parse_string_expr(s).map_err(|e| Error::InvalidStringExpr(path.to_string(), e))
+fn parse_string_expr(span: Span, s: &str) -> Result<ast::StringExpr, Error> {
+    let mut expr =
+        parse_string::parse_string_expr(s).map_err(|e| Error::InvalidStringExpr(span, e))?;
+    expr.span = span;
+    Ok(expr)
 }
 
-fn parse_pattern_expr(path: &TomlPath, s: &str) -> Result<ast::PatternExpr, Error> {
-    parse_string::parse_pattern_expr(s).map_err(|e| Error::InvalidPatternExpr(path.to_string(), e))
+fn parse_pattern_expr(span: Span, s: &str) -> Result<ast::PatternExpr, Error> {
+    let mut expr =
+        parse_string::parse_pattern_expr(s).map_err(|e| Error::InvalidPatternExpr(span, e))?;
+    expr.span = span;
+    Ok(expr)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -209,52 +282,62 @@ impl std::fmt::Display for RunExprType {
     }
 }
 
-fn find_main_expr_type<'a, I>(keys: I) -> Result<(ExprType, &'a toml_edit::Item), Error>
-where
-    I: IntoIterator<Item = (&'a str, &'a toml_edit::Item)>,
-{
+fn find_main_expr_type<'a, T: toml_edit::TableLike + ?Sized>(
+    span: Span,
+    table: &'a T,
+) -> Result<(SpannedValue<ExprType>, &'a toml_edit::Item), Error> {
     let mut found = None;
-    let mut iter = keys.into_iter();
+    let mut iter = table.iter();
     while let Some((key, item)) = iter.next() {
         if let Some(ty) = ExprType::from_str(key) {
-            found = Some((ty, item));
+            let key_span = table.key(key).and_then(|key| key.span());
+            found = Some((SpannedValue::new(key_span, ty), item));
             break;
         }
     }
 
     let Some(found) = found else {
-        return Err(Error::ExpectedMainExpression);
+        return Err(Error::ExpectedMainExpression(span));
     };
 
     while let Some((tail, _)) = iter.next() {
         if let Some(duplicate) = ExprType::from_str(&tail) {
-            return Err(Error::AmbiguousMainExpression(found.0, duplicate));
+            let key_span = table.key(tail).and_then(|key| key.span());
+            return Err(Error::AmbiguousMainExpression(
+                found.0,
+                SpannedValue::new(key_span, duplicate),
+            ));
         }
     }
 
     Ok(found)
 }
 
-fn find_main_run_expr_type<'a, I>(keys: I) -> Result<(RunExprType, &'a toml_edit::Item), Error>
-where
-    I: IntoIterator<Item = (&'a str, &'a toml_edit::Item)>,
-{
+fn find_main_run_expr_type<'a, T: toml_edit::TableLike + ?Sized>(
+    span: Span,
+    table: &'a T,
+) -> Result<(SpannedValue<RunExprType>, &'a toml_edit::Item), Error> {
     let mut found = None;
-    let mut iter = keys.into_iter();
+    let mut iter = table.iter();
     while let Some((key, item)) = iter.next() {
         if let Some(ty) = RunExprType::from_str(key) {
-            found = Some((ty, item));
+            let key_span = table.key(key).and_then(|key| key.span());
+            found = Some((SpannedValue::new(key_span, ty), item));
             break;
         }
     }
 
     let Some(found) = found else {
-        return Err(Error::ExpectedMainExpression);
+        return Err(Error::ExpectedMainExpression(span));
     };
 
     while let Some((tail, _)) = iter.next() {
         if let Some(duplicate) = RunExprType::from_str(&tail) {
-            return Err(Error::AmbiguousRunExpression(found.0, duplicate));
+            let key_span = table.key(tail).and_then(|key| key.span());
+            return Err(Error::AmbiguousRunExpression(
+                found.0,
+                SpannedValue::new(key_span, duplicate),
+            ));
         }
     }
 
@@ -262,32 +345,60 @@ where
 }
 
 fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
-    path: &TomlPath,
+    span: Span,
     table: &T,
 ) -> Result<ast::Expr, Error> {
-    let expr_ty = find_main_expr_type(table.iter())?;
-    let mut expr = match expr_ty {
-        (ExprType::String, item) => {
-            parse_item_string_expr(&path.ident("string"), item).map(ast::Expr::StringExpr)?
+    let (expr_ty, item) = find_main_expr_type(span, table)?;
+    let mut expr = match expr_ty.value {
+        ExprType::String => parse_item_string_expr(item).map(ast::Expr::StringExpr)?,
+        ExprType::From => {
+            if let toml_edit::Item::Value(value @ toml_edit::Value::String(s)) = item {
+                let ident = parse_ident(value.span().unwrap_or_default().into(), s.value())?;
+                ast::Expr::Ident(ident)
+            } else {
+                parse_item_expr(item)?
+            }
         }
-        (ExprType::From, toml_edit::Item::Value(toml_edit::Value::String(s))) => {
-            let ident = parse_ident(&path.ident("from"), s.value())?;
-            ast::Expr::Ident(ident)
-        }
-        (ExprType::From, item) => parse_item_expr(&path.ident("from"), item)?,
-        (ExprType::Env, item) => {
-            parse_item_string_expr(&path.ident("env"), item).map(ast::Expr::Env)?
-        }
-        (ExprType::Shell, item) => {
-            parse_item_string_expr(&path.ident("shell"), item).map(ast::Expr::Shell)?
-        }
-        (ExprType::Which, item) => {
-            parse_item_string_expr(&path.ident("which"), item).map(ast::Expr::Which)?
-        }
-        (ExprType::Glob, item) => {
-            parse_item_string_expr(&path.ident("glob"), item).map(ast::Expr::Glob)?
-        }
-        (ExprType::Error, item) => parse_item_string_expr(&path, item).map(ast::Expr::Error)?,
+        ExprType::Env => parse_item_string_expr(item).map(|value| {
+            ast::Expr::Env(ast::EnvExpr {
+                span,
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: value,
+            })
+        })?,
+        ExprType::Shell => parse_item_string_expr(item).map(|value| {
+            ast::Expr::Shell(ast::ShellExpr {
+                span,
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: value,
+            })
+        })?,
+        ExprType::Which => parse_item_string_expr(item).map(|value| {
+            ast::Expr::Which(ast::WhichExpr {
+                span,
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: value,
+            })
+        })?,
+        ExprType::Glob => parse_item_string_expr(item).map(|value| {
+            ast::Expr::Glob(ast::GlobExpr {
+                span,
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: value,
+            })
+        })?,
+        ExprType::Error => parse_item_string_expr(item).map(|value| {
+            ast::Expr::Error(ast::ErrorExpr {
+                span,
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: value,
+            })
+        })?,
     };
 
     // Chaining expressions
@@ -298,177 +409,247 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
             continue;
         }
 
-        let path = path.ident(key);
-        match key {
-            "then" => {
-                let then = parse_item_string_expr(&path, item)?;
-                expr = ast::Expr::Then(Box::new(expr), Box::new(then));
-            }
+        let span = item.span().unwrap_or_default().into();
+
+        let then = match key {
+            "then" => ast::Expr::StringExpr(parse_item_string_expr(item)?),
             "match" => {
                 let Some(table) = item.as_table_like() else {
-                    return Err(Error::ExpectedTable(path.to_string()));
+                    return Err(Error::ExpectedTable(span));
                 };
 
-                let mut patterns = IndexMap::new();
+                let mut arms = Vec::with_capacity(table.len());
                 for (pattern, value) in table.iter() {
-                    let path = path.ident(pattern);
-                    let pattern = parse_pattern_expr(&path, pattern)?;
-                    let value = parse_item_expr(&path, value)?;
-                    if patterns.insert(pattern, value).is_some() {
-                        return Err(Error::DuplicatePatternExpr(path.to_string()));
-                    }
+                    let value_span = value.span().unwrap_or_default().into();
+                    let pattern = parse_pattern_expr(value_span, pattern)?;
+                    let value = parse_item_expr(value)?;
+                    arms.push(ast::BodyStmt {
+                        ws_pre: ws_ignore(),
+                        statement: ast::MatchArm {
+                            span,
+                            pattern,
+                            ws_1: ws_ignore(),
+                            token_fat_arrow: Default::default(),
+                            ws_2: ws_ignore(),
+                            expr: value,
+                        },
+                        ws_trailing: None,
+                    });
                 }
 
-                expr = ast::Expr::Match(Box::new(ast::MatchExpr {
-                    input: expr,
-                    patterns,
-                }));
+                ast::Expr::Match(ast::MatchExpr {
+                    span,
+                    token_match: Default::default(),
+                    ws_1: ws_ignore(),
+                    body: ast::Body {
+                        token_open: ast::token::Token(span.start),
+                        statements: arms,
+                        ws_trailing: Default::default(),
+                        token_close: ast::token::Token(span.end),
+                    },
+                })
             }
             "join" => {
-                let sep = parse_item_string_expr(&path, item)?;
-                expr = ast::Expr::Join(Box::new(expr), Box::new(sep));
+                let separator = parse_item_string_expr(item)?;
+                ast::Expr::Join(ast::JoinExpr {
+                    span,
+                    token: Default::default(),
+                    ws_1: ws_ignore(),
+                    param: separator,
+                })
             }
             "warn" => {
-                let message = parse_item_string_expr(&path, item)?;
-                expr = ast::Expr::Message(Box::new(ast::MessageExpr {
-                    inner: expr,
-                    message,
-                    message_type: ast::MessageType::Warning,
-                }));
+                let message = parse_item_string_expr(item)?;
+                ast::Expr::Warn(ast::WarnExpr {
+                    span,
+                    token: Default::default(),
+                    ws_1: ws_ignore(),
+                    param: message,
+                })
             }
             "info" => {
-                let message = parse_item_string_expr(&path, item)?;
-                expr = ast::Expr::Message(Box::new(ast::MessageExpr {
-                    inner: expr,
-                    message,
-                    message_type: ast::MessageType::Info,
-                }));
+                let message = parse_item_string_expr(item)?;
+                ast::Expr::Info(ast::InfoExpr {
+                    span,
+                    token: Default::default(),
+                    ws_1: ws_ignore(),
+                    param: message,
+                })
             }
             "patsubst" => {
                 let Some(table) = item.as_table_like() else {
-                    return Err(Error::ExpectedTable(path.to_string()));
+                    return Err(Error::ExpectedTable(span));
                 };
 
                 let mut pattern = None;
                 let mut replacement = None;
 
                 for (key, item) in table.iter() {
-                    let path = path.ident(key);
                     match key {
-                        "pattern" => pattern = Some(parse_item_pattern_expr(&path, item)?),
-                        "replacement" => replacement = Some(parse_item_string_expr(&path, item)?),
-                        _ => return Err(Error::InvalidKey(path.to_string())),
+                        "pattern" => pattern = Some(parse_item_pattern_expr(item)?),
+                        "replacement" => replacement = Some(parse_item_string_expr(item)?),
+                        _ => {
+                            return Err(Error::InvalidKey(
+                                table.key(key).and_then(|key| key.span()).into(),
+                            ))
+                        }
                     }
                 }
 
                 let Some(pattern) = pattern else {
-                    return Err(Error::ExpectedKey(path.to_string(), "pattern".to_owned()));
+                    return Err(Error::ExpectedKey(span, &"pattern"));
                 };
                 let Some(replacement) = replacement else {
-                    return Err(Error::ExpectedKey(
-                        path.to_string(),
-                        "replacement".to_owned(),
-                    ));
+                    return Err(Error::ExpectedKey(span, &"replacement"));
                 };
 
-                expr = ast::Expr::Patsubst(Box::new(ast::PatsubstExpr {
-                    input: expr,
-                    pattern,
-                    replacement,
-                }))
+                ast::Expr::Match(ast::MatchExpr {
+                    span,
+                    token_match: Default::default(),
+                    ws_1: ws_ignore(),
+                    body: ast::Body {
+                        token_open: ast::token::Token(span.start),
+                        statements: vec![ast::BodyStmt {
+                            ws_pre: ws_ignore(),
+                            statement: ast::MatchArm {
+                                span,
+                                pattern,
+                                ws_1: ws_ignore(),
+                                token_fat_arrow: kw_ignore(),
+                                ws_2: ws_ignore(),
+                                expr: ast::Expr::StringExpr(replacement),
+                            },
+                            ws_trailing: None,
+                        }],
+                        ws_trailing: ws_ignore(),
+                        token_close: ast::token::Token(span.end),
+                    },
+                })
             }
-            _ => return Err(Error::UnknownExpressionChain(path.to_string())),
-        }
+            _ => {
+                return Err(Error::UnknownExpressionChain(
+                    table.key(key).and_then(|key| key.span()).into(),
+                ))
+            }
+        };
+
+        expr = ast::Expr::Then(Box::new(ast::ThenExpr {
+            span,
+            expr,
+            ws_1: ws_ignore(),
+            token_fat_arrow: kw_ignore(),
+            then,
+            ws_2: ws_ignore(),
+        }));
     }
 
     Ok(expr)
 }
 
-fn parse_value_expr(path: &TomlPath, toml: &toml_edit::Value) -> Result<ast::Expr, Error> {
+fn parse_value_expr(toml: &toml_edit::Value) -> Result<ast::Expr, Error> {
+    let span = toml.span().unwrap_or_default().into();
     match toml {
         toml_edit::Value::String(formatted) => {
-            parse_string_expr(path, formatted.value()).map(ast::Expr::StringExpr)
+            parse_string_expr(span, formatted.value()).map(ast::Expr::StringExpr)
         }
         toml_edit::Value::Integer(_)
         | toml_edit::Value::Float(_)
         | toml_edit::Value::Boolean(_)
-        | toml_edit::Value::Datetime(_) => Err(Error::ExpectedStringOrTable(path.to_string())),
+        | toml_edit::Value::Datetime(_) => Err(Error::ExpectedStringOrTable(span)),
         toml_edit::Value::Array(array) => {
-            let mut exprs = Vec::with_capacity(array.len());
-            for (i, value) in array.iter().enumerate() {
-                let path = path.index(i);
-                exprs.push(parse_value_expr(&path, value)?);
+            let mut items = Vec::with_capacity(array.len());
+            for value in array.iter() {
+                let item = parse_value_expr(value)?;
+                items.push(ast::ListItem {
+                    ws_pre: ws_ignore(),
+                    item,
+                    ws_trailing: None,
+                })
             }
-            Ok(ast::Expr::List(exprs))
+            Ok(ast::Expr::List(ast::ListExpr {
+                span,
+                token_open: Default::default(),
+                items,
+                token_close: Default::default(),
+                ws_trailing: ws_ignore(),
+            }))
         }
-        toml_edit::Value::InlineTable(inline_table) => parse_table_expr(path, inline_table),
+        toml_edit::Value::InlineTable(inline_table) => parse_table_expr(span, inline_table),
     }
 }
 
-fn parse_item_expr(path: &TomlPath, toml: &toml_edit::Item) -> Result<ast::Expr, Error> {
+fn parse_item_expr(toml: &toml_edit::Item) -> Result<ast::Expr, Error> {
     match toml {
-        toml_edit::Item::None => Err(Error::ExpectedString(path.to_string())),
-        toml_edit::Item::Value(value) => parse_value_expr(path, value),
-        toml_edit::Item::Table(table) => parse_table_expr(path, table),
+        toml_edit::Item::None => Err(Error::ExpectedString(toml.span().into())),
+        toml_edit::Item::Value(value) => parse_value_expr(value),
+        toml_edit::Item::Table(table) => {
+            parse_table_expr(table.span().unwrap_or_default().into(), table)
+        }
         toml_edit::Item::ArrayOfTables(array_of_tables) => {
-            let mut exprs = Vec::with_capacity(array_of_tables.len());
-            for (i, table) in array_of_tables.iter().enumerate() {
-                let path = path.index(i);
-                exprs.push(parse_table_expr(&path, table)?);
+            let mut items = Vec::with_capacity(array_of_tables.len());
+            for table in array_of_tables.iter() {
+                let item = parse_table_expr(table.span().unwrap_or_default().into(), table)?;
+                items.push(ast::ListItem {
+                    ws_pre: Default::default(),
+                    item,
+                    ws_trailing: None,
+                })
             }
-            Ok(ast::Expr::List(exprs))
+            Ok(ast::Expr::List(ast::ListExpr {
+                span: toml.span().into(),
+                token_open: ast::token::Token::ignore(),
+                items,
+                token_close: ast::token::Token::ignore(),
+                ws_trailing: ws_ignore(),
+            }))
         }
     }
 }
 
-fn get_item_doc(toml: &toml_edit::Item) -> &str {
-    let raw_str = match toml {
-        toml_edit::Item::None | toml_edit::Item::ArrayOfTables(_) => return "",
+fn get_item_decor<'a>(toml: &'a toml_edit::Item) -> &'a str {
+    let prefix = match toml {
+        toml_edit::Item::None | toml_edit::Item::ArrayOfTables(_) => {
+            return "";
+        }
         toml_edit::Item::Value(value) => value.decor().prefix(),
         toml_edit::Item::Table(table) => table.decor().prefix(),
     };
-    raw_str
-        .and_then(|raw| raw.as_str())
-        .map(|s| s.trim())
-        .unwrap_or("")
+
+    prefix.and_then(|decor| decor.as_str()).unwrap_or_default()
 }
 
-fn parse_commented_item_expr(
-    path: &TomlPath,
-    toml: &toml_edit::Item,
-) -> Result<ast::Commented<ast::Expr>, Error> {
-    let doc_string = get_item_doc(toml);
-    parse_item_expr(path, toml).map(|expr| ast::Commented {
-        comment: doc_string.to_owned(),
-        item: expr,
-    })
+fn parse_commented_item_expr<'a>(
+    toml: &'a toml_edit::Item,
+) -> Result<(&'a str, ast::Expr<'a>), Error> {
+    let pre = get_item_decor(toml);
+    let expr = parse_item_expr(toml)?;
+    Ok((pre, expr))
 }
 
-fn parse_item_run_expr(
-    path: &TomlPath,
-    toml: &toml_edit::Item,
-) -> Result<Vec<ast::RunExpr>, Error> {
+fn parse_item_run_expr<'a>(toml: &'a toml_edit::Item) -> Result<Vec<ast::RunExpr<'a>>, Error> {
     let mut vec = Vec::new();
-    parse_item_run_exprs_into(path, toml, &mut vec)?;
+    parse_item_run_exprs_into(toml, &mut vec)?;
     Ok(vec)
 }
 
-fn parse_item_run_exprs_into(
-    path: &TomlPath,
-    toml: &toml_edit::Item,
-    exprs: &mut Vec<ast::RunExpr>,
+fn parse_item_run_exprs_into<'a>(
+    toml: &'a toml_edit::Item,
+    exprs: &mut Vec<ast::RunExpr<'a>>,
 ) -> Result<(), Error> {
     match toml {
         toml_edit::Item::None => return Ok(()),
-        toml_edit::Item::Value(value) => parse_value_run_exprs_into(path, value, exprs),
+        toml_edit::Item::Value(value) => parse_value_run_exprs_into(value, exprs),
         toml_edit::Item::Table(table) => {
-            exprs.push(parse_table_run_expr(path, table)?);
+            exprs.push(parse_table_run_expr(
+                table.span().unwrap_or_default().into(),
+                table,
+            )?);
             Ok(())
         }
         toml_edit::Item::ArrayOfTables(array_of_tables) => {
-            for (index, table) in array_of_tables.iter().enumerate() {
-                let path = path.index(index);
-                let run_expr = parse_table_run_expr(&path, table)?;
+            for table in array_of_tables.iter() {
+                let run_expr =
+                    parse_table_run_expr(table.span().unwrap_or_default().into(), table)?;
                 exprs.push(run_expr);
             }
             Ok(())
@@ -476,105 +657,132 @@ fn parse_item_run_exprs_into(
     }
 }
 
-fn parse_value_run_exprs_into(
-    path: &TomlPath,
-    value: &toml_edit::Value,
-    exprs: &mut Vec<ast::RunExpr>,
+fn parse_value_run_exprs_into<'a>(
+    value: &'a toml_edit::Value,
+    exprs: &mut Vec<ast::RunExpr<'a>>,
 ) -> Result<(), Error> {
+    let span = value.span().unwrap_or_default().into();
+
     match value {
         toml_edit::Value::String(formatted) => {
-            let string = parse_string_expr(path, formatted.value())?;
-            exprs.push(ast::RunExpr::Shell(string));
+            let string = parse_string_expr(span, formatted.value())?;
+            exprs.push(ast::RunExpr::Shell(ast::ShellExpr {
+                span,
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: string,
+            }));
             Ok(())
         }
         toml_edit::Value::Integer(_)
         | toml_edit::Value::Float(_)
         | toml_edit::Value::Boolean(_)
-        | toml_edit::Value::Datetime(_) => Err(Error::ExpectedStringOrArray(path.to_string())),
+        | toml_edit::Value::Datetime(_) => Err(Error::ExpectedStringOrArray(span)),
         toml_edit::Value::Array(array) => {
-            for (index, element) in array.iter().enumerate() {
-                let path = path.index(index);
-                parse_value_run_exprs_into(&path, element, exprs)?;
+            for element in array.iter() {
+                parse_value_run_exprs_into(element, exprs)?;
             }
             Ok(())
         }
         toml_edit::Value::InlineTable(table) => {
-            exprs.push(parse_table_run_expr(path, table)?);
+            exprs.push(parse_table_run_expr(span, table)?);
             Ok(())
         }
     }
 }
 
-fn parse_table_run_expr<T: toml_edit::TableLike>(
-    path: &TomlPath,
-    table: &T,
-) -> Result<ast::RunExpr, Error> {
-    let run_expr_ty = find_main_run_expr_type(table.iter())?;
-    match run_expr_ty {
-        (RunExprType::Shell, item) => {
+fn parse_table_run_expr<'a, T: toml_edit::TableLike>(
+    span: Span,
+    table: &'a T,
+) -> Result<ast::RunExpr<'a>, Error> {
+    let (run_expr_ty, item) = find_main_run_expr_type(span, table)?;
+    match run_expr_ty.value {
+        RunExprType::Shell => {
             // TODO: Validate that there are no other keys.
-            let path = path.ident("shell");
-            parse_item_string_expr(&path, item).map(ast::RunExpr::Shell)
+            parse_item_string_expr(item).map(|command| {
+                ast::RunExpr::Shell(ast::ShellExpr {
+                    span,
+                    token: Default::default(),
+                    ws_1: ws_ignore(),
+                    param: command,
+                })
+            })
         }
-        (RunExprType::Write, item) => {
-            let path = path.ident("write");
-            let target = parse_item_string_expr(&path, item)?;
+        RunExprType::Write => {
+            let target = parse_item_string_expr(item)?;
             if let Some(data) = table.get("data") {
-                let path = path.ident("data");
-                let data = parse_item_expr(&path, data)?;
-                Ok(ast::RunExpr::Write(target, data))
+                let data = parse_item_expr(data)?;
+                Ok(ast::RunExpr::Write(ast::WriteExpr {
+                    span,
+                    token_write: ast::token::Keyword::ignore(),
+                    ws_1: ws_ignore(),
+                    path: ast::Expr::StringExpr(target),
+                    ws_2: ws_ignore(),
+                    token_comma: Default::default(),
+                    ws_3: ws_ignore(),
+                    value: data,
+                }))
             } else {
-                Err(Error::ExpectedKey(path.to_string(), "data".to_owned()))
+                Err(Error::ExpectedKey(span, &"data"))
             }
         }
-        (RunExprType::Copy, item) => {
-            let path = path.ident("copy");
-            let source = parse_item_string_expr(&path, item)?;
+        RunExprType::Copy => {
+            let source = parse_item_string_expr(item)?;
             if let Some(destination) = table.get("to") {
-                let path = path.ident("to");
-                let to = parse_item_string_expr(&path, destination)?;
-                Ok(ast::RunExpr::Copy(source, to))
+                let to = parse_item_string_expr(destination)?;
+                Ok(ast::RunExpr::Copy(ast::CopyExpr {
+                    span,
+                    token_copy: ast::token::Keyword::ignore(),
+                    ws_1: ws_ignore(),
+                    src: source,
+                    ws_2: ws_ignore(),
+                    token_comma: Default::default(),
+                    ws_3: ws_ignore(),
+                    dest: to,
+                }))
             } else {
-                Err(Error::ExpectedKey(path.to_string(), "to".to_owned()))
+                Err(Error::ExpectedKey(span, &"to"))
             }
         }
-        (RunExprType::Echo, item) => {
-            let path = path.ident("echo");
-            let message = parse_item_string_expr(&path, item)?;
-            Ok(ast::RunExpr::Echo(message))
+        RunExprType::Echo => {
+            let message = parse_item_string_expr(item)?;
+            Ok(ast::RunExpr::Info(ast::InfoExpr {
+                span,
+                token: ast::token::Keyword::ignore(),
+                ws_1: ws_ignore(),
+                param: message,
+            }))
         }
     }
 }
 
-fn parse_item_string_expr(
-    path: &TomlPath,
-    toml: &toml_edit::Item,
-) -> Result<ast::StringExpr, Error> {
+fn parse_item_string_expr<'a>(toml: &'a toml_edit::Item) -> Result<ast::StringExpr<'a>, Error> {
+    let span = toml.span().into();
     match toml {
-        toml_edit::Item::Value(toml_edit::Value::String(s)) => parse_string_expr(path, s.value()),
-        _ => Err(Error::ExpectedString(path.to_string())),
+        toml_edit::Item::Value(toml_edit::Value::String(s)) => parse_string_expr(span, s.value()),
+        _ => Err(Error::ExpectedString(span)),
     }
 }
 
-fn parse_item_pattern_expr(
-    path: &TomlPath,
-    toml: &toml_edit::Item,
-) -> Result<ast::PatternExpr, Error> {
+fn parse_item_pattern_expr<'a>(toml: &'a toml_edit::Item) -> Result<ast::PatternExpr<'a>, Error> {
+    let span = toml.span().unwrap_or_default().into();
     match toml {
-        toml_edit::Item::Value(toml_edit::Value::String(s)) => parse_pattern_expr(path, s.value()),
-        _ => Err(Error::ExpectedString(path.to_string())),
+        toml_edit::Item::Value(toml_edit::Value::String(s)) => parse_pattern_expr(span, s.value()),
+        _ => Err(Error::ExpectedString(span)),
     }
 }
 
-fn parse_command_recipe(
-    path: &TomlPath,
-    toml: &toml_edit::Item,
-) -> Result<ast::Commented<ast::CommandRecipe>, Error> {
+fn parse_command_recipe<'a>(
+    name: ast::Ident<'a>,
+    toml: &'a toml_edit::Item,
+) -> Result<(&'a str, ast::CommandRecipe<'a>), Error> {
+    let span = toml.span().unwrap_or_default().into();
+
     let Some(table) = toml.as_table_like() else {
-        return Err(Error::ExpectedTable(path.to_string()));
+        return Err(Error::ExpectedTable(span));
     };
 
-    let doc = get_item_doc(toml);
+    let decor_pre = get_item_decor(toml);
     let mut build = None;
     let mut command = Vec::new();
     let mut pre_message = None;
@@ -582,59 +790,121 @@ fn parse_command_recipe(
     let mut capture = None;
 
     for (key, value) in table.iter() {
-        let path = path.ident(key);
+        let span = value.span().unwrap_or_default().into();
         match key {
             "build" => {
-                build = Some(parse_item_expr(&path, value)?);
+                build = Some(parse_item_expr(value)?);
             }
             "command" => {
-                command = parse_item_run_expr(&path, value)?;
+                command = parse_item_run_expr(value)?;
             }
             "pre-message" => {
                 let Some(value) = value.as_str() else {
-                    return Err(Error::ExpectedString(path.to_string()));
+                    return Err(Error::ExpectedString(span));
                 };
-                pre_message = Some(parse_string_expr(&path, value)?);
+                pre_message = Some(parse_string_expr(span, value)?);
             }
             "post-message" => {
                 let Some(value) = value.as_str() else {
-                    return Err(Error::ExpectedString(path.to_string()));
+                    return Err(Error::ExpectedString(span));
                 };
-                post_message = Some(parse_string_expr(&path, value)?);
+                post_message = Some(parse_string_expr(span, value)?);
             }
             "capture" => {
                 let Some(value) = value.as_bool() else {
-                    return Err(Error::ExpectedBool(path.to_string()));
+                    return Err(Error::ExpectedBool(span));
                 };
                 capture = Some(value);
             }
             _ => {
-                return Err(Error::InvalidKey(path.to_string()));
+                let key_span = table.key(key).and_then(|key| key.span());
+                return Err(Error::InvalidKey(key_span.into()));
             }
         }
     }
 
-    Ok(ast::Commented {
-        comment: doc.to_owned(),
-        item: ast::CommandRecipe {
-            build,
-            command,
-            pre_message,
-            post_message,
-            capture,
+    let mut stmts = Vec::new();
+    if let Some(build) = build {
+        stmts.push(ast::BodyStmt {
+            ws_pre: ws_ignore(),
+            statement: ast::TaskRecipeStmt::Build(ast::BuildStmt {
+                span: build.span(),
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: build,
+            }),
+            ws_trailing: None,
+        });
+    }
+
+    if let Some(pre) = pre_message {
+        stmts.push(ast::BodyStmt {
+            ws_pre: ws_ignore(),
+            statement: ast::TaskRecipeStmt::Info(ast::InfoExpr {
+                span: pre.span,
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: pre,
+            }),
+            ws_trailing: None,
+        });
+    }
+
+    stmts.extend(command.into_iter().map(|value| ast::BodyStmt {
+        ws_pre: ws_ignore(),
+        statement: ast::TaskRecipeStmt::Run(ast::RunStmt {
+            span: value.span(),
+            token: Default::default(),
+            ws_1: ws_ignore(),
+            param: value,
+        }),
+        ws_trailing: None,
+    }));
+
+    if let Some(post) = post_message {
+        stmts.push(ast::BodyStmt {
+            ws_pre: ws_ignore(),
+            statement: ast::TaskRecipeStmt::Info(ast::InfoExpr {
+                span: post.span,
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: post,
+            }),
+            ws_trailing: None,
+        });
+    }
+
+    Ok((
+        decor_pre,
+        ast::CommandRecipe {
+            span,
+            token_task: Default::default(),
+            ws_1: ws_ignore(),
+            name,
+            ws_2: ws_ignore(),
+            body: ast::Body {
+                token_open: ast::token::Token(span.start),
+                statements: stmts,
+                ws_trailing: ws_ignore(),
+                token_close: ast::token::Token(span.end),
+            },
         },
-    })
+    ))
 }
 
-fn parse_build_recipe(
-    path: &TomlPath,
-    toml: &toml_edit::Item,
-) -> Result<ast::Commented<ast::BuildRecipe>, Error> {
+fn parse_build_recipe<'a>(
+    pattern: ast::PatternExpr<'a>,
+    toml: &'a toml_edit::Item,
+) -> Result<(&'a str, ast::BuildRecipe<'a>), Error> {
     let Some(table) = toml.as_table_like() else {
-        return Err(Error::ExpectedTable(path.to_string()));
+        return Err(Error::ExpectedTable(
+            toml.span().map(Into::into).unwrap_or_default(),
+        ));
     };
 
-    let doc = get_item_doc(toml);
+    let span = toml.span().unwrap_or_default().into();
+
+    let decor_pre = get_item_decor(toml);
     let mut in_files = None;
     let mut depfile = None;
     let mut command = Vec::new();
@@ -642,99 +912,116 @@ fn parse_build_recipe(
     let mut post_message = None;
 
     for (key, value) in table.iter() {
-        let path = path.ident(key);
         match key {
             "in" => {
-                in_files = Some(parse_item_expr(&path, value)?);
+                in_files = Some(parse_item_expr(value)?);
             }
             "depfile" | "depfiles" => {
-                depfile = Some(parse_item_string_expr(&path, value)?);
+                depfile = Some(parse_item_expr(value)?);
             }
             "pre-message" => {
+                let span = value.span().unwrap_or_default().into();
                 let Some(value) = value.as_str() else {
-                    return Err(Error::ExpectedString(path.to_string()));
+                    return Err(Error::ExpectedString(span));
                 };
-                pre_message = Some(parse_string_expr(&path, value)?);
+                pre_message = Some(parse_string_expr(span, value)?);
             }
             "post-message" => {
+                let span = value.span().unwrap_or_default().into();
                 let Some(value) = value.as_str() else {
-                    return Err(Error::ExpectedString(path.to_string()));
+                    return Err(Error::ExpectedString(span));
                 };
-                post_message = Some(parse_string_expr(&path, value)?);
+                post_message = Some(parse_string_expr(span, value)?);
             }
             "command" => {
-                command = parse_item_run_expr(&path, value)?;
+                command = parse_item_run_expr(value)?;
             }
             _ => {
-                return Err(Error::InvalidKey(path.to_string()));
+                let key_span = table.key(key).and_then(|key| key.span()).into();
+                return Err(Error::InvalidKey(key_span));
             }
         }
     }
 
-    Ok(ast::Commented {
-        comment: doc.to_owned(),
-        item: ast::BuildRecipe {
-            in_files,
-            depfile,
-            command,
-            pre_message,
-            post_message,
+    let mut stmts = Vec::new();
+
+    if let Some(from) = in_files {
+        stmts.push(ast::BodyStmt {
+            ws_pre: ws_ignore(),
+            statement: ast::BuildRecipeStmt::From(ast::FromStmt {
+                span: from.span(),
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: from,
+            }),
+            ws_trailing: None,
+        });
+    }
+
+    if let Some(depfile) = depfile {
+        stmts.push(ast::BodyStmt {
+            ws_pre: ws_ignore(),
+            statement: ast::BuildRecipeStmt::Depfile(ast::DepfileStmt {
+                span: depfile.span(),
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: depfile,
+            }),
+            ws_trailing: None,
+        });
+    }
+
+    if let Some(pre) = pre_message {
+        stmts.push(ast::BodyStmt {
+            ws_pre: ws_ignore(),
+            statement: ast::BuildRecipeStmt::Info(ast::InfoExpr {
+                span: pre.span,
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: pre,
+            }),
+            ws_trailing: None,
+        });
+    }
+
+    stmts.extend(command.into_iter().map(|value| ast::BodyStmt {
+        ws_pre: ws_ignore(),
+        statement: ast::BuildRecipeStmt::Run(ast::RunStmt {
+            span: value.span(),
+            token: Default::default(),
+            ws_1: ws_ignore(),
+            param: value,
+        }),
+        ws_trailing: None,
+    }));
+
+    if let Some(post) = post_message {
+        stmts.push(ast::BodyStmt {
+            ws_pre: ws_ignore(),
+            statement: ast::BuildRecipeStmt::Info(ast::InfoExpr {
+                span: post.span,
+                token: Default::default(),
+                ws_1: ws_ignore(),
+                param: post,
+            }),
+            ws_trailing: None,
+        });
+    }
+
+    Ok((
+        decor_pre,
+        ast::BuildRecipe {
+            span,
+            token_build: Default::default(),
+            ws_1: ws_ignore(),
+            pattern,
+            ws_2: ws_ignore(),
+            body: ast::Body {
+                token_open: ast::token::Token(span.start),
+                statements: stmts,
+                ws_trailing: ws_ignore(),
+                token_close: ast::token::Token(span.end),
+            },
         },
-    })
-}
-
-/// Path to a TOML value, for diagnostics.
-struct TomlPath<'a> {
-    pub here: TomlPathComponent<'a>,
-    pub parent: Option<&'a TomlPath<'a>>,
-}
-
-enum TomlPathComponent<'a> {
-    Ident(&'a str),
-    Index(usize),
-}
-
-impl<'a> std::fmt::Display for TomlPathComponent<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TomlPathComponent::Ident(ident) => ident.fmt(f),
-            TomlPathComponent::Index(index) => index.fmt(f),
-        }
-    }
-}
-
-impl<'a> TomlPath<'a> {
-    pub fn to_string(&self) -> String {
-        if let Some(parent) = self.parent {
-            let mut s = parent.to_string();
-            match self.here {
-                TomlPathComponent::Ident(ident) => {
-                    s.push('.');
-                    s.push_str(ident);
-                }
-                TomlPathComponent::Index(index) => {
-                    s.push('[');
-                    s.push_str(index.to_string().as_str());
-                    s.push(']');
-                }
-            }
-            s
-        } else {
-            self.here.to_string()
-        }
-    }
-
-    pub fn ident<'b>(&'b self, here: &'b str) -> TomlPath<'b> {
-        TomlPath {
-            here: TomlPathComponent::Ident(here),
-            parent: Some(self),
-        }
-    }
-
-    pub fn index<'b>(&'b self, here: usize) -> TomlPath<'b> {
-        TomlPath {
-            here: TomlPathComponent::Index(here),
-            parent: Some(self),
-        }
-    }
+    ))
 }

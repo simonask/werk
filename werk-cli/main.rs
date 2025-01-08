@@ -3,9 +3,10 @@ mod watcher;
 
 use std::{io::Write as _, sync::Arc};
 
-use anyhow::Result;
 use clap::Parser;
 use owo_colors::OwoColorize as _;
+use werk_fs::Absolute;
+use werk_parser::parser::Spanned as _;
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
 
 #[derive(Debug, clap::Parser)]
@@ -119,7 +120,27 @@ pub enum OutputChoice {
     Json,
 }
 
-fn main() -> anyhow::Result<()> {
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error("Parsing error")]
+    Parse,
+    #[error("Evaluation error")]
+    Eval,
+    #[error("Runner error")]
+    Runner,
+    #[error("Invalid workspace directory: {}", .0.display())]
+    Workspace(std::path::PathBuf),
+    #[error("werk.toml or Werkfile not found in this directory or any parent directory")]
+    NoWerkfile,
+    #[error("Invalid define (must take the form `key=value`): {0}")]
+    InvalidDefineArg(String),
+    #[error("No target specified. Pass a target name on the command-line, or set the `config.default` variable. Use `--list` to get a list of available targets.")]
+    NoTarget,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+fn main() -> Result<(), Error> {
     let args = Args::parse();
     match args.log {
         Some(Some(ref directive)) => tracing_subscriber::fmt::fmt()
@@ -131,56 +152,21 @@ fn main() -> anyhow::Result<()> {
         _ => (),
     }
 
-    let mut builder = tokio::runtime::Builder::new_multi_thread();
-    if let Some(jobs) = args.jobs {
-        builder.worker_threads(jobs.max(1));
-    }
-    builder.enable_all();
-    let runtime = builder.build().unwrap();
-    let result = runtime.block_on(try_main(args));
-    result
+    smol::block_on(try_main(args))
 }
 
-async fn try_main(args: Args) -> Result<()> {
-    let werkfile_path = if let Some(file) = args.file {
-        file
+async fn try_main(args: Args) -> Result<(), Error> {
+    let werkfile = if let Some(file) = args.file {
+        let file = Absolute::new_unchecked(std::path::absolute(file)?);
+        if file.extension().as_deref() == Some("toml".as_ref()) {
+            Werkfile::Toml(file)
+        } else {
+            Werkfile::Werk(file)
+        }
     } else {
         find_werkfile()?
     };
-    let werkfile_path = std::path::absolute(werkfile_path)?;
-    tracing::info!("Using werkfile: {}", werkfile_path.display());
-
-    let werkfile_contents = std::fs::read_to_string(&werkfile_path)?;
-    let ast = werk_parser::parse_toml(&werkfile_contents)?;
-
-    let workspace_dir = if let Some(ref workspace_dir) = args.workspace_dir {
-        if !workspace_dir.is_dir() {
-            anyhow::bail!(
-                "Workspace dir is not a directory: {}",
-                workspace_dir.display()
-            );
-        } else {
-            &*workspace_dir
-        }
-    } else {
-        werkfile_path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("{} has no parent directory", werkfile_path.display()))?
-    };
-    let workspace_dir = std::path::absolute(workspace_dir)?;
-
-    let out_dir = args
-        .output_dir
-        .or_else(|| {
-            ast.config
-                .output_directory
-                .as_ref()
-                .map(|s| workspace_dir.join(s))
-        })
-        .unwrap_or_else(|| workspace_dir.join("target"));
-    let out_dir = std::path::absolute(out_dir)?;
-    tracing::info!("Project directory: {}", workspace_dir.display());
-    tracing::info!("Output directory: {}", out_dir.display());
+    tracing::info!("Using werkfile: {}", werkfile.as_ref().display());
 
     let watcher = Arc::new(watcher::StdoutWatcher::new(watcher::OutputSettings {
         logging_enabled: args.log.is_some(),
@@ -192,14 +178,64 @@ async fn try_main(args: Args) -> Result<()> {
         explain: args.explain | args.verbose,
     }));
 
-    let mut settings = WorkspaceSettings::default();
+    // Determine the workspace directory.
+    let workspace_dir_abs;
+    let workspace_dir = if let Some(ref workspace_dir) = args.workspace_dir {
+        workspace_dir_abs = std::path::absolute(workspace_dir)?;
+        if !workspace_dir_abs.is_dir() {
+            return Err(Error::Workspace(workspace_dir.clone()));
+        } else {
+            Absolute::new_ref_unchecked(&*workspace_dir_abs)
+        }
+    } else {
+        Absolute::new_ref_unchecked(
+            werkfile
+                .as_ref()
+                .parent()
+                .ok_or_else(|| Error::Workspace(werkfile.as_ref().to_path_buf()))?,
+        )
+    };
+
+    // Parse the werk manifest!
+    let source_code = std::fs::read_to_string(&werkfile)?;
+    let display_error = |err: werk_runner::Error| print_error(werkfile.as_ref(), &source_code, err);
+    let display_parse_error =
+        |err: werk_parser::Error| print_parse_error(werkfile.as_ref(), &source_code, err);
+    let display_root_eval_error =
+        |err: werk_runner::EvalError| print_eval_error(werkfile.as_ref(), &source_code, err);
+
+    let toml_document;
+    let ast = match werkfile {
+        Werkfile::Werk(_) => {
+            toml_document = toml_edit::ImDocument::parse(&*source_code)
+                .map_err(werk_parser::Error::Toml)
+                .map_err(display_parse_error)?;
+            werk_parser::parse_toml_document(&toml_document).map_err(display_parse_error)?
+        }
+        Werkfile::Toml(_) => werk_parser::parse_werk(&*source_code).map_err(display_parse_error)?,
+    };
+
+    // Read the configuration statements from the AST.
+    let config = werk_runner::ir::Config::new(&ast).map_err(display_root_eval_error)?;
+
+    let out_dir = args
+        .output_dir
+        .or_else(|| {
+            config
+                .output_directory
+                .as_ref()
+                .map(|s| workspace_dir.join(&**s))
+        })
+        .unwrap_or_else(|| workspace_dir.join("target"));
+    let out_dir = Absolute::new_unchecked(std::path::absolute(out_dir)?);
+    tracing::info!("Project directory: {}", workspace_dir.display());
+    tracing::info!("Output directory: {}", out_dir.display());
+
+    let mut settings = WorkspaceSettings::new(workspace_dir.to_owned());
     settings.output_directory = out_dir;
     for def in &args.define {
         let Some((key, value)) = def.split_once('=') else {
-            return Err(anyhow::anyhow!(
-                "Invalid variable definition (must take the form 'key=value'): {}",
-                def
-            ));
+            return Err(Error::InvalidDefineArg(def.clone()));
         };
         settings.define(key, value);
     }
@@ -212,117 +248,31 @@ async fn try_main(args: Args) -> Result<()> {
         io = Arc::new(werk_runner::RealSystem::new());
     }
 
-    let workspace = Workspace::new(&*io, workspace_dir.to_owned(), &settings).await?;
+    let workspace = Workspace::new(&*io, workspace_dir.to_owned(), &settings)
+        .await
+        .map_err(display_error)?;
 
-    let target = args.target.or_else(|| ast.config.default.clone());
+    let document = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher)
+        .await
+        .map_err(display_root_eval_error)?;
 
-    let mut runner = Runner::new(ast, io.clone(), workspace, watcher.clone()).await?;
     if args.list {
-        let recipes = runner.recipes();
-
-        let globals = runner
-            .globals()
-            .iter()
-            .map(|(k, v)| (k, format!("{}", v.value.display_friendly(80)), &v.comment))
-            .collect::<Vec<_>>();
-        let max_global_name_len = globals
-            .iter()
-            .map(|(name, _, _)| name.len())
-            .max()
-            .unwrap_or(0);
-        let max_global_value_len = globals
-            .iter()
-            .map(|(_, value, comment)| if !comment.is_empty() { value.len() } else { 0 })
-            .max()
-            .unwrap_or(0);
-
-        let max_command_len = recipes
-            .ast
-            .commands
-            .iter()
-            .map(|(name, _)| name.len())
-            .max()
-            .unwrap_or(0);
-        let max_pattern_len = recipes
-            .build_recipes()
-            .map(|(pattern, _)| pattern.string.len())
-            .max()
-            .unwrap_or(0);
-
-        let mut out_lock = watcher.lock();
-        let out = &mut out_lock.stdout;
-
-        if max_global_name_len != 0 {
-            _ = writeln!(out, "{}", "Global variables:".purple());
-
-            for (name, value, comment) in globals {
-                if comment.is_empty() {
-                    _ = writeln!(
-                        out,
-                        "  {} = {}",
-                        format_args!("{: <w$}", name, w = max_global_name_len).bright_yellow(),
-                        value,
-                    );
-                } else {
-                    _ = writeln!(
-                        out,
-                        "  {} = {} {}",
-                        format_args!("{: <w$}", name, w = max_global_name_len).bright_yellow(),
-                        format_args!("{: <w$}", value, w = max_global_value_len),
-                        comment,
-                    );
-                }
-            }
-
-            if max_command_len != 0 || max_pattern_len != 0 {
-                _ = writeln!(out);
-            }
-        }
-
-        if max_command_len != 0 {
-            _ = writeln!(out, "{}", "Available commands:".purple());
-            for (name, command) in &recipes.ast.commands {
-                if command.comment.is_empty() {
-                    _ = writeln!(out, "  {}", name.cyan());
-                } else {
-                    _ = writeln!(
-                        out,
-                        "  {} {}",
-                        format_args!("{: <w$}", name.bright_cyan(), w = max_command_len),
-                        command.comment,
-                    );
-                }
-            }
-            if max_pattern_len != 0 {
-                _ = writeln!(out);
-            }
-        }
-
-        if max_pattern_len != 0 {
-            _ = writeln!(out, "{}", "Available recipes:".purple());
-            for (pattern, recipe) in recipes.build_recipes() {
-                if recipe.comment.is_empty() {
-                    _ = writeln!(out, "  {}", pattern.bright_yellow());
-                } else {
-                    _ = writeln!(
-                        out,
-                        "  {} {}",
-                        format_args!(
-                            "{: <w$}",
-                            pattern.string.bright_yellow(),
-                            w = max_pattern_len
-                        ),
-                        recipe.comment,
-                    );
-                }
-            }
-        }
+        print_list(&document, &*watcher);
         return Ok(());
     }
 
+    let target = args.target.or_else(|| config.default_target.clone());
     let Some(target) = target else {
-        anyhow::bail!("No target specified. Pass a target name on the command-line, or set the `config.default` variable. Use `--list` to get a list of available targets.");
+        return Err(Error::NoTarget);
     };
+
+    let runner = Runner::new(
+        &document,
+        &*io,
+        &workspace,
+        &*watcher,
+        args.jobs.unwrap_or_else(num_cpus::get),
+    );
 
     // Hide cursor and disable line wrapping while running.
     watcher.lock().start_advanced_rendering();
@@ -338,25 +288,193 @@ async fn try_main(args: Args) -> Result<()> {
     };
 
     if write_cache {
-        if let Err(err) = runner.workspace().finalize(&*io).await {
+        if let Err(err) = workspace.finalize(&*io).await {
             eprintln!("Error writing `.werk-cache`: {err}")
         }
     }
 
-    result.map(|_| ()).map_err(Into::into)
+    result.map(|_| ()).map_err(display_error)
 }
 
-fn find_werkfile() -> Result<std::path::PathBuf> {
-    let mut current = std::env::current_dir()?;
-    loop {
-        let candidate = current.join("werk.toml");
-        if candidate.is_file() {
-            return Ok(candidate);
+pub fn print_list(doc: &werk_runner::ir::Document, watcher: &watcher::StdoutWatcher) {
+    let globals = doc
+        .globals
+        .iter()
+        .map(|(k, v)| (k, format!("{}", v.value.display_friendly(80)), &v.comment))
+        .collect::<Vec<_>>();
+    let max_global_name_len = globals
+        .iter()
+        .map(|(name, _, _)| name.len())
+        .max()
+        .unwrap_or(0);
+    let max_global_value_len = globals
+        .iter()
+        .map(|(_, value, comment)| if !comment.is_empty() { value.len() } else { 0 })
+        .max()
+        .unwrap_or(0);
+
+    let max_command_len = doc
+        .task_recipes
+        .iter()
+        .map(|(name, _)| name.len())
+        .max()
+        .unwrap_or(0);
+    let max_pattern_len = doc
+        .build_recipes
+        .iter()
+        .map(|recipe| recipe.pattern.string.len())
+        .max()
+        .unwrap_or(0);
+
+    let mut out_lock = watcher.lock();
+    let out = &mut out_lock.stdout;
+
+    if max_global_name_len != 0 {
+        _ = writeln!(out, "{}", "Global variables:".purple());
+
+        for (name, value, comment) in globals {
+            if comment.is_empty() {
+                _ = writeln!(
+                    out,
+                    "  {} = {}",
+                    format_args!("{: <w$}", name, w = max_global_name_len).bright_yellow(),
+                    value,
+                );
+            } else {
+                _ = writeln!(
+                    out,
+                    "  {} = {} {}",
+                    format_args!("{: <w$}", name, w = max_global_name_len).bright_yellow(),
+                    format_args!("{: <w$}", value, w = max_global_value_len),
+                    comment,
+                );
+            }
         }
+
+        if max_command_len != 0 || max_pattern_len != 0 {
+            _ = writeln!(out);
+        }
+    }
+
+    if max_command_len != 0 {
+        _ = writeln!(out, "{}", "Available commands:".purple());
+        for (name, recipe) in &doc.task_recipes {
+            if recipe.doc_comment.is_empty() {
+                _ = writeln!(out, "  {}", name.bright_cyan());
+            } else {
+                _ = writeln!(
+                    out,
+                    "  {} {}",
+                    format_args!("{: <w$}", name.bright_cyan(), w = max_command_len),
+                    recipe.doc_comment,
+                );
+            }
+        }
+        if max_pattern_len != 0 {
+            _ = writeln!(out);
+        }
+    }
+
+    if max_pattern_len != 0 {
+        _ = writeln!(out, "{}", "Available recipes:".purple());
+        for recipe in &doc.build_recipes {
+            if recipe.doc_comment.is_empty() {
+                _ = writeln!(out, "  {}", recipe.pattern.string.bright_yellow());
+            } else {
+                _ = writeln!(
+                    out,
+                    "  {} {}",
+                    format_args!(
+                        "{: <w$}",
+                        recipe.pattern.string.bright_yellow(),
+                        w = max_pattern_len
+                    ),
+                    recipe.doc_comment,
+                );
+            }
+        }
+    }
+}
+
+enum Werkfile {
+    Werk(Absolute<std::path::PathBuf>),
+    Toml(Absolute<std::path::PathBuf>),
+}
+
+impl AsRef<std::path::Path> for Werkfile {
+    fn as_ref(&self) -> &std::path::Path {
+        match self {
+            Werkfile::Werk(path) | Werkfile::Toml(path) => path,
+        }
+    }
+}
+
+fn find_werkfile() -> Result<Werkfile, Error> {
+    const WERKFILE_NAMES_TOML: &[&str] = &["werk.toml"];
+    const WERKFILE_NAMES: &[&str] = &["werk.toml", "Werkfile", "werkfile", "build.werk"];
+
+    let mut current = std::env::current_dir()?;
+    if !current.is_absolute() {
+        return Err(Error::Workspace(current));
+    }
+
+    loop {
+        for name in WERKFILE_NAMES_TOML {
+            let candidate = Absolute::new_unchecked(current.join(name));
+            if candidate.is_file() {
+                return Ok(Werkfile::Toml(candidate));
+            }
+        }
+
+        for name in WERKFILE_NAMES {
+            let candidate = Absolute::new_unchecked(current.join(name));
+            if candidate.is_file() {
+                return Ok(Werkfile::Werk(candidate));
+            }
+        }
+
         if let Some(parent) = current.parent() {
             current = parent.to_owned();
         } else {
-            anyhow::bail!("werk.toml not found in the current directory or any parent directory");
+            return Err(Error::NoWerkfile);
         }
     }
+}
+
+fn print_error(path: &std::path::Path, werkfile: &str, err: werk_runner::Error) -> Error {
+    match err {
+        werk_runner::Error::Eval(eval_error) => {
+            print_eval_error(path, werkfile, eval_error);
+            Error::Eval
+        }
+        otherwise => {
+            anstream::eprintln!("{otherwise}");
+            Error::Runner
+        }
+    }
+}
+
+fn print_eval_error(path: &std::path::Path, werkfile: &str, err: werk_runner::EvalError) -> Error {
+    use annotate_snippets::{Level, Snippet};
+
+    let file_name = path.display().to_string();
+    let span = err.span();
+
+    let err_string = err.to_string();
+    let err = Level::Error.title("evaluation error").snippet(
+        Snippet::source(werkfile)
+            .origin(&file_name)
+            .fold(true)
+            .annotation(Level::Error.span(span.into()).label(&err_string)),
+    );
+    let renderer = annotate_snippets::Renderer::styled();
+    let render = renderer.render(err);
+    anstream::eprintln!("{}", render);
+    Error::Eval
+}
+
+fn print_parse_error(path: &std::path::Path, werkfile: &str, err: werk_parser::Error) -> Error {
+    let err = err.with_location(path, werkfile);
+    anstream::eprintln!("{}", err);
+    Error::Parse
 }

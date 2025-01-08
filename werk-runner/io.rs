@@ -6,6 +6,7 @@ use std::{
 
 pub use ignore::WalkState;
 use parking_lot::Mutex;
+use werk_fs::Absolute;
 
 use crate::{Error, GlobSettings, ShellCommandLine};
 
@@ -31,7 +32,7 @@ pub trait Io: Send + Sync + 'static {
     fn run_build_command<'a>(
         &'a self,
         command_line: &'a ShellCommandLine,
-        working_dir: &'a Path,
+        working_dir: &'a Absolute<Path>,
     ) -> PinBoxFut<'a, Result<std::process::Output, std::io::Error>>;
 
     /// Run a command as part of evaluating the contents of a werk.toml file.
@@ -39,11 +40,11 @@ pub trait Io: Send + Sync + 'static {
     fn run_during_eval<'a>(
         &'a self,
         command_line: &'a ShellCommandLine,
-        working_dir: &'a Path,
+        working_dir: &'a Absolute<Path>,
     ) -> PinBoxFut<'a, Result<std::process::Output, std::io::Error>>;
 
     /// Determine the absolute filesystem path to a program.
-    fn which(&self, command: &str) -> Result<PathBuf, which::Error>;
+    fn which(&self, command: &str) -> Result<Absolute<PathBuf>, which::Error>;
 
     /// Glob the workspace directory, adhering to the glob settings.
     ///
@@ -51,20 +52,23 @@ pub trait Io: Send + Sync + 'static {
     /// `Workspace` constructor will fail.
     fn glob_workspace<'a>(
         &'a self,
-        path: &'a Path,
+        path: &'a Absolute<Path>,
         settings: &'a GlobSettings,
     ) -> PinBoxFut<'a, Result<Vec<DirEntry>, Error>>;
 
     /// Query the metadata of a filesystem path.
-    fn metadata(&self, path: &Path) -> Result<Metadata, Error>;
+    fn metadata(&self, path: &Absolute<Path>) -> Result<Metadata, Error>;
 
     /// Read a file from the filesystem.
-    fn read_file<'a>(&'a self, path: &'a Path) -> PinBoxFut<'a, Result<Vec<u8>, std::io::Error>>;
+    fn read_file<'a>(
+        &'a self,
+        path: &'a Absolute<Path>,
+    ) -> PinBoxFut<'a, Result<Vec<u8>, std::io::Error>>;
 
     /// Write a file to the filesystem.
     fn write_file<'a>(
         &'a self,
-        path: &'a Path,
+        path: &'a Absolute<Path>,
         data: &'a [u8],
     ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
 
@@ -72,17 +76,20 @@ pub trait Io: Send + Sync + 'static {
     /// May do nothing if the paths are equal.
     fn copy_file<'a>(
         &'a self,
-        from: &'a Path,
-        to: &'a Path,
+        from: &'a Absolute<Path>,
+        to: &'a Absolute<Path>,
     ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
 
     /// Delete a file from the filesystem. Must do nothing in dry-run.
-    fn delete_file<'a>(&'a self, path: &'a Path) -> PinBoxFut<'a, Result<(), std::io::Error>>;
+    fn delete_file<'a>(
+        &'a self,
+        path: &'a Absolute<Path>,
+    ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
 
     /// Create the parent directories of `path`, recursively.
     fn create_parent_dirs<'a>(
         &'a self,
-        path: &'a Path,
+        path: &'a Absolute<Path>,
     ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
 
     /// Read environment variable.
@@ -96,7 +103,7 @@ pub trait Io: Send + Sync + 'static {
 
 #[derive(Debug, Clone)]
 pub struct DirEntry {
-    pub path: PathBuf,
+    pub path: Absolute<PathBuf>,
     pub metadata: Metadata,
 }
 
@@ -105,10 +112,14 @@ impl TryFrom<ignore::DirEntry> for DirEntry {
 
     #[inline]
     fn try_from(entry: ignore::DirEntry) -> Result<Self, Self::Error> {
-        Ok(DirEntry {
-            metadata: entry.metadata()?.try_into()?,
-            path: entry.into_path(),
-        })
+        let metadata = entry.metadata()?.try_into()?;
+        let path = entry.into_path();
+
+        // `ignore` claims that this is always true.
+        assert!(path.is_absolute());
+        let path = Absolute::new_unchecked(path);
+
+        Ok(DirEntry { metadata, path })
     }
 }
 
@@ -116,11 +127,14 @@ impl TryFrom<std::fs::DirEntry> for DirEntry {
     type Error = std::io::Error;
 
     #[inline]
-    fn try_from(value: std::fs::DirEntry) -> Result<Self, Self::Error> {
-        Ok(DirEntry {
-            metadata: value.metadata()?.try_into()?,
-            path: value.path(),
-        })
+    fn try_from(entry: std::fs::DirEntry) -> Result<Self, Self::Error> {
+        let metadata = entry.metadata()?.try_into()?;
+        let path = entry.path();
+
+        assert!(path.is_absolute());
+        let path = Absolute::new_unchecked(path);
+
+        Ok(DirEntry { metadata, path })
     }
 }
 
@@ -163,10 +177,10 @@ impl Io for RealSystem {
     fn run_build_command<'a>(
         &'a self,
         command_line: &'a ShellCommandLine,
-        working_dir: &'a Path,
+        working_dir: &'a Absolute<Path>,
     ) -> PinBoxFut<'a, Result<std::process::Output, std::io::Error>> {
         Box::pin(async move {
-            let mut command = tokio::process::Command::new(&command_line.program);
+            let mut command = smol::process::Command::new(&*command_line.program);
             command
                 .args(
                     command_line
@@ -187,7 +201,7 @@ impl Io for RealSystem {
 
             tracing::trace!("spawning {command:?}");
             let child = command.spawn()?;
-            let output = child.wait_with_output().await?;
+            let output = child.output().await?;
             Ok(output)
         })
     }
@@ -195,18 +209,18 @@ impl Io for RealSystem {
     fn run_during_eval<'a>(
         &'a self,
         command_line: &'a ShellCommandLine,
-        working_dir: &'a Path,
+        working_dir: &'a Absolute<Path>,
     ) -> PinBoxFut<'a, Result<std::process::Output, std::io::Error>> {
         self.run_build_command(command_line, working_dir)
     }
 
-    fn which(&self, program: &str) -> Result<PathBuf, which::Error> {
-        which::which(program)
+    fn which(&self, program: &str) -> Result<Absolute<PathBuf>, which::Error> {
+        which::which(program).map(Absolute::new_unchecked)
     }
 
     fn glob_workspace<'a>(
         &'a self,
-        path: &'a Path,
+        path: &'a Absolute<Path>,
         settings: &'a GlobSettings,
     ) -> PinBoxFut<'a, Result<Vec<DirEntry>, Error>> {
         let GlobSettings {
@@ -275,53 +289,55 @@ impl Io for RealSystem {
             }
         }
 
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
-                let results = Mutex::new(Ok(Vec::new()));
-                walker.visit(&mut Builder(&results));
-                results.into_inner()
-            })
-            .await
-            .map_err(Error::custom)?
-        })
+        Box::pin(smol::unblock(move || {
+            let results = Mutex::new(Ok(Vec::new()));
+            walker.visit(&mut Builder(&results));
+            results.into_inner().map_err(Error::custom)
+        }))
     }
 
-    fn metadata(&self, path: &Path) -> Result<Metadata, Error> {
+    fn metadata(&self, path: &Absolute<Path>) -> Result<Metadata, Error> {
         path.metadata()?.try_into().map_err(Into::into)
     }
 
-    fn read_file<'a>(&'a self, path: &'a Path) -> PinBoxFut<'a, Result<Vec<u8>, std::io::Error>> {
-        Box::pin(async move { tokio::fs::read(path).await.map_err(Into::into) })
+    fn read_file<'a>(
+        &'a self,
+        path: &'a Absolute<Path>,
+    ) -> PinBoxFut<'a, Result<Vec<u8>, std::io::Error>> {
+        Box::pin(async move { smol::fs::read(path).await.map_err(Into::into) })
     }
 
     fn write_file<'a>(
         &'a self,
-        path: &'a Path,
+        path: &'a Absolute<Path>,
         data: &'a [u8],
     ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
-        Box::pin(async move { tokio::fs::write(path, data).await })
+        Box::pin(async move { smol::fs::write(path, data).await })
     }
 
     fn copy_file<'a>(
         &'a self,
-        from: &'a Path,
-        to: &'a Path,
+        from: &'a Absolute<Path>,
+        to: &'a Absolute<Path>,
     ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
-        Box::pin(async move { tokio::fs::copy(from, to).await.map(|_| ()) })
+        Box::pin(async move { smol::fs::copy(from, to).await.map(|_| ()) })
     }
 
-    fn delete_file<'a>(&'a self, path: &'a Path) -> PinBoxFut<'a, Result<(), std::io::Error>> {
-        Box::pin(async move { tokio::fs::remove_file(path).await.map(|_| ()) })
+    fn delete_file<'a>(
+        &'a self,
+        path: &'a Absolute<Path>,
+    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
+        Box::pin(async move { smol::fs::remove_file(path).await.map(|_| ()) })
     }
 
     fn create_parent_dirs<'a>(
         &'a self,
-        path: &'a Path,
+        path: &'a Absolute<Path>,
     ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
         Box::pin(async move {
             let parent = path.parent().unwrap();
             let did_exist = parent.is_dir();
-            tokio::fs::create_dir_all(&parent).await?;
+            smol::fs::create_dir_all(&parent).await?;
             if !did_exist {
                 tracing::info!("Created directory: {}", parent.display());
             }
