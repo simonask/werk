@@ -537,7 +537,7 @@ impl<'a> Inner<'a> {
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
         let global_scope = RootScope::new(self.workspace);
-        let mut scope = TaskRecipeScope::new(&global_scope, task_id, recipe);
+        let mut scope = TaskRecipeScope::new(&global_scope, task_id);
 
         // Evaluate dependencies (`out` is not available in commands).
 
@@ -726,7 +726,7 @@ impl<'a> Inner<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum RunCommand {
+pub(crate) enum RunCommand {
     Shell(ShellCommandLine),
     Write(Absolute<std::path::PathBuf>, Vec<u8>),
     Copy(Absolute<std::path::PathBuf>, Absolute<std::path::PathBuf>),

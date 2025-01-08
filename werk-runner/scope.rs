@@ -21,7 +21,6 @@ pub struct TaskRecipeScope<'a> {
     parent: &'a RootScope<'a>,
     vars: LocalVariables,
     task_id: &'a TaskId,
-    recipe: &'a ir::TaskRecipe<'a>,
 }
 
 pub struct BuildRecipeScope<'a> {
@@ -142,16 +141,11 @@ impl<'a> RootScope<'a> {
 
 impl<'a> TaskRecipeScope<'a> {
     #[inline]
-    pub fn new(
-        root: &'a RootScope<'a>,
-        task_id: &'a TaskId,
-        recipe: &'a ir::TaskRecipe<'a>,
-    ) -> Self {
+    pub fn new(root: &'a RootScope<'a>, task_id: &'a TaskId) -> Self {
         Self {
             parent: root,
             vars: LocalVariables::new(),
             task_id,
-            recipe,
         }
     }
 

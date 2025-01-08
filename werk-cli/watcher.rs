@@ -7,8 +7,7 @@ use anstream::stream::{AsLockedWrite, IsTerminal};
 use indexmap::IndexMap;
 use owo_colors::OwoColorize;
 use parking_lot::{Mutex, MutexGuard};
-use werk_fs::Absolute;
-use werk_runner::{BuildStatus, Outdatedness, RunCommand, ShellCommandLine, TaskId};
+use werk_runner::{BuildStatus, Outdatedness, ShellCommandLine, TaskId};
 
 use crate::ColorChoice;
 

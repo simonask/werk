@@ -10,9 +10,9 @@ use werk_parser::{
 };
 
 use crate::{
-    BuildRecipeScope, Error, EvalError, Io, Lookup, LookupValue, MatchScope, Pattern,
-    PatternBuilder, RunCommand, Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError,
-    SubexprScope, TaskRecipeScope, Value, Workspace,
+    BuildRecipeScope, Error, EvalError, Lookup, LookupValue, MatchScope, Pattern, PatternBuilder,
+    RunCommand, Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError, SubexprScope,
+    TaskRecipeScope, Value, Workspace,
 };
 
 /// Evaluated value, which keeps track of "outdatedness" with respect to cached
@@ -486,7 +486,7 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
     Ok(Eval { value: s, used })
 }
 
-pub async fn eval_run_exprs<S: Scope>(
+pub(crate) async fn eval_run_exprs<S: Scope>(
     scope: &S,
     expr: &ast::RunExpr<'_>,
     commands: &mut Vec<RunCommand>,
@@ -864,13 +864,13 @@ pub fn eval_glob(
     })
 }
 
-pub struct EvaluatedBuildRecipe {
+pub(crate) struct EvaluatedBuildRecipe {
     pub explicit_dependencies: Vec<String>,
     pub depfile: Option<String>,
     pub commands: Vec<RunCommand>,
 }
 
-pub async fn eval_build_recipe_statements(
+pub(crate) async fn eval_build_recipe_statements(
     scope: &mut BuildRecipeScope<'_>,
     body: &[ast::BodyStmt<ast::BuildRecipeStmt<'_>>],
 ) -> Result<Eval<EvaluatedBuildRecipe>, EvalError> {
@@ -930,12 +930,12 @@ pub async fn eval_build_recipe_statements(
     })
 }
 
-pub struct EvaluatedTaskRecipe {
+pub(crate) struct EvaluatedTaskRecipe {
     pub build: Vec<String>,
     pub commands: Vec<RunCommand>,
 }
 
-pub async fn eval_task_recipe_statements(
+pub(crate) async fn eval_task_recipe_statements(
     scope: &mut TaskRecipeScope<'_>,
     body: &[ast::BodyStmt<ast::TaskRecipeStmt<'_>>],
 ) -> Result<EvaluatedTaskRecipe, EvalError> {

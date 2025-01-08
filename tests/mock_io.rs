@@ -9,8 +9,8 @@ use std::{
 use parking_lot::Mutex;
 use werk_fs::Absolute;
 use werk_runner::{
-    globset, BuildStatus, DirEntry, Error, GlobSettings, Metadata, Outdatedness, RunCommand,
-    ShellCommandLine, TaskId, WhichError, WorkspaceSettings,
+    globset, BuildStatus, DirEntry, Error, GlobSettings, Metadata, Outdatedness, ShellCommandLine,
+    TaskId, WhichError, WorkspaceSettings,
 };
 
 #[inline]
