@@ -321,7 +321,7 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, watcher: &watcher::StdoutWatc
     let out = &mut out_lock.stdout;
 
     if max_global_name_len != 0 {
-        _ = writeln!(out, "{}", "Global variables:".purple());
+        _ = writeln!(out, "{}", "Global variables:".bright_purple());
 
         for (name, value, comment) in globals {
             if comment.is_empty() {
@@ -337,7 +337,7 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, watcher: &watcher::StdoutWatc
                     "  {} = {} {}",
                     format_args!("{: <w$}", name, w = max_global_name_len).bright_yellow(),
                     format_args!("{: <w$}", value, w = max_global_value_len),
-                    comment,
+                    comment.dimmed(),
                 );
             }
         }
@@ -348,7 +348,7 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, watcher: &watcher::StdoutWatc
     }
 
     if max_command_len != 0 {
-        _ = writeln!(out, "{}", "Available commands:".purple());
+        _ = writeln!(out, "{}", "Available commands:".bright_purple());
         for (name, recipe) in &doc.task_recipes {
             if recipe.doc_comment.is_empty() {
                 _ = writeln!(out, "  {}", name.bright_cyan());
@@ -357,7 +357,7 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, watcher: &watcher::StdoutWatc
                     out,
                     "  {} {}",
                     format_args!("{: <w$}", name.bright_cyan(), w = max_command_len),
-                    recipe.doc_comment,
+                    recipe.doc_comment.dimmed(),
                 );
             }
         }
@@ -367,7 +367,7 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, watcher: &watcher::StdoutWatc
     }
 
     if max_pattern_len != 0 {
-        _ = writeln!(out, "{}", "Available recipes:".purple());
+        _ = writeln!(out, "{}", "Available recipes:".bright_purple());
         for recipe in &doc.build_recipes {
             if recipe.doc_comment.is_empty() {
                 _ = writeln!(out, "  {}", recipe.pattern.string.bright_yellow());
@@ -380,7 +380,7 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, watcher: &watcher::StdoutWatc
                         recipe.pattern.string.bright_yellow(),
                         w = max_pattern_len
                     ),
-                    recipe.doc_comment,
+                    recipe.doc_comment.dimmed(),
                 );
             }
         }

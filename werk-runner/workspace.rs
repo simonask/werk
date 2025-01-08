@@ -197,7 +197,13 @@ impl<'a> Workspace<'a> {
         ast: &'a werk_parser::Document<'a>,
     ) -> Result<(), EvalError> {
         for stmt in ast.root.statements.iter() {
-            let doc_comment = ast.get_whitespace(stmt.ws_pre).to_string();
+            let doc_comment = ast
+                .get_whitespace(stmt.ws_pre)
+                .trim()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string();
 
             match stmt.statement {
                 ast::RootStmt::Config(_) => {

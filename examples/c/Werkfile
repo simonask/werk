@@ -1,7 +1,9 @@
 config out-dir = "../../target/examples/c-werk"
 
+# Path to the C compiler.
 let cc = which "clang"
 let ld = cc
+# "debug" or "release"
 let profile = "debug"
 let executable = "{profile}/example{EXE_SUFFIX}"
 let cflags = profile => match {
