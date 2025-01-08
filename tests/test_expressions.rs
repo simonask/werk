@@ -199,14 +199,15 @@ async fn expressions() -> anyhow::Result<()> {
             .with_envs([("PROFILE", "debug")]),
     );
     let workspace = werk_runner::Workspace::new(
+        &ast,
         &*io,
+        &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
     )
     .await?;
-    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
 
-    let globals = &doc.globals;
+    let globals = &workspace.manifest.globals;
     assert_eq!(globals["source-files"].value.value, ["/main.c"]);
     assert_eq!(globals["profile"].value.value, "debug");
     assert_eq!(
@@ -242,13 +243,14 @@ async fn fail_which() -> anyhow::Result<()> {
             .with_envs([("PROFILE", "debug")]),
     );
     let workspace = werk_runner::Workspace::new(
+        &ast,
         &*io,
+        &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
     )
-    .await?;
-    let Err(err) = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await
-    else {
+    .await;
+    let Err(err) = workspace else {
         panic!("expected error")
     };
 
@@ -256,11 +258,11 @@ async fn fail_which() -> anyhow::Result<()> {
         err,
         // Note: CommandNotFound is issued separately when failing as part of
         // eval or as part of building a recipe.
-        werk_runner::EvalError::CommandNotFound(
+        werk_runner::Error::Eval(werk_runner::EvalError::CommandNotFound(
             Span::ignore(),
             String::from("clang"),
             WhichError::CannotFindBinaryPath
-        )
+        ))
     );
 
     Ok(())
@@ -296,22 +298,23 @@ async fn fail_custom_err() -> anyhow::Result<()> {
             .with_envs([("PROFILE", "nonexistent profile")]),
     );
     let workspace = werk_runner::Workspace::new(
+        &ast,
         &*io,
+        &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
     )
-    .await?;
-    let Err(err) = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await
-    else {
+    .await;
+    let Err(err) = workspace else {
         panic!("expected error")
     };
 
     assert_eq!(
         err,
-        werk_runner::EvalError::ErrorExpression(
+        werk_runner::Error::Eval(werk_runner::EvalError::ErrorExpression(
             Span::ignore(),
             "invalid profile 'nonexistent profile'; expected \"debug\" or \"release\"".into()
-        )
+        ))
     );
 
     Ok(())

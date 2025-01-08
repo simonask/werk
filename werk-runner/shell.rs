@@ -6,7 +6,7 @@ use std::{
 use werk_fs::Absolute;
 use werk_parser::parser::Span;
 
-use crate::{Eval, EvalError, Io, Used, UsedVariable, Value, Workspace};
+use crate::{eval::UsedVariable, EvalError, Value, Workspace};
 
 #[derive(Clone, PartialEq)]
 pub struct ShellCommandLine {
@@ -233,7 +233,6 @@ impl ShellCommandLineBuilder {
         &mut self,
         span: Span,
         workspace: &Workspace,
-        io: &dyn Io,
     ) -> Result<(ShellCommandLine, Option<UsedVariable>), EvalError> {
         if self.in_quotes {
             Err(EvalError::UnterminatedQuote(span).into())
@@ -244,7 +243,7 @@ impl ShellCommandLineBuilder {
             };
 
             let (program_path, hash) = workspace
-                .which(io, &program)
+                .which(&program)
                 .map_err(|err| EvalError::CommandNotFound(span, program.clone(), err))?;
             let used = hash.map(|hash| UsedVariable::Which(program, hash));
 

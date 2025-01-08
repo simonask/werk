@@ -90,13 +90,14 @@ async fn test_outdated_env() -> anyhow::Result<()> {
         .map_err(|err| err.to_string())
         .map_err(anyhow::Error::msg)?;
     let workspace = werk_runner::Workspace::new(
+        &ast,
         &*io,
+        &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
     )
     .await?;
-    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
-    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
+    let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("env-dep")?).await?;
 
@@ -120,7 +121,7 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     }));
 
     // Write .werk-cache.
-    workspace.finalize(&*io).await.unwrap();
+    workspace.finalize().await.unwrap();
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert!(io.did_write_file(".werk-cache"));
 
@@ -139,16 +140,14 @@ async fn test_outdated_env() -> anyhow::Result<()> {
 
     // Initialize a new workspace.
     let workspace = werk_runner::Workspace::new(
+        &ast,
         &*io,
+        &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
     )
     .await?;
-    let ast = werk_parser::parse_toml("werk.toml".as_ref(), TOML, &toml)
-        .map_err(|err| err.to_string())
-        .map_err(anyhow::Error::msg)?;
-    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
-    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
+    let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("env-dep")?).await?;
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -176,13 +175,14 @@ async fn test_outdated_which() -> anyhow::Result<()> {
         .map_err(|err| err.to_string())
         .map_err(anyhow::Error::msg)?;
     let workspace = werk_runner::Workspace::new(
+        &ast,
         &*io,
+        &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
     )
     .await?;
-    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
-    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
+    let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
 
@@ -205,7 +205,7 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     }));
 
     // Write .werk-cache.
-    workspace.finalize(&*io).await.unwrap();
+    workspace.finalize().await.unwrap();
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert!(io.did_write_file(".werk-cache"));
 
@@ -230,13 +230,14 @@ async fn test_outdated_which() -> anyhow::Result<()> {
         .map_err(|err| err.to_string())
         .map_err(anyhow::Error::msg)?;
     let workspace = werk_runner::Workspace::new(
+        &ast,
         &*io,
+        &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
     )
     .await?;
-    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
-    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
+    let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
 
@@ -275,13 +276,14 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
         .map_err(|err| err.to_string())
         .map_err(anyhow::Error::msg)?;
     let workspace = werk_runner::Workspace::new(
+        &ast,
         &*io,
+        &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
     )
     .await?;
-    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
-    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
+    let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
 
@@ -304,7 +306,7 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     }));
 
     // Write .werk-cache.
-    workspace.finalize(&*io).await.unwrap();
+    workspace.finalize().await.unwrap();
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert!(io.did_write_file(".werk-cache"));
 
@@ -321,14 +323,15 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     let ast = werk_parser::parse_toml("werk.toml".as_ref(), TOML_RECIPE_CHANGED, &toml)
         .map_err(|err| err.to_string())
         .map_err(anyhow::Error::msg)?;
-    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
     let workspace = werk_runner::Workspace::new(
+        &ast,
         &*io,
+        &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
     )
     .await?;
-    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
+    let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
 
@@ -374,13 +377,14 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
         .map_err(|err| err.to_string())
         .map_err(anyhow::Error::msg)?;
     let workspace = werk_runner::Workspace::new(
+        &ast,
         &*io,
+        &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
     )
     .await?;
-    let doc = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher).await?;
-    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
+    let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("glob-dep")?).await?;
 
@@ -403,7 +407,7 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     }));
 
     // Write .werk-cache.
-    workspace.finalize(&*io).await.unwrap();
+    workspace.finalize().await.unwrap();
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert!(io.did_write_file(".werk-cache"));
 
@@ -418,12 +422,14 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
 
     // Initialize a new workspace.
     let workspace = werk_runner::Workspace::new(
+        &ast,
         &*io,
+        &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
     )
     .await?;
-    let runner = werk_runner::Runner::new(&doc, &*io, &workspace, &*watcher, 1);
+    let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("glob-dep")?).await?;
 

@@ -3,10 +3,13 @@ use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::collections::hash_map;
 use werk_fs::{Absolute, PathError};
+use werk_parser::ast;
 
 use crate::{
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
-    ir, DirEntry, Error, Io, UsedVariable,
+    eval::{self, Eval, UsedVariable},
+    ir::{self, BuildRecipe, TaskRecipe},
+    DirEntry, Error, EvalError, GlobalVar, Io, RootScope, Watcher,
 };
 
 #[derive(Clone)]
@@ -22,6 +25,9 @@ pub struct WorkspaceSettings {
     /// `CLICOLOR_FORCE` environment variables to "1" when executing recipe
     /// commands (not when capturing their output in variables).
     pub force_color: bool,
+    /// Number of jobs to execute in parallel. Default is 1. If below 1, this
+    /// will automatically be clamped to 1.
+    pub jobs: usize,
 }
 
 impl WorkspaceSettings {
@@ -31,6 +37,7 @@ impl WorkspaceSettings {
             glob: GlobSettings::default(),
             defines: HashMap::default(),
             force_color: false,
+            jobs: 1,
         }
     }
 }
@@ -79,7 +86,8 @@ impl WorkspaceSettings {
     }
 }
 
-pub struct Workspace {
+pub struct Workspace<'a> {
+    pub manifest: ir::Manifest<'a>,
     // Project root - note that the workspace only accesses this directory
     // through the `Io` trait, and never directly.
     project_root: Absolute<std::path::PathBuf>,
@@ -95,6 +103,9 @@ pub struct Workspace {
     /// Overridden global variables from the command line.
     pub defines: HashMap<String, String>,
     pub force_color: bool,
+    pub io: &'a dyn Io,
+    pub watcher: &'a dyn Watcher,
+    pub(crate) runner_state: crate::runner::RunnerState,
 }
 
 #[derive(Default)]
@@ -107,13 +118,15 @@ struct Caches {
 
 pub const WERK_CACHE_FILENAME: &str = ".werk-cache";
 
-impl Workspace {
+impl<'a> Workspace<'a> {
     pub async fn new(
-        io: &dyn Io,
+        ast: &'a werk_parser::Document<'a>,
+        io: &'a dyn Io,
+        watcher: &'a dyn Watcher,
         project_root: Absolute<std::path::PathBuf>,
         settings: &WorkspaceSettings,
     ) -> Result<Self, Error> {
-        let werk_cache = read_workspace_cache(io, settings.output_directory.as_deref()).await;
+        let werk_cache = read_workspace_cache(&*io, settings.output_directory.as_deref()).await;
 
         let mut workspace_files =
             IndexMap::with_capacity_and_hasher(1024, ahash::RandomState::default());
@@ -146,7 +159,14 @@ impl Workspace {
         // results.
         workspace_files.sort_unstable_keys();
 
-        Ok(Self {
+        let manifest = ir::Manifest {
+            globals: Default::default(),
+            task_recipes: Default::default(),
+            build_recipes: Default::default(),
+        };
+
+        let mut workspace = Self {
+            manifest,
             project_root,
             output_directory: settings.output_directory.clone(),
             workspace_files,
@@ -159,13 +179,116 @@ impl Workspace {
             }),
             defines: settings.defines.clone(),
             force_color: settings.force_color,
-        })
+            io,
+            watcher,
+            runner_state: crate::RunnerState::new(settings.jobs),
+        };
+
+        // Manifest document is currently empty - populate it by evaluating the AST.
+        workspace.evaluate_globals_and_recipes(ast).await?;
+
+        Ok(workspace)
+    }
+
+    /// Evaluate global variables, tasks, and recipe patterns. Also gathers
+    /// documentation for each global item.
+    async fn evaluate_globals_and_recipes(
+        &mut self,
+        ast: &'a werk_parser::Document<'a>,
+    ) -> Result<(), EvalError> {
+        for stmt in ast.root.statements.iter() {
+            let doc_comment = ast.get_whitespace(stmt.ws_pre).to_string();
+
+            match stmt.statement {
+                ast::RootStmt::Config(_) => {
+                    // Ignore; these should be parsed by the front-end.
+                    continue;
+                }
+                ast::RootStmt::Let(ref let_stmt) => {
+                    if let Some(global_override) = self.defines.get(let_stmt.ident.ident) {
+                        tracing::trace!(
+                            "Overriding global variable `{}` with `{}`",
+                            let_stmt.ident.ident,
+                            global_override
+                        );
+                        self.manifest.globals.insert(
+                            let_stmt.ident.ident.to_owned(),
+                            GlobalVar {
+                                value: Eval::using_var(
+                                    global_override.clone().into(),
+                                    UsedVariable::Define(
+                                        let_stmt.ident.ident.to_owned(),
+                                        compute_stable_hash(global_override),
+                                    ),
+                                ),
+                                comment: doc_comment,
+                            },
+                        );
+                    } else {
+                        let scope = RootScope::new(self);
+                        let value = eval::eval(&scope, &let_stmt.value).await?;
+                        tracing::trace!("(global) let `{}` = {:?}", let_stmt.ident, value);
+                        self.manifest.globals.insert(
+                            let_stmt.ident.ident.to_owned(),
+                            GlobalVar {
+                                value,
+                                comment: doc_comment,
+                            },
+                        );
+                    }
+                }
+                ast::RootStmt::Task(ref command_recipe) => {
+                    let hash = compute_stable_semantic_hash(command_recipe);
+                    self.manifest.task_recipes.insert(
+                        command_recipe.name.ident,
+                        TaskRecipe {
+                            span: command_recipe.span,
+                            name: command_recipe.name.ident,
+                            doc_comment,
+                            body: &command_recipe.body.statements,
+                            hash,
+                        },
+                    );
+                }
+                ast::RootStmt::Build(ref build_recipe) => {
+                    let hash = compute_stable_semantic_hash(build_recipe);
+                    let scope = RootScope::new(self);
+                    let mut pattern_builder =
+                        eval::eval_pattern_builder(&scope, &build_recipe.pattern)?.value;
+
+                    // TODO: Consider if it isn't better to do this while matching recipes.
+                    pattern_builder.ensure_absolute_path();
+
+                    self.manifest.build_recipes.push(BuildRecipe {
+                        span: build_recipe.span,
+                        pattern: pattern_builder.build(),
+                        doc_comment,
+                        body: &build_recipe.body.statements,
+                        hash,
+                    });
+                }
+            }
+        }
+
+        // Warn about defines set on the command-line that have no effect.
+        for (key, _) in &self.defines {
+            if !self.manifest.globals.contains_key(key) {
+                self.watcher.warning(None, &format!("Unused define: {key}"));
+            }
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    pub fn io(&self) -> &dyn Io {
+        &*self.io
     }
 
     /// Write outdatedness cache (`which` and `glob`)  to "<out-dir>/.werk-cache".
-    pub async fn finalize(&self, io: &dyn Io) -> std::io::Result<()> {
+    pub async fn finalize(&self) -> std::io::Result<()> {
         let cache = self.werk_cache.lock();
-        write_workspace_cache(io, self.output_directory.as_deref(), &*cache).await
+        write_workspace_cache(&*self.io, self.output_directory.as_deref(), &*cache).await
     }
 
     #[inline]
@@ -184,25 +307,23 @@ impl Workspace {
 
     pub fn get_existing_project_or_output_file(
         &self,
-        io: &dyn Io,
         path: &Absolute<werk_fs::Path>,
     ) -> Result<Option<DirEntry>, Error> {
         if let Some(dir_entry) = self.get_project_file(path) {
             return Ok(Some(dir_entry.clone()));
         }
 
-        self.get_existing_output_file(io, path)
+        self.get_existing_output_file(path)
     }
 
     pub fn get_existing_output_file(
         &self,
-        io: &dyn Io,
         path: &Absolute<werk_fs::Path>,
     ) -> Result<Option<DirEntry>, Error> {
         let fs_path = path
             .resolve(werk_fs::Path::ROOT, self.output_directory.as_deref())
             .expect("out dir resolve error");
-        match io.metadata(fs_path.as_deref()) {
+        match self.io.metadata(fs_path.as_deref()) {
             Ok(metadata) => Ok(Some(DirEntry {
                 path: fs_path,
                 metadata,
@@ -225,15 +346,12 @@ impl Workspace {
         path.resolve(werk_fs::Path::ROOT, self.output_directory.as_deref())
     }
 
-    pub async fn create_output_parent_dirs(
-        &self,
-        io: &dyn Io,
-        path: &werk_fs::Path,
-    ) -> Result<(), Error> {
+    pub async fn create_output_parent_dirs(&self, path: &werk_fs::Path) -> Result<(), Error> {
         let fs_path = path
             .resolve(werk_fs::Path::ROOT, self.output_directory.as_deref())
             .expect("out dir resolve error");
-        io.create_parent_dirs(fs_path.as_deref())
+        self.io
+            .create_parent_dirs(fs_path.as_deref())
             .await
             .map_err(Into::into)
     }
@@ -304,7 +422,6 @@ impl Workspace {
 
     pub fn which(
         &self,
-        io: &dyn Io,
         command: &str,
     ) -> Result<(Absolute<std::path::PathBuf>, Option<Hash128>), which::Error> {
         let path = std::path::Path::new(command);
@@ -319,7 +436,7 @@ impl Workspace {
                 entry.get().clone().map(|(path, hash)| (path, Some(hash)))
             }
             hash_map::Entry::Vacant(entry) => {
-                let result = io.which(command).map(|path| {
+                let result = self.io.which(command).map(|path| {
                     let hash = compute_stable_hash(&path);
                     (path, hash)
                 });
@@ -330,7 +447,7 @@ impl Workspace {
         }
     }
 
-    pub fn env(&self, io: &dyn Io, name: &str) -> (String, Hash128) {
+    pub fn env(&self, name: &str) -> (String, Hash128) {
         let mut state = self.runtime_caches.lock();
         let state = &mut *state;
         match state.env_cache.entry(name.to_owned()) {
@@ -339,7 +456,7 @@ impl Workspace {
                 (value.clone(), *hash)
             }
             hash_map::Entry::Vacant(entry) => {
-                let result = io.read_env(name).unwrap_or_default();
+                let result = self.io.read_env(name).unwrap_or_default();
                 let hash = compute_stable_hash(&result);
                 entry.insert((result.clone(), hash));
                 (result, hash)

@@ -3,7 +3,11 @@ use std::{
     ops::{BitOr, BitOrAssign},
 };
 
-use crate::{cache::TargetOutdatednessCache, ir, TaskId, Used, UsedVariable, Workspace};
+use crate::{
+    cache::TargetOutdatednessCache,
+    eval::{Used, UsedVariable},
+    ir, TaskId, Workspace,
+};
 
 /// A reason why a variable or recipe is "outdated".
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

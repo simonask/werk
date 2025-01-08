@@ -7,59 +7,34 @@ use werk_fs::{Absolute, Path};
 
 use crate::{
     depfile::Depfile,
-    eval_build_recipe_statements, eval_task_recipe_statements,
+    eval::{self, Eval},
     ir::{self},
-    AmbiguousPatternError, BuildRecipeScope, Error, Eval, Io, Outdatedness, OutdatednessTracker,
-    Reason, RootScope, Scope as _, ShellCommandLine, TaskRecipeScope, Value, Workspace,
-    WorkspaceSettings,
+    AmbiguousPatternError, BuildRecipeScope, Error, Outdatedness, OutdatednessTracker, Reason,
+    RootScope, Scope as _, ShellCommandLine, TaskRecipeScope, Value, Workspace, WorkspaceSettings,
 };
 
-pub struct Runner<'a> {
-    state: Arc<State<'a>>,
-    executor: Arc<smol::Executor<'a>>,
-}
-
-struct State<'a> {
-    document: &'a ir::Document<'a>,
-    io: &'a dyn Io,
-    workspace: &'a Workspace,
-    watcher: &'a dyn Watcher,
-    limit_parallelism: smol::lock::Semaphore,
+/// Workspace-wide runner state.
+pub(crate) struct RunnerState {
+    concurrency_limit: smol::lock::Semaphore,
     tasks: Mutex<IndexMap<TaskId, TaskStatus>>,
 }
 
-pub trait Watcher: Send + Sync {
-    /// Build task is about to start.
-    fn will_build(&self, task_id: &TaskId, num_steps: usize, outdatedness: &Outdatedness);
+impl RunnerState {
+    pub fn new(jobs: usize) -> Self {
+        Self {
+            concurrency_limit: smol::lock::Semaphore::new(jobs.max(1)),
+            tasks: Mutex::new(Default::default()),
+        }
+    }
+}
 
-    /// Build task finished (all steps have been completed).
-    fn did_build(&self, task_id: &TaskId, result: &Result<BuildStatus, Error>);
-    /// Run command is about to be executed.
-    fn will_execute(
-        &self,
-        task_id: &TaskId,
-        command: &ShellCommandLine,
-        step: usize,
-        num_steps: usize,
-    );
-    /// Run command is finished executing, or failed to start. Note that
-    /// `result` will be `Ok` even if the command returned an error, allowing
-    /// access to the command's stdout/stderr.
-    ///
-    /// The runner guarantees that if an `Ok(output)` is passed to this
-    /// function,
-    fn did_execute(
-        &self,
-        task_id: &TaskId,
-        command: &ShellCommandLine,
-        result: &Result<std::process::Output, std::io::Error>,
-        step: usize,
-        num_steps: usize,
-        print_success: bool,
-    );
+pub struct Runner<'a> {
+    inner: Arc<Inner<'a>>,
+}
 
-    fn message(&self, task_id: Option<&TaskId>, message: &str);
-    fn warning(&self, task_id: Option<&TaskId>, message: &str);
+struct Inner<'a> {
+    workspace: &'a Workspace<'a>,
+    executor: smol::Executor<'a>,
 }
 
 #[derive(Clone)]
@@ -181,23 +156,12 @@ impl<'a> TaskSpec<'a> {
 }
 
 impl<'a> Runner<'a> {
-    pub fn new(
-        document: &'a ir::Document<'a>,
-        io: &'a dyn Io,
-        workspace: &'a Workspace,
-        watcher: &'a dyn Watcher,
-        jobs: usize,
-    ) -> Self {
+    pub fn new(workspace: &'a Workspace) -> Self {
         Self {
-            state: Arc::new(State {
-                document,
-                io,
+            inner: Arc::new(Inner {
                 workspace,
-                watcher,
-                limit_parallelism: smol::lock::Semaphore::new(jobs.max(1)),
-                tasks: Mutex::new(Default::default()),
+                executor: smol::Executor::new(),
             }),
-            executor: Arc::new(smol::Executor::new()),
         }
     }
 
@@ -206,47 +170,41 @@ impl<'a> Runner<'a> {
             .absolutize(werk_fs::Path::ROOT)
             .map_err(|err| Error::InvalidTargetPath(target.to_string(), err))?;
         tracing::debug!("Build: {target}");
-        let spec = self.state.get_build_spec(&target)?;
-        let state = self.state.clone();
-        self.executor
-            .run(async move {
-                state
-                    .run_task(self.executor.clone(), spec, DepChain::Empty)
-                    .await
-            })
+        let spec = self.inner.get_build_spec(&target)?;
+        let inner = self.inner.clone();
+        // TODO: Run the executor with multiple threads.
+        self.inner
+            .executor
+            .run(async move { inner.run_task(spec, DepChain::Empty).await })
             .await
     }
 
     pub async fn run_command(&self, target: &str) -> Result<BuildStatus, Error> {
         tracing::debug!("Run: {target}");
-        let spec = self.state.get_command_spec(target)?;
-        let state = self.state.clone();
-        self.executor
-            .run(async move {
-                state
-                    .run_task(self.executor.clone(), spec, DepChain::Empty)
-                    .await
-            })
+        let spec = self.inner.get_command_spec(target)?;
+        let inner = self.inner.clone();
+        // TODO: Run the executor with multiple threads.
+        self.inner
+            .executor
+            .run(async move { inner.run_task(spec, DepChain::Empty).await })
             .await
     }
 
     pub async fn build_or_run(&self, target: &str) -> Result<BuildStatus, Error> {
         tracing::debug!("Build or run: {target}");
-        let spec = self.state.get_build_or_command_spec(target)?;
-        let state = self.state.clone();
-        self.executor
-            .run(async move {
-                state
-                    .run_task(self.executor.clone(), spec, DepChain::Empty)
-                    .await
-            })
+        let spec = self.inner.get_build_or_command_spec(target)?;
+        let inner = self.inner.clone();
+        // TODO: Run the executor with multiple threads.
+        self.inner
+            .executor
+            .run(async move { inner.run_task(spec, DepChain::Empty).await })
             .await
     }
 }
 
-impl<'a> State<'a> {
+impl<'a> Inner<'a> {
     fn get_build_spec(&self, target: &Absolute<Path>) -> Result<TaskSpec<'a>, Error> {
-        let recipe_match = self.document.match_build_recipe(target)?;
+        let recipe_match = self.workspace.manifest.match_build_recipe(target)?;
         Ok(if let Some(recipe_match) = recipe_match {
             TaskSpec::Recipe(ir::RecipeMatch::Build(recipe_match))
         } else {
@@ -255,7 +213,7 @@ impl<'a> State<'a> {
     }
 
     fn get_depfile_build_spec(&self, target: &Absolute<Path>) -> Result<DepfileSpec<'a>, Error> {
-        let Some(recipe_match) = self.document.match_build_recipe(target)? else {
+        let Some(recipe_match) = self.workspace.manifest.match_build_recipe(target)? else {
             return Ok(DepfileSpec::ImplicitlyGenerated(target.to_owned()));
         };
         Ok(DepfileSpec::Recipe(recipe_match.into()))
@@ -263,20 +221,21 @@ impl<'a> State<'a> {
 
     fn get_command_spec(&self, target: &str) -> Result<TaskSpec<'a>, Error> {
         let recipe_match = self
-            .document
+            .workspace
+            .manifest
             .match_task_recipe(target)
             .ok_or_else(|| Error::NoRuleToBuildTarget(target.to_owned()))?;
         Ok(TaskSpec::Recipe(ir::RecipeMatch::Task(recipe_match)))
     }
 
     fn get_build_or_command_spec(&self, target: &str) -> Result<TaskSpec<'a>, Error> {
-        let task_recipe_match = self.document.match_task_recipe(target);
+        let task_recipe_match = self.workspace.manifest.match_task_recipe(target);
 
         if let Ok(path) = werk_fs::Path::new(target) {
             let path = path
                 .absolutize(werk_fs::Path::ROOT)
                 .map_err(|err| Error::InvalidTargetPath(path.to_string(), err))?;
-            if let Some(build_recipe_match) = self.document.match_build_recipe(&*path)? {
+            if let Some(build_recipe_match) = self.workspace.manifest.match_build_recipe(&*path)? {
                 if let Some(task_recipe) = task_recipe_match {
                     return Err(AmbiguousPatternError {
                         pattern1: task_recipe.name.to_owned(),
@@ -307,7 +266,6 @@ impl<'a> State<'a> {
     /// this task.
     async fn run_task(
         self: Arc<Self>,
-        executor: Arc<smol::Executor<'a>>,
         spec: TaskSpec<'a>,
         dep_chain: DepChain<'_>,
     ) -> Result<BuildStatus, Error> {
@@ -327,7 +285,7 @@ impl<'a> State<'a> {
             BuildNow(TaskSpec<'a>),
         }
 
-        fn schedule<'a>(this: &State<'a>, spec: TaskSpec<'a>) -> Scheduling<'a> {
+        fn schedule<'a>(this: &RunnerState, spec: TaskSpec<'a>) -> Scheduling<'a> {
             match this.tasks.lock().entry(spec.to_task_id()) {
                 Entry::Occupied(mut entry) => match entry.get_mut() {
                     TaskStatus::Built(ref result) => Scheduling::Done(result.clone()),
@@ -344,11 +302,7 @@ impl<'a> State<'a> {
             }
         }
 
-        fn finish_built<'a>(
-            this: &State<'a>,
-            task_id: &TaskId,
-            result: Result<BuildStatus, Error>,
-        ) {
+        fn finish_built(this: &RunnerState, task_id: &TaskId, result: Result<BuildStatus, Error>) {
             // Notify dependents
             let mut tasks = this.tasks.lock();
             let status = tasks.get_mut(task_id).expect("task not registered");
@@ -366,7 +320,7 @@ impl<'a> State<'a> {
             }
         }
 
-        match schedule(&self, spec) {
+        match schedule(&self.workspace.runner_state, spec) {
             Scheduling::Done(result) => result,
             Scheduling::Pending(receiver) => receiver
                 .await
@@ -374,9 +328,9 @@ impl<'a> State<'a> {
             Scheduling::BuildNow(task_spec) => {
                 let result = self
                     .clone()
-                    .rebuild_spec(executor, &task_id, task_spec, dep_chain)
+                    .rebuild_spec(&task_id, task_spec, dep_chain)
                     .await;
-                finish_built(&self, &task_id, result.clone());
+                finish_built(&self.workspace.runner_state, &task_id, result.clone());
                 result
             }
         }
@@ -394,12 +348,11 @@ impl<'a> State<'a> {
     #[tracing::instrument(level = "debug", skip_all, fields(target_file))]
     async fn execute_build_recipe(
         self: &Arc<Self>,
-        executor: Arc<smol::Executor<'a>>,
         task_id: &TaskId,
         recipe_match: ir::BuildRecipeMatch<'_>,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
-        let global_scope = RootScope::new(&self.document.globals, self.workspace, self.watcher);
+        let global_scope = RootScope::new(self.workspace);
         let mut scope = BuildRecipeScope::new(&global_scope, task_id, &recipe_match);
         scope.set(
             "out".to_owned(),
@@ -414,7 +367,7 @@ impl<'a> State<'a> {
 
         // Evaluate recipe body (`out` is available and in scope).
         let evaluated =
-            eval_build_recipe_statements(&mut scope, self.io, &recipe_match.recipe.body).await?;
+            eval::eval_build_recipe_statements(&mut scope, &recipe_match.recipe.body).await?;
         outdatedness.did_use(evaluated.used);
         let evaluated = evaluated.value;
 
@@ -427,7 +380,7 @@ impl<'a> State<'a> {
         // Check the target's mtime.
         let out_mtime = scope
             .workspace()
-            .get_existing_output_file(&*self.io, &recipe_match.target_file)?
+            .get_existing_output_file(&recipe_match.target_file)?
             .map(|entry| entry.metadata.mtime);
 
         // Rebuild if the target does not exist.
@@ -464,7 +417,6 @@ impl<'a> State<'a> {
                     let dep_reasons = self
                         .clone()
                         .build_dependencies(
-                            executor.clone(),
                             vec![TaskSpec::Recipe(ir::RecipeMatch::Build(
                                 depfile_recipe_match_data,
                             ))],
@@ -481,15 +433,16 @@ impl<'a> State<'a> {
             }
             let is_implicit_depfile = check_implicit_depfile_was_generated.is_some();
 
-            if let Some(depfile_entry) = self
-                .workspace
-                .get_existing_output_file(&*self.io, &depfile_path)?
-            {
+            if let Some(depfile_entry) = self.workspace.get_existing_output_file(&depfile_path)? {
                 // The depfile was generated, either by a build recipe or by a
                 // previous run of this recipe. Parse it and add its
                 // dependencies!
                 tracing::debug!("Parsing depfile: {}", depfile_entry.path.display());
-                let depfile_contents = self.io.read_file(depfile_entry.path.as_deref()).await?;
+                let depfile_contents = self
+                    .workspace
+                    .io
+                    .read_file(depfile_entry.path.as_deref())
+                    .await?;
                 let depfile = Depfile::parse(&depfile_contents)?;
                 for dep in &depfile.deps {
                     // Translate the filesystem path produced by the compiler into an
@@ -513,8 +466,8 @@ impl<'a> State<'a> {
                     // If the depfile is generated by a rule, it is an error if that
                     // rule did not generate the depfile. If it is implicit, it's
                     // fine if it doesn't exist yet.
-                    if self.io.is_dry_run() {
-                        self.watcher.warning(
+                    if self.workspace.io.is_dry_run() {
+                        self.workspace.watcher.warning(
                             Some(task_id),
                             "Depfile does not exist, and was not generated, because this is a dry run",
                         );
@@ -527,21 +480,22 @@ impl<'a> State<'a> {
 
         // Build dependencies!
         let dep_reasons = self
-            .build_dependencies(executor, explicit_dependency_specs, dep_chain, out_mtime)
+            .build_dependencies(explicit_dependency_specs, dep_chain, out_mtime)
             .await?;
         outdatedness.add_reasons(dep_reasons);
 
         // Create the parent directory for the target file if it doesn't exist.
         scope
             .workspace()
-            .create_output_parent_dirs(&*self.io, &recipe_match.target_file)
+            .create_output_parent_dirs(&recipe_match.target_file)
             .await?;
 
         let (outdated, new_cache) = outdatedness.finish();
         self.workspace
             .store_build_target_cache(recipe_match.target_file.to_path_buf(), new_cache);
 
-        self.watcher
+        self.workspace
+            .watcher
             .will_build(task_id, evaluated.commands.len(), &outdated);
 
         let result = if outdated.is_outdated() {
@@ -557,12 +511,12 @@ impl<'a> State<'a> {
 
         // Check if the implicit depfile was actually generated, and emit a warning if not.
         if let Some(ref implicit_depfile_path) = check_implicit_depfile_was_generated {
-            if !self.io.is_dry_run() {
+            if !self.workspace.io.is_dry_run() {
                 if let Ok(None) | Err(_) = self
                     .workspace
-                    .get_existing_output_file(&*self.io, implicit_depfile_path.as_deref())
+                    .get_existing_output_file(implicit_depfile_path.as_deref())
                 {
-                    self.watcher.warning(
+                    self.workspace.watcher.warning(
                         Some(task_id),
                         &format!(
                             "Depfile was not generated by the recipe: {implicit_depfile_path}"
@@ -572,23 +526,22 @@ impl<'a> State<'a> {
             }
         }
 
-        self.watcher.did_build(task_id, &result);
+        self.workspace.watcher.did_build(task_id, &result);
         result
     }
 
     async fn execute_command_recipe(
         self: &Arc<Self>,
-        executor: Arc<smol::Executor<'a>>,
         task_id: &TaskId,
         recipe: &ir::TaskRecipe<'a>,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
-        let global_scope = RootScope::new(&self.document.globals, self.workspace, self.watcher);
+        let global_scope = RootScope::new(self.workspace);
         let mut scope = TaskRecipeScope::new(&global_scope, task_id, recipe);
 
         // Evaluate dependencies (`out` is not available in commands).
 
-        let evaluated = eval_task_recipe_statements(&mut scope, self.io, &recipe.body).await?;
+        let evaluated = eval::eval_task_recipe_statements(&mut scope, &recipe.body).await?;
         let dependency_specs = evaluated
             .build
             .iter()
@@ -596,11 +549,12 @@ impl<'a> State<'a> {
             .collect::<Result<Vec<_>, _>>()?;
 
         // Note: We don't care about the status of dependencies.
-        self.build_dependencies(executor, dependency_specs, dep_chain, None)
+        self.build_dependencies(dependency_specs, dep_chain, None)
             .await?;
 
         let outdated = Outdatedness::outdated(Reason::Rebuilt(task_id.clone()));
-        self.watcher
+        self.workspace
+            .watcher
             .will_build(task_id, evaluated.commands.len(), &outdated);
 
         let result = self
@@ -608,7 +562,7 @@ impl<'a> State<'a> {
             .await
             .map(|_| BuildStatus::Complete(task_id.clone(), outdated));
 
-        self.watcher.did_build(task_id, &result);
+        self.workspace.watcher.did_build(task_id, &result);
         result
     }
 
@@ -624,18 +578,25 @@ impl<'a> State<'a> {
         }
 
         // Ensure that only the desired number of jobs are running.
-        let _limit_parallelism = self.limit_parallelism.acquire().await;
+        let _limit_concurrency = self
+            .workspace
+            .runner_state
+            .concurrency_limit
+            .acquire()
+            .await;
 
         for (step, run_command) in run_commands.into_iter().enumerate() {
             match run_command {
                 RunCommand::Shell(command_line) => {
-                    self.watcher
+                    self.workspace
+                        .watcher
                         .will_execute(task_id, &command_line, step, num_steps);
                     let result = self
+                        .workspace
                         .io
                         .run_build_command(&command_line, self.workspace.project_root())
                         .await;
-                    self.watcher.did_execute(
+                    self.workspace.watcher.did_execute(
                         task_id,
                         &command_line,
                         &result,
@@ -653,18 +614,24 @@ impl<'a> State<'a> {
                     }
                 }
                 RunCommand::Write(path_buf, vec) => {
-                    self.io.write_file(path_buf.as_deref(), &vec).await?
+                    self.workspace
+                        .io
+                        .write_file(path_buf.as_deref(), &vec)
+                        .await?
                 }
                 RunCommand::Copy(from, to) => {
-                    self.io.copy_file(from.as_deref(), to.as_deref()).await?
+                    self.workspace
+                        .io
+                        .copy_file(from.as_deref(), to.as_deref())
+                        .await?
                 }
+                RunCommand::Delete(path) => self.workspace.io.delete_file(path.as_deref()).await?,
                 RunCommand::Info(message) => {
-                    self.watcher.message(Some(task_id), &message);
+                    self.workspace.watcher.message(Some(task_id), &message);
                 }
                 RunCommand::Warn(message) => {
-                    self.watcher.warning(Some(task_id), &message);
+                    self.workspace.watcher.warning(Some(task_id), &message);
                 }
-                RunCommand::Delete(path) => self.io.delete_file(path.as_deref()).await?,
             }
         }
 
@@ -673,7 +640,6 @@ impl<'a> State<'a> {
 
     fn build_dependencies(
         self: &Arc<Self>,
-        executor: Arc<smol::Executor<'a>>,
         mut dependencies: Vec<TaskSpec<'a>>,
         dependent: DepChainEntry<'_>,
         output_mtime: Option<SystemTime>,
@@ -683,9 +649,8 @@ impl<'a> State<'a> {
             let dependency = dependencies.pop().unwrap();
             let parent = dependent.collect();
             let this = self.clone();
-            let executor2 = executor.clone();
             return Box::pin(async move {
-                this.run_task(executor2, dependency, DepChain::Owned(&parent))
+                this.run_task(dependency, DepChain::Owned(&parent))
                     .await
                     .map(|status| {
                         status
@@ -702,12 +667,10 @@ impl<'a> State<'a> {
                 let mut tasks = Vec::with_capacity(dependencies.len());
                 for dep in dependencies {
                     let parent = parent.clone();
-                    let this = this.clone();
-                    let executor2 = executor.clone();
-                    let task = executor.spawn(async move {
-                        this.run_task(executor2, dep, DepChain::Owned(&parent))
-                            .await
-                    });
+                    let this2 = this.clone();
+                    let task = this
+                        .executor
+                        .spawn(async move { this2.run_task(dep, DepChain::Owned(&parent)).await });
                     tasks.push(task);
                 }
 
@@ -740,7 +703,6 @@ impl<'a> State<'a> {
     /// Unconditionally run the task if it is outdated.
     async fn rebuild_spec(
         self: &Arc<Self>,
-        executor: Arc<smol::Executor<'a>>,
         task_id: &TaskId,
         spec: TaskSpec<'a>,
         dep_chain: DepChain<'_>,
@@ -750,11 +712,11 @@ impl<'a> State<'a> {
         match spec {
             TaskSpec::Recipe(recipe) => match recipe {
                 ir::RecipeMatch::Task(recipe) => {
-                    self.execute_command_recipe(executor, task_id, recipe, dep_chain_entry)
+                    self.execute_command_recipe(task_id, recipe, dep_chain_entry)
                         .await
                 }
                 ir::RecipeMatch::Build(recipe_match) => {
-                    self.execute_build_recipe(executor, task_id, recipe_match, dep_chain_entry)
+                    self.execute_build_recipe(task_id, recipe_match, dep_chain_entry)
                         .await
                 }
             },

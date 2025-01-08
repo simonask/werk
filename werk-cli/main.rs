@@ -232,6 +232,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     tracing::info!("Output directory: {}", out_dir.display());
 
     let mut settings = WorkspaceSettings::new(workspace_dir.to_owned());
+    settings.jobs = args.jobs.unwrap_or_else(num_cpus::get);
     settings.output_directory = out_dir;
     for def in &args.define {
         let Some((key, value)) = def.split_once('=') else {
@@ -248,16 +249,12 @@ async fn try_main(args: Args) -> Result<(), Error> {
         io = Arc::new(werk_runner::RealSystem::new());
     }
 
-    let workspace = Workspace::new(&*io, workspace_dir.to_owned(), &settings)
+    let workspace = Workspace::new(&ast, &*io, &*watcher, workspace_dir.to_owned(), &settings)
         .await
         .map_err(display_error)?;
 
-    let document = werk_runner::ir::Document::compile(ast, &*io, &workspace, &*watcher)
-        .await
-        .map_err(display_root_eval_error)?;
-
     if args.list {
-        print_list(&document, &*watcher);
+        print_list(&workspace.manifest, &*watcher);
         return Ok(());
     }
 
@@ -266,13 +263,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
         return Err(Error::NoTarget);
     };
 
-    let runner = Runner::new(
-        &document,
-        &*io,
-        &workspace,
-        &*watcher,
-        args.jobs.unwrap_or_else(num_cpus::get),
-    );
+    let runner = Runner::new(&workspace);
 
     // Hide cursor and disable line wrapping while running.
     watcher.lock().start_advanced_rendering();
@@ -288,7 +279,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     };
 
     if write_cache {
-        if let Err(err) = workspace.finalize(&*io).await {
+        if let Err(err) = workspace.finalize().await {
             eprintln!("Error writing `.werk-cache`: {err}")
         }
     }
@@ -296,7 +287,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     result.map(|_| ()).map_err(display_error)
 }
 
-pub fn print_list(doc: &werk_runner::ir::Document, watcher: &watcher::StdoutWatcher) {
+pub fn print_list(doc: &werk_runner::ir::Manifest, watcher: &watcher::StdoutWatcher) {
     let globals = doc
         .globals
         .iter()

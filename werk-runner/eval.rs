@@ -117,12 +117,8 @@ impl<T> std::ops::DerefMut for Eval<T> {
     }
 }
 
-pub async fn eval(
-    scope: &dyn Scope,
-    io: &dyn Io,
-    expr: &ast::Expr<'_>,
-) -> Result<Eval<Value>, EvalError> {
-    match eval_inner(scope, io, expr).await? {
+pub async fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, EvalError> {
+    match eval_inner(scope, expr).await? {
         EvalInner::Produced(eval) => Ok(eval),
         // EvalInner::ReturnImplicit => Ok(Eval::inherent(Value::String(String::new()))),
         EvalInner::ReturnImplicit => {
@@ -145,14 +141,10 @@ impl From<Eval<Value>> for EvalInner {
     }
 }
 
-async fn eval_inner(
-    scope: &dyn Scope,
-    io: &dyn Io,
-    expr: &ast::Expr<'_>,
-) -> Result<EvalInner, EvalError> {
+async fn eval_inner(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<EvalInner, EvalError> {
     match expr {
         ast::Expr::StringExpr(expr) => Ok(eval_string_expr(scope, expr)?.map(Value::String).into()),
-        ast::Expr::Shell(expr) => Ok(eval_shell(scope, io, &expr.param)
+        ast::Expr::Shell(expr) => Ok(eval_shell(scope, &expr.param)
             .await?
             .map(Value::String)
             .into()),
@@ -165,7 +157,7 @@ async fn eval_inner(
 
             let (which, hash) = scope
                 .workspace()
-                .which(io, &string)
+                .which(&string)
                 .map_err(|e| EvalError::CommandNotFound(expr.span, string.clone(), e))?;
 
             let which = String::from_utf8(which.into_inner().into_os_string().into_encoded_bytes())
@@ -194,7 +186,7 @@ async fn eval_inner(
                 value: name,
                 mut used,
             } = eval_string_expr(scope, &expr.param)?;
-            let (env, hash) = scope.workspace().env(io, &name);
+            let (env, hash) = scope.workspace().env(&name);
             used.insert(UsedVariable::Env(name, hash));
             Ok(Eval {
                 value: Value::String(env),
@@ -204,7 +196,7 @@ async fn eval_inner(
         }
         ast::Expr::Match(match_expr) => {
             // Boxing for recursion.
-            Box::pin(eval_match_expr(scope, io, match_expr))
+            Box::pin(eval_match_expr(scope, match_expr))
                 .await
                 .map(Into::into)
         }
@@ -214,7 +206,7 @@ async fn eval_inner(
                 let mut items = Vec::with_capacity(list_expr.items.len());
                 let mut used = Used::none();
                 for expr in &list_expr.items {
-                    let eval_item = match eval_inner(scope, io, &expr.item).await? {
+                    let eval_item = match eval_inner(scope, &expr.item).await? {
                         EvalInner::Produced(eval) => eval,
                         // If the list element is an expression that forwards an
                         // implicit value, produce the empty string -- we don't
@@ -261,9 +253,9 @@ async fn eval_inner(
         ast::Expr::Then(then) => {
             // Boxing for recursion.
             Box::pin(async {
-                let lhs_value = eval(scope, io, &then.expr).await?;
+                let lhs_value = eval(scope, &then.expr).await?;
                 let scope = SubexprScope::new(scope, &lhs_value);
-                match eval_inner(&scope, io, &then.then).await? {
+                match eval_inner(&scope, &then.then).await? {
                     // The rhs expression produced a new value, return that.
                     EvalInner::Produced(rhs_value) => Ok(EvalInner::Produced(rhs_value)),
                     // The lhs expression did not produce a new value, return the lhs value.
@@ -291,7 +283,6 @@ async fn eval_inner(
 
 pub async fn eval_match_expr(
     scope: &dyn Scope,
-    io: &dyn Io,
     expr: &ast::MatchExpr<'_>,
 ) -> Result<Eval<Value>, EvalError> {
     let implied_value = scope
@@ -310,13 +301,12 @@ pub async fn eval_match_expr(
     // Apply the match recursively to the input.
     async fn apply_match_recursively(
         scope: &dyn Scope,
-        io: &dyn Io,
         patterns: &[(Pattern<'_>, &ast::Expr<'_>)],
         value: &Value,
         used: &mut Used,
     ) -> Result<Value, EvalError> {
         match value {
-            Value::String(s) => apply_match(scope, io, patterns, s.clone(), used).await,
+            Value::String(s) => apply_match(scope, patterns, s.clone(), used).await,
             Value::List(list) => {
                 if list.is_empty() {
                     return Ok(Value::List(Vec::new()));
@@ -326,8 +316,7 @@ pub async fn eval_match_expr(
                 Box::pin(async move {
                     let mut new_list = Vec::with_capacity(list.len());
                     for item in list {
-                        new_list
-                            .push(apply_match_recursively(scope, io, patterns, item, used).await?);
+                        new_list.push(apply_match_recursively(scope, patterns, item, used).await?);
                     }
                     Ok(Value::List(new_list))
                 })
@@ -338,7 +327,6 @@ pub async fn eval_match_expr(
 
     async fn apply_match(
         scope: &dyn Scope,
-        io: &dyn Io,
         patterns: &[(Pattern<'_>, &ast::Expr<'_>)],
         input_string: String,
         used: &mut Used,
@@ -356,7 +344,7 @@ pub async fn eval_match_expr(
                 used: Used::none(),
             };
             let scope = MatchScope::new(scope, &pattern_match, &matched_string);
-            let new_value = match eval_inner(&scope, io, replacement_expr).await? {
+            let new_value = match eval_inner(&scope, replacement_expr).await? {
                 EvalInner::Produced(eval) => {
                     *used |= eval.used;
                     eval.value
@@ -370,17 +358,16 @@ pub async fn eval_match_expr(
         Ok::<_, EvalError>(Value::String(input_string))
     }
 
-    let value = apply_match_recursively(scope, io, &patterns, &*implied_value, &mut used).await?;
+    let value = apply_match_recursively(scope, &patterns, &*implied_value, &mut used).await?;
 
     Ok(Eval { value, used })
 }
 
 pub async fn eval_collect_strings<P: Scope>(
     scope: &P,
-    io: &dyn Io,
     expr: &ast::Expr<'_>,
 ) -> Result<Eval<Vec<String>>, EvalError> {
-    let eval = eval(scope, io, expr).await?;
+    let eval = eval(scope, expr).await?;
     Ok(eval.map(|value| value.collect_strings()))
 }
 
@@ -501,33 +488,30 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
 
 pub async fn eval_run_exprs<S: Scope>(
     scope: &S,
-    io: &dyn Io,
     expr: &ast::RunExpr<'_>,
     commands: &mut Vec<RunCommand>,
 ) -> Result<Used, EvalError> {
     async fn eval_run_exprs_recursively<S: Scope>(
         scope: &S,
-        io: &dyn Io,
         expr: &ast::RunExpr<'_>,
         commands: &mut Vec<RunCommand>,
         used: &mut Used,
     ) -> Result<(), EvalError> {
         match expr {
             ast::RunExpr::Shell(expr) => {
-                let shell =
-                    eval_shell_command(scope, io, &expr.param, scope.workspace().force_color)?;
+                let shell = eval_shell_command(scope, &expr.param, scope.workspace().force_color)?;
                 *used |= shell.used;
                 commands.push(RunCommand::Shell(shell.value));
             }
             ast::RunExpr::Write(expr) => {
-                let destination = eval(scope, io, &expr.path).await?;
+                let destination = eval(scope, &expr.path).await?;
                 let Value::String(dest_path) = destination.value else {
                     return Err(EvalError::UnexpectedList(expr.path.span()));
                 };
                 let dest_path = werk_fs::Path::new(&dest_path)
                     .and_then(|path| scope.workspace().get_output_file_path(path))
                     .map_err(|err| EvalError::Path(expr.span, err))?;
-                let data = eval(scope, io, &expr.value).await?;
+                let data = eval(scope, &expr.value).await?;
                 let write_used = destination.used | data.used;
                 let Value::String(data) = data.value else {
                     return Err(EvalError::UnexpectedList(expr.value.span()));
@@ -572,7 +556,7 @@ pub async fn eval_run_exprs<S: Scope>(
                 // Boxing for recursion
                 Box::pin(async {
                     for expr in &exprs.items {
-                        eval_run_exprs_recursively(scope, io, &expr.item, commands, used).await?;
+                        eval_run_exprs_recursively(scope, &expr.item, commands, used).await?;
                     }
                     Ok::<_, EvalError>(())
                 })
@@ -582,8 +566,7 @@ pub async fn eval_run_exprs<S: Scope>(
                 // Boxing for recursion
                 Box::pin(async {
                     for stmt in &block.statements {
-                        eval_run_exprs_recursively(scope, io, &stmt.statement, commands, used)
-                            .await?;
+                        eval_run_exprs_recursively(scope, &stmt.statement, commands, used).await?;
                     }
                     Ok::<_, EvalError>(())
                 })
@@ -595,13 +578,12 @@ pub async fn eval_run_exprs<S: Scope>(
     }
 
     let mut used = Used::none();
-    eval_run_exprs_recursively(scope, io, expr, commands, &mut used).await?;
+    eval_run_exprs_recursively(scope, expr, commands, &mut used).await?;
     Ok(used)
 }
 
 pub fn eval_shell_command<P: Scope + ?Sized>(
     scope: &P,
-    io: &dyn Io,
     expr: &ast::StringExpr,
     force_color: bool,
 ) -> Result<Eval<ShellCommandLine>, EvalError> {
@@ -665,7 +647,7 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
         }
     }
 
-    let (mut command_line, used_which) = builder.build(expr.span, scope.workspace(), io)?;
+    let (mut command_line, used_which) = builder.build(expr.span, scope.workspace())?;
     if force_color {
         command_line.set_force_color();
     }
@@ -682,7 +664,6 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
 
 fn eval_shell_commands_into<S: Scope>(
     scope: &S,
-    io: &dyn Io,
     expr: &ast::Expr,
     cmds: &mut Vec<ShellCommandLine>,
     force_color: bool,
@@ -694,7 +675,7 @@ fn eval_shell_commands_into<S: Scope>(
         | ast::Expr::Shell(ast::ShellExpr {
             param: string_expr, ..
         }) => {
-            let command = eval_shell_command(scope, io, string_expr, force_color)?;
+            let command = eval_shell_command(scope, string_expr, force_color)?;
             cmds.push(command.value);
             Ok(command.used)
         }
@@ -709,7 +690,7 @@ fn eval_shell_commands_into<S: Scope>(
         ast::Expr::List(list) => {
             let mut used = Used::none();
             for item in &list.items {
-                used |= eval_shell_commands_into(scope, io, &item.item, cmds, force_color)?;
+                used |= eval_shell_commands_into(scope, &item.item, cmds, force_color)?;
             }
             Ok(used)
         }
@@ -737,12 +718,11 @@ fn eval_shell_commands_into<S: Scope>(
 
 pub fn eval_shell_commands<S: Scope>(
     scope: &S,
-    io: &dyn Io,
     expr: &ast::Expr,
     force_color: bool,
 ) -> Result<Vec<ShellCommandLine>, Error> {
     let mut cmds = Vec::new();
-    eval_shell_commands_into(scope, io, expr, &mut cmds, force_color)?;
+    eval_shell_commands_into(scope, expr, &mut cmds, force_color)?;
     Ok(cmds)
 }
 
@@ -751,12 +731,11 @@ pub fn eval_shell_commands<S: Scope>(
 /// command is different from the cached path in .werk-cache.toml.
 pub fn eval_shell_commands_run_which_and_detect_outdated<S: Scope>(
     scope: &S,
-    io: &dyn Io,
     expr: &ast::Expr,
     force_color: bool,
 ) -> Result<Eval<Vec<ShellCommandLine>>, Error> {
     let mut value = Vec::new();
-    let used = eval_shell_commands_into(scope, io, expr, &mut value, force_color)?;
+    let used = eval_shell_commands_into(scope, expr, &mut value, force_color)?;
     Ok(Eval { value, used })
 }
 
@@ -813,16 +792,16 @@ fn eval_string_interpolation_ops(
 
 pub async fn eval_shell<P: Scope + ?Sized>(
     scope: &P,
-    io: &dyn Io,
     expr: &ast::StringExpr<'_>,
 ) -> Result<Eval<String>, EvalError> {
-    let mut command = eval_shell_command(scope, io, expr, false)?;
+    let mut command = eval_shell_command(scope, expr, false)?;
 
     // Unconditionally disable color output when the command supports it,
     // because we are capturing the output as a string.
     command.set_no_color();
 
-    let output = match io
+    let output = match scope
+        .io()
         .run_during_eval(&command, scope.workspace().project_root())
         .await
     {
@@ -893,7 +872,6 @@ pub struct EvaluatedBuildRecipe {
 
 pub async fn eval_build_recipe_statements(
     scope: &mut BuildRecipeScope<'_>,
-    io: &dyn Io,
     body: &[ast::BodyStmt<ast::BuildRecipeStmt<'_>>],
 ) -> Result<Eval<EvaluatedBuildRecipe>, EvalError> {
     let mut evaluated = EvaluatedBuildRecipe {
@@ -906,11 +884,11 @@ pub async fn eval_build_recipe_statements(
     for stmt in body {
         match stmt.statement {
             ast::BuildRecipeStmt::Let(ref let_stmt) => {
-                let value = eval(scope, io, &let_stmt.value).await?;
+                let value = eval(scope, &let_stmt.value).await?;
                 scope.set(let_stmt.ident.ident.to_string(), value);
             }
             ast::BuildRecipeStmt::From(ref expr) => {
-                let value = eval(scope, io, &expr.param).await?;
+                let value = eval(scope, &expr.param).await?;
                 used |= value.used;
                 let offset = evaluated.explicit_dependencies.len();
                 value
@@ -921,7 +899,7 @@ pub async fn eval_build_recipe_statements(
                 scope.push_input_files(&evaluated.explicit_dependencies[offset..]);
             }
             ast::BuildRecipeStmt::Depfile(ref expr) => {
-                let value = eval(scope, io, &expr.param).await?;
+                let value = eval(scope, &expr.param).await?;
                 used |= value.used;
                 match value.value {
                     Value::String(depfile) => {
@@ -933,7 +911,7 @@ pub async fn eval_build_recipe_statements(
                 }
             }
             ast::BuildRecipeStmt::Run(ref expr) => {
-                used |= eval_run_exprs(scope, io, &expr.param, &mut evaluated.commands).await?;
+                used |= eval_run_exprs(scope, &expr.param, &mut evaluated.commands).await?;
             }
             ast::BuildRecipeStmt::Info(ref expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;
@@ -959,7 +937,6 @@ pub struct EvaluatedTaskRecipe {
 
 pub async fn eval_task_recipe_statements(
     scope: &mut TaskRecipeScope<'_>,
-    io: &dyn Io,
     body: &[ast::BodyStmt<ast::TaskRecipeStmt<'_>>],
 ) -> Result<EvaluatedTaskRecipe, EvalError> {
     let mut evaluated = EvaluatedTaskRecipe {
@@ -970,18 +947,18 @@ pub async fn eval_task_recipe_statements(
     for stmt in body {
         match stmt.statement {
             ast::TaskRecipeStmt::Let(ref let_stmt) => {
-                let value = eval(scope, io, &let_stmt.value).await?;
+                let value = eval(scope, &let_stmt.value).await?;
                 scope.set(
                     let_stmt.ident.ident.to_string(),
                     Eval::inherent(value.value),
                 );
             }
             ast::TaskRecipeStmt::Build(ref expr) => {
-                let value = eval(scope, io, &expr.param).await?;
+                let value = eval(scope, &expr.param).await?;
                 value.value.collect_strings_into(&mut evaluated.build);
             }
             ast::TaskRecipeStmt::Run(ref expr) => {
-                eval_run_exprs(scope, io, &expr.param, &mut evaluated.commands).await?;
+                eval_run_exprs(scope, &expr.param, &mut evaluated.commands).await?;
             }
             ast::TaskRecipeStmt::Info(ref expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;

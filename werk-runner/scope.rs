@@ -1,6 +1,9 @@
 use ahash::HashMap;
 
-use crate::{ir, Eval, PatternMatchData, TaskId, Used, Value, Watcher, Workspace};
+use crate::{
+    eval::{Eval, Used},
+    ir, Io, PatternMatchData, TaskId, Value, Watcher, Workspace,
+};
 
 pub type LocalVariables = indexmap::IndexMap<String, Eval<Value>>;
 pub type GlobalVariables = indexmap::IndexMap<String, GlobalVar>;
@@ -11,9 +14,7 @@ pub struct GlobalVar {
 }
 
 pub struct RootScope<'a> {
-    globals: &'a GlobalVariables,
-    pub workspace: &'a Workspace,
-    pub watcher: &'a dyn Watcher,
+    pub workspace: &'a Workspace<'a>,
 }
 
 pub struct TaskRecipeScope<'a> {
@@ -126,20 +127,16 @@ pub trait Scope: Send + Sync {
 
     fn task_id(&self) -> Option<&TaskId>;
     fn watcher(&self) -> &dyn Watcher;
+
+    fn io(&self) -> &dyn Io {
+        self.workspace().io()
+    }
 }
 
 impl<'a> RootScope<'a> {
     #[inline]
-    pub fn new(
-        globals: &'a GlobalVariables,
-        workspace: &'a Workspace,
-        watcher: &'a dyn Watcher,
-    ) -> Self {
-        Self {
-            globals,
-            workspace,
-            watcher,
-        }
+    pub fn new(workspace: &'a Workspace) -> Self {
+        Self { workspace }
     }
 }
 
@@ -253,7 +250,7 @@ impl Scope for RootScope<'_> {
             return None;
         };
 
-        let Some(global) = self.globals.get(name) else {
+        let Some(global) = self.workspace.manifest.globals.get(name) else {
             return default_global_constants()
                 .get(name)
                 .map(Eval::inherent)
@@ -275,7 +272,7 @@ impl Scope for RootScope<'_> {
 
     #[inline]
     fn watcher(&self) -> &dyn Watcher {
-        self.watcher
+        self.workspace.watcher
     }
 }
 
@@ -305,7 +302,7 @@ impl Scope for TaskRecipeScope<'_> {
 
     #[inline]
     fn watcher(&self) -> &dyn Watcher {
-        self.parent.watcher
+        self.parent.workspace.watcher
     }
 }
 
@@ -353,7 +350,7 @@ impl Scope for BuildRecipeScope<'_> {
 
     #[inline]
     fn watcher(&self) -> &dyn Watcher {
-        self.parent.watcher
+        self.parent.workspace.watcher
     }
 }
 

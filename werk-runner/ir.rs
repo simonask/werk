@@ -2,129 +2,24 @@ use indexmap::IndexMap;
 use werk_fs::Absolute;
 use werk_parser::{ast, parser::Span};
 
-use crate::{
-    cache::Hash128, compute_stable_hash, compute_stable_semantic_hash, eval, eval_pattern_builder,
-    Eval, EvalError, GlobalVar, GlobalVariables, Io, Pattern, PatternMatchData, RootScope,
-    UsedVariable, Value, Workspace,
-};
+use crate::{cache::Hash128, EvalError, GlobalVariables, Pattern, PatternMatchData};
 
 type Result<T, E = EvalError> = std::result::Result<T, E>;
 
-pub struct Document<'a> {
+/// Representation of the `Werkfile` or `werk.toml` manifest, partially
+/// evaluated.
+///
+/// - Global variables are fully evaluated.
+/// - Recipe patterns are fully evaluated.
+/// - Doc comments for all global items are gathered.
+/// - Recipe bodies are *not* evaluated, and refer directly into the AST.
+pub struct Manifest<'a> {
     pub globals: GlobalVariables,
     pub task_recipes: IndexMap<&'a str, TaskRecipe<'a>>,
     pub build_recipes: Vec<BuildRecipe<'a>>,
 }
 
-impl<'a> Document<'a> {
-    /// Evaluate global variables, tasks, and recipe patterns. Also gathers
-    /// documentation for each global item.
-    pub async fn compile(
-        doc: werk_parser::Document<'a>,
-        io: &dyn Io,
-        workspace: &Workspace,
-        watcher: &dyn crate::Watcher,
-    ) -> Result<Self> {
-        let mut task_recipes = IndexMap::new();
-        let mut build_recipes = Vec::new();
-        let mut globals = GlobalVariables::default();
-
-        let smuggled_whitespace = doc.smuggled_whitespace;
-        let source = doc.source;
-        let get_doc_comment = |ws: ast::Whitespace| {
-            let range = ws.0.start.0 as usize..ws.0.end.0 as usize;
-            if let Some(ref smuggled) = smuggled_whitespace {
-                smuggled.get(range).unwrap_or_default().trim()
-            } else {
-                source.get(range).unwrap_or_default().trim()
-            }
-        };
-
-        for stmt in doc.root.statements {
-            let doc_comment = get_doc_comment(stmt.ws_pre).to_string();
-
-            match stmt.statement {
-                ast::RootStmt::Config(_) => continue,
-                ast::RootStmt::Let(let_stmt) => {
-                    if let Some(global_override) = workspace.defines.get(let_stmt.ident.ident) {
-                        tracing::trace!(
-                            "overriding global var `{}` with `{}`",
-                            let_stmt.ident,
-                            global_override
-                        );
-                        globals.insert(
-                            let_stmt.ident.ident.to_owned(),
-                            GlobalVar {
-                                value: Eval::using_var(
-                                    Value::String(global_override.clone()),
-                                    UsedVariable::Define(
-                                        let_stmt.ident.ident.to_owned(),
-                                        compute_stable_hash(global_override),
-                                    ),
-                                ),
-                                comment: doc_comment,
-                            },
-                        );
-                    } else {
-                        let scope = RootScope::new(&globals, workspace, watcher);
-                        let value = eval(&scope, &*io, &let_stmt.value).await?;
-                        tracing::trace!("(global) let `{}` = {:?}", let_stmt.ident, value);
-                        globals.insert(
-                            let_stmt.ident.ident.to_owned(),
-                            GlobalVar {
-                                value,
-                                comment: doc_comment,
-                            },
-                        );
-                    }
-                }
-                ast::RootStmt::Task(command_recipe) => {
-                    let hash = compute_stable_semantic_hash(&command_recipe);
-                    task_recipes.insert(
-                        command_recipe.name.ident,
-                        TaskRecipe {
-                            span: command_recipe.span,
-                            name: command_recipe.name.ident,
-                            doc_comment,
-                            body: command_recipe.body.statements,
-                            hash,
-                        },
-                    );
-                }
-                ast::RootStmt::Build(build_recipe) => {
-                    let hash = compute_stable_semantic_hash(&build_recipe);
-                    let scope = RootScope::new(&globals, workspace, watcher);
-                    let mut pattern_builder =
-                        eval_pattern_builder(&scope, &build_recipe.pattern)?.value;
-
-                    // TODO: Consider if it isn't better to do this while matching recipes.
-                    pattern_builder.ensure_absolute_path();
-
-                    build_recipes.push(BuildRecipe {
-                        span: build_recipe.span,
-                        pattern: pattern_builder.build(),
-                        doc_comment,
-                        body: build_recipe.body.statements,
-                        hash,
-                    });
-                }
-            }
-        }
-
-        // Warn about defines set on the command-line that have no effect.
-        for (key, _) in &workspace.defines {
-            if !globals.contains_key(key) {
-                watcher.warning(None, &format!("Unused define: {key}"));
-            }
-        }
-
-        Ok(Self {
-            globals,
-            task_recipes,
-            build_recipes,
-        })
-    }
-
+impl<'a> Manifest<'a> {
     #[inline]
     pub fn match_task_recipe(&self, name: &str) -> Option<&TaskRecipe<'a>> {
         self.task_recipes.get(name)
@@ -241,7 +136,7 @@ pub struct TaskRecipe<'a> {
     pub span: Span,
     pub name: &'a str,
     pub doc_comment: String,
-    pub body: Vec<ast::BodyStmt<ast::TaskRecipeStmt<'a>>>,
+    pub body: &'a [ast::BodyStmt<ast::TaskRecipeStmt<'a>>],
     pub hash: Hash128,
 }
 
@@ -250,7 +145,7 @@ pub struct BuildRecipe<'a> {
     pub span: Span,
     pub pattern: Pattern<'a>,
     pub doc_comment: String,
-    pub body: Vec<ast::BodyStmt<ast::BuildRecipeStmt<'a>>>,
+    pub body: &'a [ast::BodyStmt<ast::BuildRecipeStmt<'a>>],
     pub hash: Hash128,
 }
 
