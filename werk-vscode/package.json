@@ -1,0 +1,25 @@
+{
+  "name": "werk",
+  "displayName": "Werk",
+  "description": "Werk language and build system support",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "werk",
+      "aliases": ["Werk", "werk"],
+      "extensions": [".werk","Werkfile","werkfile"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "werk",
+      "scopeName": "source.werk",
+      "path": "./syntaxes/werk.tmLanguage.json"
+    }]
+  }
+}

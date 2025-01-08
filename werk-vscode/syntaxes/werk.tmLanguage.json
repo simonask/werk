@@ -1,0 +1,45 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "Werk",
+	"patterns": [
+		{
+			"include": "#keywords"
+		},
+		{
+			"include": "#strings"
+		},
+		{
+			"include": "#comments"
+		}
+	],
+	"repository": {
+		"keywords": {
+			"patterns": [
+				{
+					"name": "keyword.control.werk",
+					"match": "\\b(config|let|build|task|match|from|depfile|run|write|copy|delete|info|warn|error)\\b"
+				}
+			]
+		},
+		"strings": {
+			"name": "string.quoted.double.werk",
+			"begin": "\"",
+			"end": "\"",
+			"patterns": [
+				{
+					"name": "constant.character.escape.werk",
+					"match": "\\\\."
+				}
+			]
+		},
+		"comments": {
+			"patterns": [
+				{
+					"name": "comment.line.werk",
+					"match": "#.*$"
+				}
+			]
+		}
+	},
+	"scopeName": "source.werk"
+}
