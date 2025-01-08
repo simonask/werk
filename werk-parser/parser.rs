@@ -15,12 +15,13 @@ use crate::{
     ast::{
         self,
         token::{self, Keyword},
+        ws_ignore,
     },
     parse_string::{
         path_interpolation, pattern_one_of, push_pattern_fragment, push_string_fragment,
         string_interpolation, StringFragment,
     },
-    Expected, LocatedError,
+    Expected,
 };
 
 mod span;
@@ -439,7 +440,14 @@ fn expression_leaf<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
 
 fn run_expression<'a>(input: &mut Input<'a>) -> PResult<ast::RunExpr<'a>> {
     alt((
-        shell_expr.map(ast::RunExpr::Shell),
+        string_expr.map(|string| {
+            ast::RunExpr::Shell(ast::ShellExpr {
+                span: string.span,
+                token: token::Keyword::with_span(string.span),
+                ws_1: ws_ignore(),
+                param: string,
+            })
+        }),
         list_of(run_expression).map(ast::RunExpr::List),
         shell_expr.map(ast::RunExpr::Shell),
         info_expr.map(ast::RunExpr::Info),

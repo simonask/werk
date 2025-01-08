@@ -206,13 +206,13 @@ async fn try_main(args: Args) -> Result<(), Error> {
 
     let toml_document;
     let ast = match werkfile {
-        Werkfile::Werk(_) => {
+        Werkfile::Werk(_) => werk_parser::parse_werk(&*source_code).map_err(display_parse_error)?,
+        Werkfile::Toml(_) => {
             toml_document = toml_edit::ImDocument::parse(&*source_code)
                 .map_err(werk_parser::Error::Toml)
                 .map_err(display_parse_error)?;
             werk_parser::parse_toml_document(&toml_document).map_err(display_parse_error)?
         }
-        Werkfile::Toml(_) => werk_parser::parse_werk(&*source_code).map_err(display_parse_error)?,
     };
 
     // Read the configuration statements from the AST.
