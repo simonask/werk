@@ -36,7 +36,7 @@ build "{executable}" {
 # Build the executable (shorthand).
 task build {
     build executable
-    run { info "Build done for profile '{profile}'" }
+    info "Build done for profile '{profile}'"
 }
 
 # Build and run the executable.
