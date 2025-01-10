@@ -1,4 +1,5 @@
 config out-dir = "../../target/examples/c-werk"
+config default = "build"
 
 # Path to the C compiler.
 let cc = which "clang"

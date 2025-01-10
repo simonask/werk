@@ -1,9 +1,12 @@
 # TODO
 
-- [ ] Consider using pattern syntax for glob patterns instead of standard glob syntax.
+- [ ] Consider using pattern syntax for glob patterns instead of standard glob
+  syntax.
 - [ ] Forward doc comments from TOML to `--list`.
 - [ ] Autoclean: Match files in the output directory against available recipes
   and delete them if they are older than `.werk-cache`.
+- [ ] Autowatcher: Run a recipe and detect which files where checked for
+  outdatedness, and then watch those files and rebuild when any of them changes.
 
 ## Done
 

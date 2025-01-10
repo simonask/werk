@@ -21,21 +21,31 @@ The following factors contribute to outdatedness:
 - **File modification timestamps:** If a build recipe depends on a file that has
   a newer modification timestamp than a previously built output file, the file
   is considered outdated.
+
 - **Glob results:** If a `glob` expression produces a new result between runs
   (i.e., a file is deleted that previously matched the pattern, or a new file is
   added matching the pattern), any recipe relying on the results of that glob
   expression will be outdated.
+
 - **Program paths:** If the path to a program's executable changes between runs
   (i.e., the result of a `which` expression changed), any recipe relying on the
   results of that expression will be outdated. Note: `werk` does not currently
   take file modification timestamps of found programs into account, so updating
   your tools may still require a manual rebuild.
+
 - **Environment variables:** If the value of an environment variable changed
   between runs, any recipe relying on the value will be outdated.
+
 - **Recipes:** If the recipe to build a file changes in a way that would cause
   the file to be built in a different way, the file is considered outdated.
   Insignificant changes that are ignored in this check are `info` and `warn`
   statements and comments.
+
+This means that a build recipe that has no input files can still become
+outdated, because its outdatedness is determined by these factors.
+
+Note that task recipes are always "outdated" (just like `.PHONY` targets), so a
+build recipe that depends on a task recipe will always be outdated.
 
 All values stored in `.werk-cache` are hashed to avoid leaking environment
 secrets.

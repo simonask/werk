@@ -1,0 +1,10 @@
+config out-dir = "../../target/examples/write"
+config default = "lines.txt"
+
+let list = ["a", "b", "c"]
+
+build "lines.txt" {
+    run {
+        write list | join "\n", out
+    }
+}

@@ -190,10 +190,9 @@ info object-files
 
 ### `match` expression
 
-Perform string [pattern-matching](#patterns-and-pattern-matching) and
-substitution. The "input" to the match operation is whatever value is piped into
-it, which is to say, `match` can only meaningfully appear as the right-hand side
-of a chaining expression.
+Perform string [pattern-matching](patterns.md) and substitution. The "input" to
+the match operation is whatever value is piped into it, which is to say, `match`
+can only meaningfully appear as the right-hand side of a chaining expression.
 
 If the "input" value is a list, the pattern substitution is performed
 recursively. If no patterns match the input, the string is passed through
@@ -371,31 +370,6 @@ let cflags = profile | match {
 ## Built-in variables and constants
 
 See [built-in variables](builtins.md).
-
-## Patterns and pattern matching
-
-Patterns are strings containing special directives. They behave similarly to Make patterns.
-
-Patterns can contain [string interpolations](#string-interpolation-syntax).
-Interpolated string values are not interpreted as patterns, but will be matched
-literally.
-
-Special syntax in pattern strings:
-
-- `%`: The "pattern stem". This matches any sequence of characters, which will
-  be available to subsequent statements as `{%}`.
-- `(a|b)`: Capture group matching either `a` or `b`.
-
-When multiple patterns are participating in pattern matching (such as figuring
-out which [build recipe](#build-statement-at-global-scope) to run, or in a
-[`match` expression](#match-expression)), the "highest-quality" match is chosen.
-Match quality is measured by the length of the stem: A match producing a shorter
-stem is considered "better" than a match producing a longer stem.
-
-**Important:** When multiple patterns match with equal quality, the pattern
-matching operation is ambiguous, and a hard error is emitted. Often, capture
-groups can be used to disambiguate two patterns by collapsing them into a single
-pattern.
 
 ## String interpolation syntax
 
