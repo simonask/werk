@@ -349,7 +349,7 @@ pub struct CopyExpr<'a> {
     pub ws_1: Whitespace,
     pub src: StringExpr<'a>,
     pub ws_2: Whitespace,
-    pub token_comma: token::Comma,
+    pub token_to: token::To,
     pub ws_3: Whitespace,
     pub dest: StringExpr<'a>,
 }
@@ -366,11 +366,11 @@ pub struct WriteExpr<'a> {
     pub span: Span,
     pub token_write: token::Write,
     pub ws_1: Whitespace,
-    pub path: Expr<'a>,
-    pub ws_2: Whitespace,
-    pub token_comma: token::Comma,
-    pub ws_3: Whitespace,
     pub value: Expr<'a>,
+    pub ws_2: Whitespace,
+    pub token_to: token::To,
+    pub ws_3: Whitespace,
+    pub path: Expr<'a>,
 }
 
 impl<'a> SemanticHash for WriteExpr<'a> {

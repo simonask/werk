@@ -393,24 +393,19 @@ fn expression_chain<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
     // "=>" expression_leaf
     fn expression_chain_link<'a>(
         input: &mut Input<'a>,
-    ) -> PResult<(
-        ast::Whitespace,
-        token::FatArrow,
-        ast::Whitespace,
-        ast::Expr<'a>,
-    )> {
-        (whitespace, then_arrow, whitespace, cut_err(expression_leaf)).parse_next(input)
+    ) -> PResult<(ast::Whitespace, token::Pipe, ast::Whitespace, ast::Expr<'a>)> {
+        (whitespace, token, whitespace, cut_err(expression_leaf)).parse_next(input)
     }
 
     repeat(0.., expression_chain_link)
         .fold(
             move || expr.take().unwrap(),
-            |expr, (decor_1, token_fat_arrow, decor_2, then)| {
+            |expr, (decor_1, token_pipe, decor_2, then)| {
                 ast::Expr::Then(Box::new(ast::ThenExpr {
                     span: expr.span().merge(then.span()),
                     expr,
                     ws_1: decor_1,
-                    token_fat_arrow,
+                    token_pipe,
                     ws_2: decor_2,
                     then,
                 }))
@@ -464,11 +459,11 @@ fn write_expr<'a>(input: &mut Input<'a>) -> PResult<ast::WriteExpr<'a>> {
         span: default,
         token_write: keyword,
         ws_1: whitespace,
-        path: cut_err(expression_leaf),
+        value: cut_err(expression_chain),
         ws_2: whitespace,
-        token_comma: token,
+        token_to: cut_err(keyword),
         ws_3: whitespace,
-        value: cut_err(expression_leaf),
+        path: cut_err(expression_chain),
     }}
     .with_token_span()
     .parse_next(input)?;
@@ -483,7 +478,7 @@ fn copy_expr<'a>(input: &mut Input<'a>) -> PResult<ast::CopyExpr<'a>> {
         ws_1: whitespace,
         src: cut_err(string_expr),
         ws_2: whitespace,
-        token_comma: token,
+        token_to: cut_err(keyword),
         ws_3: whitespace,
         dest: cut_err(string_expr),
     }}
@@ -524,7 +519,7 @@ fn match_expr<'a>(input: &mut Input<'a>) -> PResult<ast::MatchExpr<'a>> {
             span: default,
             pattern: cut_err(pattern_expr.context(Expected::Expected(&"match arm must start with a pattern literal"))),
             ws_1: whitespace,
-            token_fat_arrow: cut_err(keyword::<token::FatArrow>.context(Expected::Expected(&"match arm is missing a `=>`"))),
+            token_fat_arrow: cut_err(keyword.context(Expected::Expected(&"match arm is missing a `=>`"))),
             ws_2: whitespace,
             expr: cut_err(expression_chain),
         }}
@@ -753,13 +748,6 @@ fn identifier<'a>(input: &mut Input<'a>) -> PResult<ast::Ident<'a>> {
     Ok(ast::Ident { span, ident })
 }
 
-fn then_arrow(input: &mut Input) -> PResult<token::FatArrow> {
-    token::FatArrow::TOKEN
-        .token_span()
-        .map(token::FatArrow::with_span)
-        .parse_next(input)
-}
-
 fn keyword<T: ast::token::Keyword>(input: &mut Input) -> PResult<T> {
     let end_of_keyword = alt((
         any.verify(|c: &char| !c.is_alphanumeric()).value(()),
@@ -767,6 +755,7 @@ fn keyword<T: ast::token::Keyword>(input: &mut Input) -> PResult<T> {
     ));
 
     terminated(T::TOKEN, peek(end_of_keyword))
+        .context(Expected::ExpectedKeyword(&T::TOKEN))
         .token_span()
         .map(T::with_span)
         .parse_next(input)

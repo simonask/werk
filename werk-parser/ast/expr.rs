@@ -142,7 +142,7 @@ pub struct ThenExpr<'a> {
     pub span: Span,
     pub expr: Expr<'a>,
     pub ws_1: Whitespace,
-    pub token_fat_arrow: token::FatArrow,
+    pub token_pipe: token::Pipe,
     pub ws_2: Whitespace,
     pub then: Expr<'a>,
 }

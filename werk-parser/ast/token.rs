@@ -4,6 +4,7 @@ pub trait Keyword: Spanned {
     const TOKEN: &'static str;
     fn with_span(span: Span) -> Self;
 
+    #[inline]
     fn ignore() -> Self
     where
         Self: Sized,
@@ -16,7 +17,7 @@ pub trait Keyword: Spanned {
 pub struct Token<const CHAR: char>(pub Offset);
 impl<const CHAR: char> Token<CHAR> {
     #[inline]
-    pub fn with_span(span: Span) -> Self {
+    pub const fn with_span(span: Span) -> Self {
         Self(span.start)
     }
 
@@ -35,13 +36,14 @@ impl<const CHAR: char> Spanned for Token<CHAR> {
     }
 }
 
-macro_rules! def_token {
+macro_rules! def_keyword {
     ($t:ident, $s:literal) => {
         #[doc = concat!("`", $s, "`")]
         #[derive(Clone, Copy, Debug, Default, PartialEq, Hash)]
         pub struct $t(pub Offset);
         impl Keyword for $t {
             const TOKEN: &'static str = $s;
+            #[inline]
             fn with_span(span: Span) -> Self {
                 Self(span.start)
             }
@@ -58,47 +60,49 @@ macro_rules! def_token {
     };
 }
 
-macro_rules! def_token_char {
+macro_rules! def_token {
     ($t:ident, $s:literal) => {
         #[doc = concat!("`", $s, "`")]
         pub type $t = Token<$s>;
     };
 }
 
-def_token!(Let, "let");
-def_token!(Config, "config");
-def_token!(Build, "build");
-def_token!(Task, "task");
-def_token!(Shell, "shell");
-def_token!(Glob, "glob");
-def_token!(Which, "which");
-def_token!(Env, "env");
-def_token!(Join, "join");
-def_token!(Then, "then");
-def_token!(Info, "info");
-def_token!(Warn, "warn");
-def_token!(Error, "error");
-def_token!(Match, "match");
-def_token!(Write, "write");
-def_token!(Read, "read");
-def_token!(Run, "run");
-def_token!(Copy, "copy");
-def_token!(Delete, "delete");
-def_token!(FatArrow, "=>");
-def_token!(From, "from");
-def_token!(Depfile, "depfile");
-def_token!(False, "false");
-def_token!(True, "true");
+def_keyword!(Let, "let");
+def_keyword!(Config, "config");
+def_keyword!(Build, "build");
+def_keyword!(Task, "task");
+def_keyword!(Shell, "shell");
+def_keyword!(Glob, "glob");
+def_keyword!(Which, "which");
+def_keyword!(Env, "env");
+def_keyword!(Join, "join");
+def_keyword!(Then, "then");
+def_keyword!(Info, "info");
+def_keyword!(Warn, "warn");
+def_keyword!(Error, "error");
+def_keyword!(Match, "match");
+def_keyword!(Write, "write");
+def_keyword!(Read, "read");
+def_keyword!(Run, "run");
+def_keyword!(Copy, "copy");
+def_keyword!(Delete, "delete");
+def_keyword!(FatArrow, "=>");
+def_keyword!(From, "from");
+def_keyword!(Depfile, "depfile");
+def_keyword!(False, "false");
+def_keyword!(True, "true");
+def_keyword!(To, "to");
 
-def_token_char!(Colon, ':');
-def_token_char!(Eq, '=');
-def_token_char!(Comma, ',');
-def_token_char!(Semicolon, ';');
-def_token_char!(BraceOpen, '{');
-def_token_char!(BraceClose, '}');
-def_token_char!(ParenOpen, '(');
-def_token_char!(ParenClose, ')');
-def_token_char!(BracketOpen, '[');
-def_token_char!(BracketClose, ']');
-def_token_char!(DoubleQuote, '"');
-def_token_char!(Percent, '%');
+def_token!(Colon, ':');
+def_token!(Eq, '=');
+def_token!(Comma, ',');
+def_token!(Semicolon, ';');
+def_token!(BraceOpen, '{');
+def_token!(BraceClose, '}');
+def_token!(ParenOpen, '(');
+def_token!(ParenClose, ')');
+def_token!(BracketOpen, '[');
+def_token!(BracketClose, ']');
+def_token!(DoubleQuote, '"');
+def_token!(Percent, '%');
+def_token!(Pipe, '|');

@@ -1,5 +1,5 @@
 use crate::{
-    ast::{self, kw_ignore, ws_ignore},
+    ast::{self, kw_ignore, token_ignore, ws_ignore},
     parse_string,
     parser::{span, Offset, Span, Spanned as _, SpannedValue},
     Error, LocatedError,
@@ -537,7 +537,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
             span,
             expr,
             ws_1: ws_ignore(),
-            token_fat_arrow: kw_ignore(),
+            token_pipe: token_ignore(),
             then,
             ws_2: ws_ignore(),
         }));
@@ -568,9 +568,9 @@ fn parse_value_expr(toml: &toml_edit::Value) -> Result<ast::Expr, Error> {
             }
             Ok(ast::Expr::List(ast::ListExpr {
                 span,
-                token_open: Default::default(),
+                token_open: token_ignore(),
                 items,
-                token_close: Default::default(),
+                token_close: token_ignore(),
                 ws_trailing: ws_ignore(),
             }))
         }
@@ -590,7 +590,7 @@ fn parse_item_expr(toml: &toml_edit::Item) -> Result<ast::Expr, Error> {
             for table in array_of_tables.iter() {
                 let item = parse_table_expr(table.span().unwrap_or_default().into(), table)?;
                 items.push(ast::ListItem {
-                    ws_pre: Default::default(),
+                    ws_pre: ws_ignore(),
                     item,
                     ws_trailing: None,
                 })
@@ -668,7 +668,7 @@ fn parse_value_run_exprs_into<'a>(
             let string = parse_string_expr(span, formatted.value())?;
             exprs.push(ast::RunExpr::Shell(ast::ShellExpr {
                 span,
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: string,
             }));
@@ -702,7 +702,7 @@ fn parse_table_run_expr<'a, T: toml_edit::TableLike>(
             parse_item_string_expr(item).map(|command| {
                 ast::RunExpr::Shell(ast::ShellExpr {
                     span,
-                    token: Default::default(),
+                    token: kw_ignore(),
                     ws_1: ws_ignore(),
                     param: command,
                 })
@@ -718,7 +718,7 @@ fn parse_table_run_expr<'a, T: toml_edit::TableLike>(
                     ws_1: ws_ignore(),
                     path: ast::Expr::StringExpr(target),
                     ws_2: ws_ignore(),
-                    token_comma: Default::default(),
+                    token_to: kw_ignore(),
                     ws_3: ws_ignore(),
                     value: data,
                 }))
@@ -736,7 +736,7 @@ fn parse_table_run_expr<'a, T: toml_edit::TableLike>(
                     ws_1: ws_ignore(),
                     src: source,
                     ws_2: ws_ignore(),
-                    token_comma: Default::default(),
+                    token_to: kw_ignore(),
                     ws_3: ws_ignore(),
                     dest: to,
                 }))
@@ -829,7 +829,7 @@ fn parse_command_recipe<'a>(
             ws_pre: ws_ignore(),
             statement: ast::TaskRecipeStmt::Build(ast::BuildStmt {
                 span: build.span(),
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: build,
             }),
@@ -842,7 +842,7 @@ fn parse_command_recipe<'a>(
             ws_pre: ws_ignore(),
             statement: ast::TaskRecipeStmt::Info(ast::InfoExpr {
                 span: pre.span,
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: pre,
             }),
@@ -854,7 +854,7 @@ fn parse_command_recipe<'a>(
         ws_pre: ws_ignore(),
         statement: ast::TaskRecipeStmt::Run(ast::RunStmt {
             span: value.span(),
-            token: Default::default(),
+            token: kw_ignore(),
             ws_1: ws_ignore(),
             param: value,
         }),
@@ -866,7 +866,7 @@ fn parse_command_recipe<'a>(
             ws_pre: ws_ignore(),
             statement: ast::TaskRecipeStmt::Info(ast::InfoExpr {
                 span: post.span,
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: post,
             }),
@@ -878,7 +878,7 @@ fn parse_command_recipe<'a>(
         decor_pre,
         ast::CommandRecipe {
             span,
-            token_task: Default::default(),
+            token_task: kw_ignore(),
             ws_1: ws_ignore(),
             name,
             ws_2: ws_ignore(),

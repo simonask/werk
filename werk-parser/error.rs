@@ -401,6 +401,8 @@ pub enum Expected {
     /// "expected ..."
     #[error("expected {0}")]
     Expected(&'static &'static str),
+    #[error("expected keyword `{0}`")]
+    ExpectedKeyword(&'static &'static str),
     #[error("expected character {0}")]
     ExpectedChar(char),
     #[error("duplicate statement")]

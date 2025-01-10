@@ -71,7 +71,7 @@ fn parse_as_expected() -> anyhow::Result<()> {
             span: Span::ignore(),
             expr: ast::Expr::Ident(ast::Ident::new(400..414, "source-files")),
             ws_1: ws_ignore(),
-            token_fat_arrow: kw_ignore(),
+            token_pipe: token_ignore(),
             ws_2: ws_ignore(),
             then: ast::Expr::Match(ast::MatchExpr {
                 span: Span::ignore(),
@@ -105,7 +105,7 @@ fn parse_as_expected() -> anyhow::Result<()> {
             span: Span::ignore(),
             expr: ast::Expr::Ident(ast::Ident::new(Span::ignore(), "profile")),
             ws_1: ws_ignore(),
-            token_fat_arrow: kw_ignore(),
+            token_pipe: token_ignore(),
             ws_2: ws_ignore(),
             then: ast::Expr::Match(ast::MatchExpr {
                 span: Span::ignore(),

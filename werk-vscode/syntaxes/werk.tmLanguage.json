@@ -17,7 +17,7 @@
 			"patterns": [
 				{
 					"name": "keyword.control.werk",
-					"match": "\\b(config|let|build|task|match|from|depfile|run|write|copy|delete|info|warn|error)\\b"
+					"match": "\\b(config|let|build|task|match|from|to|depfile|run|write|copy|delete|info|warn|error)\\b"
 				}
 			]
 		},

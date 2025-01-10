@@ -1,5 +1,5 @@
 [config]
-out-dir = "../../target/examples/c"
+out-dir = "../../target/examples/c-toml"
 
 [global]
 cc.which = "clang"
