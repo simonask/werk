@@ -1,0 +1,4 @@
+let input = ["a.c", "b.cpp"]
+let result = input
+    | discard "%.c"
+    | assert_eq ["b.cpp"]

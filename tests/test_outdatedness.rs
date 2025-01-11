@@ -95,8 +95,7 @@ async fn test_outdated_env() -> anyhow::Result<()> {
         &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
-    )
-    .await?;
+    )?;
     let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("env-dep")?).await?;
@@ -145,8 +144,7 @@ async fn test_outdated_env() -> anyhow::Result<()> {
         &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
-    )
-    .await?;
+    )?;
     let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("env-dep")?).await?;
@@ -180,8 +178,7 @@ async fn test_outdated_which() -> anyhow::Result<()> {
         &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
-    )
-    .await?;
+    )?;
     let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
@@ -235,8 +232,7 @@ async fn test_outdated_which() -> anyhow::Result<()> {
         &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
-    )
-    .await?;
+    )?;
     let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
@@ -281,8 +277,7 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
         &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
-    )
-    .await?;
+    )?;
     let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
@@ -329,8 +324,7 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
         &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
-    )
-    .await?;
+    )?;
     let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
@@ -382,8 +376,7 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
         &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
-    )
-    .await?;
+    )?;
     let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("glob-dep")?).await?;
@@ -427,8 +420,7 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
         &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
-    )
-    .await?;
+    )?;
     let runner = werk_runner::Runner::new(&workspace);
 
     let status = runner.build_file(Path::new("glob-dep")?).await?;

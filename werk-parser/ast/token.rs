@@ -92,6 +92,15 @@ def_keyword!(Depfile, "depfile");
 def_keyword!(False, "false");
 def_keyword!(True, "true");
 def_keyword!(To, "to");
+def_keyword!(Map, "map");
+def_keyword!(Flatten, "flatten");
+def_keyword!(Filter, "filter");
+def_keyword!(FilterMatch, "filter-match");
+def_keyword!(Discard, "discard");
+def_keyword!(Split, "split");
+def_keyword!(Lines, "lines");
+
+def_keyword!(AssertEq, "assert_eq");
 
 def_token!(Colon, ':');
 def_token!(Eq, '=');

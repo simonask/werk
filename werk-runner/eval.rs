@@ -117,8 +117,8 @@ impl<T> std::ops::DerefMut for Eval<T> {
     }
 }
 
-pub async fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, EvalError> {
-    match eval_inner(scope, expr).await? {
+pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, EvalError> {
+    match eval_inner(scope, expr)? {
         EvalInner::Produced(eval) => Ok(eval),
         // EvalInner::ReturnImplicit => Ok(Eval::inherent(Value::String(String::new()))),
         EvalInner::ReturnImplicit => {
@@ -141,13 +141,10 @@ impl From<Eval<Value>> for EvalInner {
     }
 }
 
-async fn eval_inner(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<EvalInner, EvalError> {
+fn eval_inner(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<EvalInner, EvalError> {
     match expr {
         ast::Expr::StringExpr(expr) => Ok(eval_string_expr(scope, expr)?.map(Value::String).into()),
-        ast::Expr::Shell(expr) => Ok(eval_shell(scope, &expr.param)
-            .await?
-            .map(Value::String)
-            .into()),
+        ast::Expr::Shell(expr) => Ok(eval_shell(scope, &expr.param)?.map(Value::String).into()),
         ast::Expr::Glob(expr) => Ok(eval_glob(scope, expr)?.map(Value::List).into()),
         ast::Expr::Which(expr) => {
             let Eval {
@@ -194,75 +191,54 @@ async fn eval_inner(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<EvalInner
             }
             .into())
         }
-        ast::Expr::Match(match_expr) => {
-            // Boxing for recursion.
-            Box::pin(eval_match_expr(scope, match_expr))
-                .await
-                .map(Into::into)
-        }
+        ast::Expr::Match(match_expr) => eval_match_expr(scope, match_expr).map(Into::into),
         ast::Expr::List(list_expr) => {
-            // Boxing for recursion.
-            Box::pin(async {
-                let mut items = Vec::with_capacity(list_expr.items.len());
-                let mut used = Used::none();
-                for expr in &list_expr.items {
-                    let eval_item = match eval_inner(scope, &expr.item).await? {
-                        EvalInner::Produced(eval) => eval,
-                        // If the list element is an expression that forwards an
-                        // implicit value, produce the empty string -- we don't
-                        // want to duplicate the implicit value in list
-                        // expressions.
-                        EvalInner::ReturnImplicit => Eval {
-                            value: Value::String(String::new()),
-                            used: Used::none(),
-                        },
-                    };
-                    used |= eval_item.used;
-                    items.push(eval_item.value);
-                }
-                Ok(Eval {
-                    value: Value::List(items),
-                    used,
-                }
-                .into())
-            })
-            .await
+            let mut items = Vec::with_capacity(list_expr.items.len());
+            let mut used = Used::none();
+            for expr in &list_expr.items {
+                let eval_item = match eval_inner(scope, &expr.item)? {
+                    EvalInner::Produced(eval) => eval,
+                    // If the list element is an expression that forwards an
+                    // implicit value, produce the empty string -- we don't
+                    // want to duplicate the implicit value in list
+                    // expressions.
+                    EvalInner::ReturnImplicit => Eval {
+                        value: Value::String(String::new()),
+                        used: Used::none(),
+                    },
+                };
+                used |= eval_item.used;
+                items.push(eval_item.value);
+            }
+            Ok(Eval {
+                value: Value::List(items),
+                used,
+            }
+            .into())
         }
-        ast::Expr::Join(join) => {
-            let sep = eval_string_expr(scope, &join.param)?;
-            let joined = if let Some(val) = scope.get(Lookup::Implied) {
-                let mut used = sep.used;
-                used.vars.extend(val.used().iter().cloned());
-                Eval {
-                    value: flat_join(&*val, &sep.value),
-                    used,
-                }
-            } else {
-                Eval {
-                    value: String::new(),
-                    used: Used::none(),
-                }
-            };
-            Ok(joined.map(Value::String).into())
-        }
+        ast::Expr::Join(expr) => eval_join(scope, expr).map(EvalInner::Produced),
+        ast::Expr::Map(expr) => eval_map(scope, expr).map(EvalInner::Produced),
+        ast::Expr::Flatten(_) => eval_flatten(scope).map(EvalInner::Produced),
+        ast::Expr::Filter(expr) => eval_filter(scope, expr).map(EvalInner::Produced),
+        ast::Expr::FilterMatch(expr) => eval_filter_match(scope, expr).map(EvalInner::Produced),
+        ast::Expr::Discard(expr) => eval_discard(scope, expr).map(EvalInner::Produced),
+        ast::Expr::Split(expr) => eval_split(scope, expr).map(EvalInner::Produced),
+        ast::Expr::Lines(_) => eval_split_lines(scope).map(EvalInner::Produced),
         ast::Expr::Ident(ident) => scope
             .get(Lookup::Ident(&ident.ident))
             .ok_or_else(|| EvalError::NoSuchIdentifier(ident.span, ident.ident.to_owned()))
             .map(LookupValue::into_owned)
             .map(EvalInner::Produced),
-        ast::Expr::Then(then) => {
-            // Boxing for recursion.
-            Box::pin(async {
-                let lhs_value = eval(scope, &then.expr).await?;
-                let scope = SubexprScope::new(scope, &lhs_value);
-                match eval_inner(&scope, &then.then).await? {
-                    // The rhs expression produced a new value, return that.
-                    EvalInner::Produced(rhs_value) => Ok(EvalInner::Produced(rhs_value)),
-                    // The lhs expression did not produce a new value, return the lhs value.
-                    EvalInner::ReturnImplicit => Ok(EvalInner::Produced(lhs_value)),
+        ast::Expr::Chain(chain) => {
+            let mut value = eval(scope, &*chain.head)?;
+            for entry in &chain.tail {
+                let scope = SubexprScope::new(scope, &value);
+                if let EvalInner::Produced(rhs_value) = eval_inner(&scope, &entry.expr)? {
+                    // The rhs expression produced a new value, pass that on.
+                    value = rhs_value;
                 }
-            })
-            .await
+            }
+            Ok(EvalInner::Produced(value))
         }
         ast::Expr::Info(info_expr) => {
             let message = eval_string_expr(scope, &info_expr.param)?;
@@ -278,10 +254,11 @@ async fn eval_inner(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<EvalInner
             let string = eval_string_expr(scope, &error_expr.param)?;
             Err(EvalError::ErrorExpression(error_expr.span, string.value))
         }
+        ast::Expr::AssertEq(expr) => eval_assert_eq(scope, expr),
     }
 }
 
-pub async fn eval_match_expr(
+pub fn eval_match_expr(
     scope: &dyn Scope,
     expr: &ast::MatchExpr<'_>,
 ) -> Result<Eval<Value>, EvalError> {
@@ -291,41 +268,37 @@ pub async fn eval_match_expr(
     let mut used = implied_value.used().clone();
 
     // Evaluate patterns.
-    let mut patterns = Vec::with_capacity(expr.body.statements.len());
-    for stmt in expr.body.statements.iter() {
-        let pattern = eval_pattern(scope, &stmt.statement.pattern)?;
+    let mut patterns = Vec::with_capacity(expr.param.len());
+    for stmt in expr.param.iter() {
+        let pattern = eval_pattern(scope, &stmt.pattern)?;
         used |= pattern.used;
-        patterns.push((pattern.value, &stmt.statement.expr));
+        patterns.push((pattern.value, &stmt.expr));
     }
 
     // Apply the match recursively to the input.
-    async fn apply_match_recursively(
+    fn apply_match_recursively(
         scope: &dyn Scope,
         patterns: &[(Pattern<'_>, &ast::Expr<'_>)],
         value: &Value,
         used: &mut Used,
     ) -> Result<Value, EvalError> {
         match value {
-            Value::String(s) => apply_match(scope, patterns, s.clone(), used).await,
+            Value::String(s) => apply_match(scope, patterns, s.clone(), used),
             Value::List(list) => {
                 if list.is_empty() {
                     return Ok(Value::List(Vec::new()));
                 }
 
-                // Boxing for recursion
-                Box::pin(async move {
-                    let mut new_list = Vec::with_capacity(list.len());
-                    for item in list {
-                        new_list.push(apply_match_recursively(scope, patterns, item, used).await?);
-                    }
-                    Ok(Value::List(new_list))
-                })
-                .await
+                let mut new_list = Vec::with_capacity(list.len());
+                for item in list {
+                    new_list.push(apply_match_recursively(scope, patterns, item, used)?);
+                }
+                Ok(Value::List(new_list))
             }
         }
     }
 
-    async fn apply_match(
+    fn apply_match(
         scope: &dyn Scope,
         patterns: &[(Pattern<'_>, &ast::Expr<'_>)],
         input_string: String,
@@ -333,7 +306,7 @@ pub async fn eval_match_expr(
     ) -> Result<Value, EvalError> {
         for (pattern, replacement_expr) in patterns {
             tracing::trace!("trying match '{:?}' against '{}'", pattern, input_string);
-            let Some(pattern_match) = pattern.match_string(&input_string) else {
+            let Some(pattern_match) = pattern.match_whole_string(&input_string) else {
                 continue;
             };
 
@@ -344,7 +317,7 @@ pub async fn eval_match_expr(
                 used: Used::none(),
             };
             let scope = MatchScope::new(scope, &pattern_match, &matched_string);
-            let new_value = match eval_inner(&scope, replacement_expr).await? {
+            let new_value = match eval_inner(&scope, replacement_expr)? {
                 EvalInner::Produced(eval) => {
                     *used |= eval.used;
                     eval.value
@@ -355,19 +328,311 @@ pub async fn eval_match_expr(
         }
 
         // Unmodified.
-        Ok::<_, EvalError>(Value::String(input_string))
+        Ok(Value::String(input_string))
     }
 
-    let value = apply_match_recursively(scope, &patterns, &*implied_value, &mut used).await?;
+    let value = apply_match_recursively(scope, &patterns, &*implied_value, &mut used)?;
 
     Ok(Eval { value, used })
+}
+
+pub fn eval_filter_match(
+    scope: &dyn Scope,
+    expr: &ast::FilterMatchExpr<'_>,
+) -> Result<Eval<Value>, EvalError> {
+    let implied_value = scope
+        .get(Lookup::Implied)
+        .ok_or(EvalError::NoImpliedValue(expr.span))?;
+    let mut used = implied_value.used().clone();
+
+    // Evaluate patterns.
+    let mut patterns = Vec::with_capacity(expr.param.len());
+    for stmt in expr.param.iter() {
+        let pattern = eval_pattern(scope, &stmt.pattern)?;
+        used |= pattern.used;
+        patterns.push((pattern.value, &stmt.expr));
+    }
+
+    // Apply the match recursively to the input.
+    fn apply_filter_match_recursively(
+        scope: &dyn Scope,
+        patterns: &[(Pattern<'_>, &ast::Expr<'_>)],
+        value: &Value,
+        used: &mut Used,
+        result: &mut Vec<Value>,
+    ) -> Result<(), EvalError> {
+        match value {
+            Value::String(s) => apply_filter_match(scope, patterns, s, used, result),
+            Value::List(list) => {
+                for item in list {
+                    apply_filter_match_recursively(scope, patterns, item, used, result)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn apply_filter_match(
+        scope: &dyn Scope,
+        patterns: &[(Pattern<'_>, &ast::Expr<'_>)],
+        input_string: &String,
+        used: &mut Used,
+        result: &mut Vec<Value>,
+    ) -> Result<(), EvalError> {
+        for (pattern, replacement_expr) in patterns {
+            tracing::trace!("trying match '{:?}' against '{}'", pattern, input_string);
+            let Some(pattern_match) = pattern.match_whole_string(&input_string) else {
+                continue;
+            };
+
+            let matched_string = Eval {
+                value: Value::String(input_string.clone()),
+                // Don't need to forward used variables here, because
+                // we are manually collecting used variables
+                used: Used::none(),
+            };
+            let scope = MatchScope::new(scope, &pattern_match, &matched_string);
+            let new_value = eval(&scope, replacement_expr)?;
+            *used |= new_value.used;
+            result.push(new_value.value);
+            break;
+        }
+
+        // No match.
+        Ok(())
+    }
+
+    let mut result = Vec::new();
+    apply_filter_match_recursively(scope, &patterns, &*implied_value, &mut used, &mut result)?;
+
+    Ok(Eval {
+        value: Value::List(result),
+        used,
+    })
+}
+
+fn eval_join(scope: &dyn Scope, expr: &ast::JoinExpr<'_>) -> Result<Eval<Value>, EvalError> {
+    let sep = eval_string_expr(scope, &expr.param)?;
+    let joined = if let Some(val) = scope.get(Lookup::Implied) {
+        let mut used = sep.used;
+        used.vars.extend(val.used().iter().cloned());
+        Eval {
+            value: flat_join(&*val, &sep.value),
+            used,
+        }
+    } else {
+        Eval {
+            value: String::new(),
+            used: Used::none(),
+        }
+    };
+    Ok(joined.map(Value::String).into())
+}
+
+fn eval_map(scope: &dyn Scope, expr: &ast::MapExpr<'_>) -> Result<Eval<Value>, EvalError> {
+    let implied_value = scope
+        .get(Lookup::Implied)
+        .ok_or(EvalError::NoImpliedValue(expr.span))?
+        .into_owned();
+    let mut used = implied_value.used;
+
+    fn apply_map_recursively(
+        scope: &dyn Scope,
+        value: Value,
+        map: &ast::StringExpr<'_>,
+        used: &mut Used,
+    ) -> Result<Value, EvalError> {
+        match value {
+            Value::List(vec) => {
+                let mut result = Vec::with_capacity(vec.len());
+                for item in vec {
+                    let new_value = apply_map_recursively(scope, item, map, used)?;
+                    result.push(new_value);
+                }
+                Ok(Value::List(result))
+            }
+            value @ Value::String(_) => {
+                let input = Eval::inherent(value);
+                let subscope = SubexprScope::new(scope, &input);
+                let new_value = eval_string_expr(&subscope, map)?;
+                *used |= new_value.used;
+                Ok(Value::String(new_value.value))
+            }
+        }
+    }
+
+    let value = apply_map_recursively(scope, implied_value.value, &expr.param, &mut used)?;
+    Ok(Eval { value, used })
+}
+
+fn eval_flatten(scope: &dyn Scope) -> Result<Eval<Value>, EvalError> {
+    let Some(implied_value) = scope.get(Lookup::Implied) else {
+        return Ok(Eval::inherent(Value::List(vec![])));
+    };
+    let used = implied_value.used().clone();
+
+    fn apply_flatten_recursive(value: &Value, flattened: &mut Vec<Value>) {
+        match value {
+            Value::List(vec) => {
+                for item in vec {
+                    apply_flatten_recursive(item, flattened);
+                }
+            }
+            Value::String(s) => flattened.push(Value::String(s.clone())),
+        }
+    }
+
+    let mut flat = Vec::new();
+    apply_flatten_recursive(&*implied_value, &mut flat);
+    Ok(Eval {
+        value: Value::List(flat),
+        used,
+    })
+}
+
+fn eval_filter(scope: &dyn Scope, expr: &ast::FilterExpr) -> Result<Eval<Value>, EvalError> {
+    let Some(implied_value) = scope.get(Lookup::Implied) else {
+        return Ok(Eval::inherent(Value::List(vec![])));
+    };
+
+    let pattern = eval_pattern(scope, &expr.param)?;
+
+    fn eval_filter_recursive(
+        scope: &dyn Scope,
+        pattern: &Pattern,
+        value: &Value,
+        result: &mut Vec<Value>,
+    ) -> Result<(), EvalError> {
+        match value {
+            Value::List(vec) => {
+                for item in vec {
+                    eval_filter_recursive(scope, pattern, item, result)?;
+                }
+                Ok(())
+            }
+            Value::String(s) => {
+                if pattern.match_whole_string(s).is_some() {
+                    result.push(Value::String(s.clone()))
+                }
+                Ok(())
+            }
+        }
+    }
+
+    let mut used = pattern.used;
+    used.vars.extend(implied_value.used().iter().cloned());
+    let mut result = Vec::new();
+    eval_filter_recursive(scope, &pattern.value, &*implied_value, &mut result)?;
+    Ok(Eval {
+        value: Value::List(result),
+        used,
+    })
+}
+
+fn eval_discard(scope: &dyn Scope, expr: &ast::DiscardExpr) -> Result<Eval<Value>, EvalError> {
+    let Some(implied_value) = scope.get(Lookup::Implied) else {
+        return Ok(Eval::inherent(Value::List(vec![])));
+    };
+
+    let pattern = eval_pattern(scope, &expr.param)?;
+
+    fn eval_discard_recursive(
+        scope: &dyn Scope,
+        pattern: &Pattern,
+        value: &Value,
+        result: &mut Vec<Value>,
+    ) -> Result<(), EvalError> {
+        match value {
+            Value::List(vec) => {
+                for item in vec {
+                    eval_discard_recursive(scope, pattern, item, result)?;
+                }
+                Ok(())
+            }
+            Value::String(s) => {
+                if !pattern.match_whole_string(s).is_some() {
+                    result.push(Value::String(s.clone()))
+                }
+                Ok(())
+            }
+        }
+    }
+
+    let mut used = pattern.used;
+    used.vars.extend(implied_value.used().iter().cloned());
+    let mut result = Vec::new();
+    eval_discard_recursive(scope, &pattern.value, &*implied_value, &mut result)?;
+    Ok(Eval {
+        value: Value::List(result),
+        used,
+    })
+}
+
+fn eval_split(scope: &dyn Scope, expr: &ast::SplitExpr) -> Result<Eval<Value>, EvalError> {
+    let Some(implied_value) = scope.get(Lookup::Implied) else {
+        return Ok(Eval::inherent(Value::List(vec![])));
+    };
+
+    let mut pattern_builder = eval_pattern_builder(scope, &expr.param)?;
+    pattern_builder.set_match_substrings(true);
+    let pattern = pattern_builder.value.build();
+
+    fn split_recursive(value: &Value, regex: &regex::Regex, result: &mut Vec<Value>) {
+        match value {
+            Value::List(vec) => {
+                for item in vec {
+                    split_recursive(item, regex, result);
+                }
+            }
+            Value::String(s) => {
+                for split in regex.split(s) {
+                    result.push(Value::String(split.to_owned()));
+                }
+            }
+        }
+    }
+
+    let mut result = Vec::new();
+    split_recursive(&*implied_value, &pattern.regex, &mut result);
+    Ok(Eval {
+        value: Value::List(result),
+        used: pattern_builder.used | implied_value.used(),
+    })
+}
+
+fn eval_split_lines(scope: &dyn Scope) -> Result<Eval<Value>, EvalError> {
+    let Some(implied_value) = scope.get(Lookup::Implied) else {
+        return Ok(Eval::inherent(Value::List(vec![])));
+    };
+
+    fn split_lines_recursive(value: &Value, result: &mut Vec<Value>) {
+        match value {
+            Value::List(vec) => {
+                for item in vec {
+                    split_lines_recursive(item, result);
+                }
+            }
+            Value::String(s) => {
+                for line in s.lines() {
+                    result.push(Value::String(line.to_owned()));
+                }
+            }
+        }
+    }
+
+    let mut result = Vec::new();
+    split_lines_recursive(&*implied_value, &mut result);
+    Ok(Eval {
+        value: Value::List(result),
+        used: implied_value.used().clone(),
+    })
 }
 
 pub async fn eval_collect_strings<P: Scope>(
     scope: &P,
     expr: &ast::Expr<'_>,
 ) -> Result<Eval<Vec<String>>, EvalError> {
-    let eval = eval(scope, expr).await?;
+    let eval = eval(scope, expr)?;
     Ok(eval.map(|value| value.collect_strings()))
 }
 
@@ -486,12 +751,12 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
     Ok(Eval { value: s, used })
 }
 
-pub(crate) async fn eval_run_exprs<S: Scope>(
+pub(crate) fn eval_run_exprs<S: Scope>(
     scope: &S,
     expr: &ast::RunExpr<'_>,
     commands: &mut Vec<RunCommand>,
 ) -> Result<Used, EvalError> {
-    async fn eval_run_exprs_recursively<S: Scope>(
+    fn eval_run_exprs_recursively<S: Scope>(
         scope: &S,
         expr: &ast::RunExpr<'_>,
         commands: &mut Vec<RunCommand>,
@@ -504,14 +769,14 @@ pub(crate) async fn eval_run_exprs<S: Scope>(
                 commands.push(RunCommand::Shell(shell.value));
             }
             ast::RunExpr::Write(expr) => {
-                let destination = eval(scope, &expr.path).await?;
+                let destination = eval(scope, &expr.path)?;
                 let Value::String(dest_path) = destination.value else {
                     return Err(EvalError::UnexpectedList(expr.path.span()));
                 };
                 let dest_path = werk_fs::Path::new(&dest_path)
                     .and_then(|path| scope.workspace().get_output_file_path(path))
                     .map_err(|err| EvalError::Path(expr.span, err))?;
-                let data = eval(scope, &expr.value).await?;
+                let data = eval(scope, &expr.value)?;
                 let write_used = destination.used | data.used;
                 let Value::String(data) = data.value else {
                     return Err(EvalError::UnexpectedList(expr.value.span()));
@@ -553,24 +818,14 @@ pub(crate) async fn eval_run_exprs<S: Scope>(
                 commands.push(RunCommand::Info(message.value.into()));
             }
             ast::RunExpr::List(exprs) => {
-                // Boxing for recursion
-                Box::pin(async {
-                    for expr in &exprs.items {
-                        eval_run_exprs_recursively(scope, &expr.item, commands, used).await?;
-                    }
-                    Ok::<_, EvalError>(())
-                })
-                .await?;
+                for expr in &exprs.items {
+                    eval_run_exprs_recursively(scope, &expr.item, commands, used)?;
+                }
             }
             ast::RunExpr::Block(block) => {
-                // Boxing for recursion
-                Box::pin(async {
-                    for stmt in &block.statements {
-                        eval_run_exprs_recursively(scope, &stmt.statement, commands, used).await?;
-                    }
-                    Ok::<_, EvalError>(())
-                })
-                .await?;
+                for stmt in &block.statements {
+                    eval_run_exprs_recursively(scope, &stmt.statement, commands, used)?;
+                }
             }
         }
 
@@ -578,7 +833,7 @@ pub(crate) async fn eval_run_exprs<S: Scope>(
     }
 
     let mut used = Used::none();
-    eval_run_exprs_recursively(scope, expr, commands, &mut used).await?;
+    eval_run_exprs_recursively(scope, expr, commands, &mut used)?;
     Ok(used)
 }
 
@@ -695,8 +950,19 @@ fn eval_shell_commands_into<S: Scope>(
             Ok(used)
         }
         ast::Expr::Join(..) => Err(EvalError::UnexpectedExpressionType(span, "join").into()),
+        ast::Expr::Map(..) => Err(EvalError::UnexpectedExpressionType(span, "map").into()),
+        ast::Expr::Flatten(..) => Err(EvalError::UnexpectedExpressionType(span, "flatten").into()),
+        ast::Expr::Filter(..) => Err(EvalError::UnexpectedExpressionType(span, "filter").into()),
+        ast::Expr::FilterMatch(..) => {
+            Err(EvalError::UnexpectedExpressionType(span, "filter_match").into())
+        }
+        ast::Expr::Discard(..) => Err(EvalError::UnexpectedExpressionType(span, "discard").into()),
+        ast::Expr::Split(..) => Err(EvalError::UnexpectedExpressionType(span, "split").into()),
+        ast::Expr::Lines(..) => Err(EvalError::UnexpectedExpressionType(span, "lines").into()),
         ast::Expr::Ident(_) => return Err(EvalError::UnexpectedExpressionType(span, "from").into()),
-        ast::Expr::Then(_) => return Err(EvalError::UnexpectedExpressionType(span, "then").into()),
+        ast::Expr::Chain(_) => {
+            return Err(EvalError::UnexpectedExpressionType(span, "piped expression chain").into())
+        }
         ast::Expr::Info(expr) => {
             let message = eval_string_expr(scope, &expr.param)?;
             scope.watcher().message(scope.task_id(), &message);
@@ -712,6 +978,9 @@ fn eval_shell_commands_into<S: Scope>(
         ast::Expr::Error(expr) => {
             let message = eval_string_expr(scope, &expr.param)?;
             return Err(EvalError::ErrorExpression(span, message.value).into());
+        }
+        ast::Expr::AssertEq(_) => {
+            return Err(EvalError::UnexpectedExpressionType(span, "assert_eq").into())
         }
     }
 }
@@ -790,7 +1059,7 @@ fn eval_string_interpolation_ops(
     Ok(())
 }
 
-pub async fn eval_shell<P: Scope + ?Sized>(
+pub fn eval_shell<P: Scope + ?Sized>(
     scope: &P,
     expr: &ast::StringExpr<'_>,
 ) -> Result<Eval<String>, EvalError> {
@@ -803,7 +1072,6 @@ pub async fn eval_shell<P: Scope + ?Sized>(
     let output = match scope
         .io()
         .run_during_eval(&command, scope.workspace().project_root())
-        .await
     {
         Ok(output) => output,
         Err(e) => {
@@ -884,11 +1152,11 @@ pub(crate) async fn eval_build_recipe_statements(
     for stmt in body {
         match stmt.statement {
             ast::BuildRecipeStmt::Let(ref let_stmt) => {
-                let value = eval(scope, &let_stmt.value).await?;
+                let value = eval(scope, &let_stmt.value)?;
                 scope.set(let_stmt.ident.ident.to_string(), value);
             }
             ast::BuildRecipeStmt::From(ref expr) => {
-                let value = eval(scope, &expr.param).await?;
+                let value = eval(scope, &expr.param)?;
                 used |= value.used;
                 let offset = evaluated.explicit_dependencies.len();
                 value
@@ -899,7 +1167,7 @@ pub(crate) async fn eval_build_recipe_statements(
                 scope.push_input_files(&evaluated.explicit_dependencies[offset..]);
             }
             ast::BuildRecipeStmt::Depfile(ref expr) => {
-                let value = eval(scope, &expr.param).await?;
+                let value = eval(scope, &expr.param)?;
                 used |= value.used;
                 match value.value {
                     Value::String(depfile) => {
@@ -911,7 +1179,7 @@ pub(crate) async fn eval_build_recipe_statements(
                 }
             }
             ast::BuildRecipeStmt::Run(ref expr) => {
-                used |= eval_run_exprs(scope, &expr.param, &mut evaluated.commands).await?;
+                used |= eval_run_exprs(scope, &expr.param, &mut evaluated.commands)?;
             }
             ast::BuildRecipeStmt::Info(ref expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;
@@ -947,18 +1215,18 @@ pub(crate) async fn eval_task_recipe_statements(
     for stmt in body {
         match stmt.statement {
             ast::TaskRecipeStmt::Let(ref let_stmt) => {
-                let value = eval(scope, &let_stmt.value).await?;
+                let value = eval(scope, &let_stmt.value)?;
                 scope.set(
                     let_stmt.ident.ident.to_string(),
                     Eval::inherent(value.value),
                 );
             }
             ast::TaskRecipeStmt::Build(ref expr) => {
-                let value = eval(scope, &expr.param).await?;
+                let value = eval(scope, &expr.param)?;
                 value.value.collect_strings_into(&mut evaluated.build);
             }
             ast::TaskRecipeStmt::Run(ref expr) => {
-                eval_run_exprs(scope, &expr.param, &mut evaluated.commands).await?;
+                eval_run_exprs(scope, &expr.param, &mut evaluated.commands)?;
             }
             ast::TaskRecipeStmt::Info(ref expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;
@@ -972,6 +1240,20 @@ pub(crate) async fn eval_task_recipe_statements(
     }
 
     Ok(evaluated)
+}
+
+fn eval_assert_eq(scope: &dyn Scope, expr: &ast::AssertEqExpr<'_>) -> Result<EvalInner, EvalError> {
+    let implied_value = scope
+        .get(Lookup::Implied)
+        .ok_or(EvalError::NoImpliedValue(expr.span))?;
+    let rhs = eval(scope, &*expr.param)?;
+    if *implied_value != rhs.value {
+        return Err(EvalError::AssertionFailed(
+            expr.span,
+            Box::new((implied_value.into_value(), rhs.value)),
+        ));
+    }
+    Ok(EvalInner::ReturnImplicit)
 }
 
 fn flat_join(values: &Value, sep: &str) -> String {

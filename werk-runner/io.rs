@@ -27,9 +27,8 @@ pub type BoxIter<'a, T> = Box<dyn Iterator<Item = T> + 'a>;
 /// This abstraction exists to allow for testing the runner in a controlled
 /// environment.
 pub trait Io: Send + Sync + 'static {
-    /// Run a command as part of a build recipe. This will do nothing in dry-run
-    /// mode.
-    fn run_build_command<'a>(
+    /// Run a command as part of a recipe. This will do nothing in dry-run mode.
+    fn run_recipe_command<'a>(
         &'a self,
         command_line: &'a ShellCommandLine,
         working_dir: &'a Absolute<Path>,
@@ -37,11 +36,11 @@ pub trait Io: Send + Sync + 'static {
 
     /// Run a command as part of evaluating the contents of a werk.toml file.
     /// This might still do something in dry-run mode.
-    fn run_during_eval<'a>(
-        &'a self,
-        command_line: &'a ShellCommandLine,
-        working_dir: &'a Absolute<Path>,
-    ) -> PinBoxFut<'a, Result<std::process::Output, std::io::Error>>;
+    fn run_during_eval(
+        &self,
+        command_line: &ShellCommandLine,
+        working_dir: &Absolute<Path>,
+    ) -> Result<std::process::Output, std::io::Error>;
 
     /// Determine the absolute filesystem path to a program.
     fn which(&self, command: &str) -> Result<Absolute<PathBuf>, which::Error>;
@@ -50,47 +49,30 @@ pub trait Io: Send + Sync + 'static {
     ///
     /// If this function produces a path to a `.werk-cache` file, the
     /// `Workspace` constructor will fail.
-    fn glob_workspace<'a>(
-        &'a self,
-        path: &'a Absolute<Path>,
-        settings: &'a GlobSettings,
-    ) -> PinBoxFut<'a, Result<Vec<DirEntry>, Error>>;
+    fn glob_workspace(
+        &self,
+        path: &Absolute<Path>,
+        settings: &GlobSettings,
+    ) -> Result<Vec<DirEntry>, Error>;
 
     /// Query the metadata of a filesystem path.
     fn metadata(&self, path: &Absolute<Path>) -> Result<Metadata, Error>;
 
     /// Read a file from the filesystem.
-    fn read_file<'a>(
-        &'a self,
-        path: &'a Absolute<Path>,
-    ) -> PinBoxFut<'a, Result<Vec<u8>, std::io::Error>>;
+    fn read_file(&self, path: &Absolute<Path>) -> Result<Vec<u8>, std::io::Error>;
 
     /// Write a file to the filesystem.
-    fn write_file<'a>(
-        &'a self,
-        path: &'a Absolute<Path>,
-        data: &'a [u8],
-    ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
+    fn write_file(&self, path: &Absolute<Path>, data: &[u8]) -> Result<(), std::io::Error>;
 
     /// Copy one file to another on the file system. Must do nothing in dry-run.
     /// May do nothing if the paths are equal.
-    fn copy_file<'a>(
-        &'a self,
-        from: &'a Absolute<Path>,
-        to: &'a Absolute<Path>,
-    ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
+    fn copy_file(&self, from: &Absolute<Path>, to: &Absolute<Path>) -> Result<(), std::io::Error>;
 
     /// Delete a file from the filesystem. Must do nothing in dry-run.
-    fn delete_file<'a>(
-        &'a self,
-        path: &'a Absolute<Path>,
-    ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
+    fn delete_file(&self, path: &Absolute<Path>) -> Result<(), std::io::Error>;
 
     /// Create the parent directories of `path`, recursively.
-    fn create_parent_dirs<'a>(
-        &'a self,
-        path: &'a Absolute<Path>,
-    ) -> PinBoxFut<'a, Result<(), std::io::Error>>;
+    fn create_parent_dirs(&self, path: &Absolute<Path>) -> Result<(), std::io::Error>;
 
     /// Read environment variable.
     fn read_env(&self, name: &str) -> Option<String>;
@@ -174,7 +156,7 @@ impl RealSystem {
 }
 
 impl Io for RealSystem {
-    fn run_build_command<'a>(
+    fn run_recipe_command<'a>(
         &'a self,
         command_line: &'a ShellCommandLine,
         working_dir: &'a Absolute<Path>,
@@ -206,23 +188,45 @@ impl Io for RealSystem {
         })
     }
 
-    fn run_during_eval<'a>(
-        &'a self,
-        command_line: &'a ShellCommandLine,
-        working_dir: &'a Absolute<Path>,
-    ) -> PinBoxFut<'a, Result<std::process::Output, std::io::Error>> {
-        self.run_build_command(command_line, working_dir)
+    fn run_during_eval(
+        &self,
+        command_line: &ShellCommandLine,
+        working_dir: &Absolute<Path>,
+    ) -> Result<std::process::Output, std::io::Error> {
+        let mut command = std::process::Command::new(&*command_line.program);
+        command
+            .args(
+                command_line
+                    .arguments
+                    .iter()
+                    .filter(|s| !s.trim().is_empty()),
+            )
+            .envs(&command_line.env)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            // All spawned commands always run in the project root.
+            .current_dir(working_dir);
+
+        for k in &command_line.env_remove {
+            command.env_remove(k);
+        }
+
+        tracing::trace!("spawning {command:?}");
+        let child = command.spawn()?;
+        let output = child.wait_with_output()?;
+        Ok(output)
     }
 
     fn which(&self, program: &str) -> Result<Absolute<PathBuf>, which::Error> {
         which::which(program).map(Absolute::new_unchecked)
     }
 
-    fn glob_workspace<'a>(
-        &'a self,
-        path: &'a Absolute<Path>,
-        settings: &'a GlobSettings,
-    ) -> PinBoxFut<'a, Result<Vec<DirEntry>, Error>> {
+    fn glob_workspace(
+        &self,
+        path: &Absolute<Path>,
+        settings: &GlobSettings,
+    ) -> Result<Vec<DirEntry>, Error> {
         let GlobSettings {
             git_ignore,
             git_ignore_global,
@@ -289,60 +293,39 @@ impl Io for RealSystem {
             }
         }
 
-        Box::pin(smol::unblock(move || {
-            let results = Mutex::new(Ok(Vec::new()));
-            walker.visit(&mut Builder(&results));
-            results.into_inner().map_err(Error::custom)
-        }))
+        let results = Mutex::new(Ok(Vec::new()));
+        walker.visit(&mut Builder(&results));
+        results.into_inner().map_err(Error::custom)
     }
 
     fn metadata(&self, path: &Absolute<Path>) -> Result<Metadata, Error> {
         path.metadata()?.try_into().map_err(Into::into)
     }
 
-    fn read_file<'a>(
-        &'a self,
-        path: &'a Absolute<Path>,
-    ) -> PinBoxFut<'a, Result<Vec<u8>, std::io::Error>> {
-        Box::pin(async move { smol::fs::read(path).await.map_err(Into::into) })
+    fn read_file(&self, path: &Absolute<Path>) -> Result<Vec<u8>, std::io::Error> {
+        std::fs::read(path)
     }
 
-    fn write_file<'a>(
-        &'a self,
-        path: &'a Absolute<Path>,
-        data: &'a [u8],
-    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
-        Box::pin(async move { smol::fs::write(path, data).await })
+    fn write_file(&self, path: &Absolute<Path>, data: &[u8]) -> Result<(), std::io::Error> {
+        std::fs::write(path, data)
     }
 
-    fn copy_file<'a>(
-        &'a self,
-        from: &'a Absolute<Path>,
-        to: &'a Absolute<Path>,
-    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
-        Box::pin(async move { smol::fs::copy(from, to).await.map(|_| ()) })
+    fn copy_file(&self, from: &Absolute<Path>, to: &Absolute<Path>) -> Result<(), std::io::Error> {
+        std::fs::copy(from, to).map(|_| ())
     }
 
-    fn delete_file<'a>(
-        &'a self,
-        path: &'a Absolute<Path>,
-    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
-        Box::pin(async move { smol::fs::remove_file(path).await.map(|_| ()) })
+    fn delete_file(&self, path: &Absolute<Path>) -> Result<(), std::io::Error> {
+        std::fs::remove_file(path)
     }
 
-    fn create_parent_dirs<'a>(
-        &'a self,
-        path: &'a Absolute<Path>,
-    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
-        Box::pin(async move {
-            let parent = path.parent().unwrap();
-            let did_exist = parent.is_dir();
-            smol::fs::create_dir_all(&parent).await?;
-            if !did_exist {
-                tracing::info!("Created directory: {}", parent.display());
-            }
-            Ok(())
-        })
+    fn create_parent_dirs(&self, path: &Absolute<Path>) -> Result<(), std::io::Error> {
+        let parent = path.parent().unwrap();
+        let did_exist = parent.is_dir();
+        std::fs::create_dir_all(&parent)?;
+        if !did_exist {
+            tracing::info!("Created directory: {}", parent.display());
+        }
+        Ok(())
     }
 
     fn read_env(&self, name: &str) -> Option<String> {

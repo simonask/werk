@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use macro_rules_attribute::apply;
 use werk_parser::{
     ast::{self, kw_ignore, token_ignore, ws_ignore},
     parse_string::{parse_pattern_expr, parse_string_expr},
     parser::Span,
-    ParseError,
+    TomlParseError,
 };
 use werk_runner::{Metadata, Value, WhichError};
 
@@ -13,13 +12,13 @@ use tests::mock_io::*;
 
 static EXPRESSIONS_TOML: &str = include_str!("../examples/expressions.toml");
 
-fn parse_pattern_expr_ignore_span(s: &str) -> Result<ast::PatternExpr, ParseError> {
+fn parse_pattern_expr_ignore_span(s: &str) -> Result<ast::PatternExpr, TomlParseError> {
     let mut expr = parse_pattern_expr(s)?;
     expr.span = Span::ignore();
     Ok(expr)
 }
 
-fn parse_string_expr_ignore_span(s: &str) -> Result<ast::StringExpr, ParseError> {
+fn parse_string_expr_ignore_span(s: &str) -> Result<ast::StringExpr, TomlParseError> {
     let mut expr = parse_string_expr(s)?;
     expr.span = Span::ignore();
     Ok(expr)
@@ -67,109 +66,117 @@ fn parse_as_expected() -> anyhow::Result<()> {
     );
     assert_eq!(
         ast.find_global("object-files").unwrap().value,
-        ast::Expr::Then(Box::new(ast::ThenExpr {
+        ast::Expr::Chain(ast::ChainExpr {
             span: Span::ignore(),
-            expr: ast::Expr::Ident(ast::Ident::new(400..414, "source-files")),
-            ws_1: ws_ignore(),
-            token_pipe: token_ignore(),
-            ws_2: ws_ignore(),
-            then: ast::Expr::Match(ast::MatchExpr {
+            head: Box::new(ast::Expr::Ident(ast::Ident::new(400..414, "source-files"))),
+            tail: vec![ast::ChainSubExpr {
                 span: Span::ignore(),
-                token_match: kw_ignore(),
                 ws_1: ws_ignore(),
-                body: ast::Body {
-                    token_open: token_ignore(),
-                    statements: vec![ast::BodyStmt {
-                        ws_pre: ws_ignore(),
-                        statement: ast::MatchArm {
-                            span: Span::ignore(),
-                            pattern: parse_pattern_expr_ignore_span("%.c").unwrap(),
-                            ws_1: ws_ignore(),
-                            token_fat_arrow: kw_ignore(),
-                            ws_2: ws_ignore(),
-                            expr: ast::Expr::StringExpr(
-                                parse_string_expr_ignore_span("{%}.o").unwrap()
-                            )
-                        },
-                        ws_trailing: None
-                    }],
-                    ws_trailing: ws_ignore(),
-                    token_close: token_ignore()
-                },
-            })
-        }))
+                token_pipe: token_ignore(),
+                ws_2: ws_ignore(),
+                expr: ast::Expr::Match(ast::MatchExpr {
+                    span: Span::ignore(),
+                    token: kw_ignore(),
+                    ws_1: ws_ignore(),
+                    param: ast::MatchBody::Braced(ast::Body {
+                        token_open: token_ignore(),
+                        statements: vec![ast::BodyStmt {
+                            ws_pre: ws_ignore(),
+                            statement: ast::MatchArm {
+                                span: Span::ignore(),
+                                pattern: parse_pattern_expr_ignore_span("%.c").unwrap(),
+                                ws_1: ws_ignore(),
+                                token_fat_arrow: kw_ignore(),
+                                ws_2: ws_ignore(),
+                                expr: ast::Expr::StringExpr(
+                                    parse_string_expr_ignore_span("{%}.o").unwrap()
+                                )
+                            },
+                            ws_trailing: None
+                        }],
+                        ws_trailing: ws_ignore(),
+                        token_close: token_ignore()
+                    }),
+                })
+            }]
+        })
     );
     assert_eq!(
         ast.find_global("cargo-profile").unwrap().value,
-        ast::Expr::Then(Box::new(ast::ThenExpr {
+        ast::Expr::Chain(ast::ChainExpr {
             span: Span::ignore(),
-            expr: ast::Expr::Ident(ast::Ident::new(Span::ignore(), "profile")),
-            ws_1: ws_ignore(),
-            token_pipe: token_ignore(),
-            ws_2: ws_ignore(),
-            then: ast::Expr::Match(ast::MatchExpr {
-                span: Span::ignore(),
-                token_match: kw_ignore(),
-                ws_1: ws_ignore(),
-                body: ast::Body {
-                    token_open: token_ignore(),
-                    statements: vec![ast::BodyStmt {
-                        ws_pre: ws_ignore(),
-                        statement: ast::MatchArm {
-                            span: Span::ignore(),
-                            pattern: parse_pattern_expr_ignore_span("debug").unwrap(),
-                            ws_1: ws_ignore(),
-                            token_fat_arrow: kw_ignore(),
-                            ws_2: ws_ignore(),
-                            expr: ast::Expr::literal(Span::ignore(), "dev")
-                        },
-                        ws_trailing: None
-                    },
-                    ast::BodyStmt {
-                        ws_pre: ws_ignore(),
-                        statement: ast::MatchArm {
-                            span: Span::ignore(),
-                            pattern: parse_pattern_expr_ignore_span("release").unwrap(),
-                            ws_1: ws_ignore(),
-                            token_fat_arrow: kw_ignore(),
-                            ws_2: ws_ignore(),
-                            expr: ast::Expr::literal(Span::ignore(), "release")
-                        },
-                        ws_trailing: None
-                    },
-                    ast::BodyStmt {
-                        ws_pre: ws_ignore(),
-                        statement: ast::MatchArm {
-                            span: Span::ignore(),
-                            pattern: parse_pattern_expr_ignore_span("%").unwrap(),
-                            ws_1: ws_ignore(),
-                            token_fat_arrow: kw_ignore(),
-                            ws_2: ws_ignore(),
-                            expr: ast::Expr::Error(ast::ErrorExpr {
-                                span: Span::ignore(),
-                                token: kw_ignore(),
-                                ws_1: ws_ignore(),
-                                param: parse_string_expr_ignore_span(
-                                    "invalid profile '{profile}'; expected \"debug\" or \"release\""
-                                )
-                                .unwrap()
+            head: Box::new(ast::Expr::Ident(ast::Ident::new(Span::ignore(), "profile"))),
+            tail: vec![
+                ast::ChainSubExpr {
+                    span: Span::ignore(),
+                    ws_1: ws_ignore(),
+                    token_pipe: token_ignore(),
+                    ws_2: ws_ignore(),
+                    expr: ast::Expr::Match(ast::MatchExpr {
+                        span: Span::ignore(),
+                        token: kw_ignore(),
+                        ws_1: ws_ignore(),
+                        param: ast::MatchBody::Braced(ast::Body {
+                            token_open: token_ignore(),
+                            statements: vec![ast::BodyStmt {
+                                ws_pre: ws_ignore(),
+                                statement: ast::MatchArm {
+                                    span: Span::ignore(),
+                                    pattern: parse_pattern_expr_ignore_span("debug").unwrap(),
+                                    ws_1: ws_ignore(),
+                                    token_fat_arrow: kw_ignore(),
+                                    ws_2: ws_ignore(),
+                                    expr: ast::Expr::literal(Span::ignore(), "dev")
+                                },
+                                ws_trailing: None
+                            },
+                            ast::BodyStmt {
+                                ws_pre: ws_ignore(),
+                                statement: ast::MatchArm {
+                                    span: Span::ignore(),
+                                    pattern: parse_pattern_expr_ignore_span("release").unwrap(),
+                                    ws_1: ws_ignore(),
+                                    token_fat_arrow: kw_ignore(),
+                                    ws_2: ws_ignore(),
+                                    expr: ast::Expr::literal(Span::ignore(), "release")
+                                },
+                                ws_trailing: None
+                            },
+                            ast::BodyStmt {
+                                ws_pre: ws_ignore(),
+                                statement: ast::MatchArm {
+                                    span: Span::ignore(),
+                                    pattern: parse_pattern_expr_ignore_span("%").unwrap(),
+                                    ws_1: ws_ignore(),
+                                    token_fat_arrow: kw_ignore(),
+                                    ws_2: ws_ignore(),
+                                    expr: ast::Expr::Error(ast::ErrorExpr {
+                                        span: Span::ignore(),
+                                        token: kw_ignore(),
+                                        ws_1: ws_ignore(),
+                                        param: parse_string_expr_ignore_span(
+                                            "invalid profile '{profile}'; expected \"debug\" or \"release\""
+                                        )
+                                        .unwrap()
+                                    }
+                                    )
+                                },
+                                ws_trailing: None
                             }
-                            )
-                        },
-                        ws_trailing: None
-                    }
-                    ],
-                    ws_trailing: ws_ignore(),
-                    token_close: token_ignore()
+                            ],
+                            ws_trailing: ws_ignore(),
+                            token_close: token_ignore()
+                        })
+                    })
                 }
-            })
-        }))
+            ]
+        })
     );
     Ok(())
 }
 
-#[apply(smol_macros::test)]
-async fn expressions() -> anyhow::Result<()> {
+#[test]
+fn expressions() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
     let toml = toml_edit::ImDocument::parse(EXPRESSIONS_TOML)?;
     let ast = werk_parser::parse_toml("input".as_ref(), &EXPRESSIONS_TOML, &toml)
@@ -204,8 +211,7 @@ async fn expressions() -> anyhow::Result<()> {
         &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
-    )
-    .await?;
+    )?;
 
     let globals = &workspace.manifest.globals;
     assert_eq!(globals["source-files"].value.value, ["/main.c"]);
@@ -220,8 +226,8 @@ async fn expressions() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[apply(smol_macros::test)]
-async fn fail_which() -> anyhow::Result<()> {
+#[test]
+fn fail_which() -> anyhow::Result<()> {
     let toml = toml_edit::ImDocument::parse(EXPRESSIONS_TOML)?;
     let ast = werk_parser::parse_toml("input".as_ref(), &EXPRESSIONS_TOML, &toml)
         .map_err(|err| err.to_string())
@@ -248,8 +254,7 @@ async fn fail_which() -> anyhow::Result<()> {
         &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
-    )
-    .await;
+    );
     let Err(err) = workspace else {
         panic!("expected error")
     };
@@ -268,8 +273,8 @@ async fn fail_which() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[apply(smol_macros::test)]
-async fn fail_custom_err() -> anyhow::Result<()> {
+#[test]
+fn fail_custom_err() -> anyhow::Result<()> {
     let toml = toml_edit::ImDocument::parse(EXPRESSIONS_TOML)?;
     let ast = werk_parser::parse_toml("input".as_ref(), &EXPRESSIONS_TOML, &toml)
         .map_err(|err| err.to_string())
@@ -303,8 +308,7 @@ async fn fail_custom_err() -> anyhow::Result<()> {
         &*watcher,
         test_workspace_dir().to_path_buf(),
         &test_workspace_settings(),
-    )
-    .await;
+    );
     let Err(err) = workspace else {
         panic!("expected error")
     };
@@ -318,4 +322,134 @@ async fn fail_custom_err() -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+fn evaluate_global(source: &str, global_variable_name_to_check: &str) -> Value {
+    let path = std::path::Path::new("test input");
+    let ast = werk_parser::parse_werk(source)
+        .map_err(|err| anyhow::Error::msg(err.with_location(path, source).to_string()))
+        .unwrap();
+    let watcher = Arc::new(MockWatcher::default());
+    let io = Arc::new(MockIo::default().with_default_workspace_dir());
+    let workspace = werk_runner::Workspace::new(
+        &ast,
+        &*io,
+        &*watcher,
+        test_workspace_dir().to_path_buf(),
+        &test_workspace_settings(),
+    )
+    .unwrap();
+    workspace
+        .manifest
+        .globals
+        .get(global_variable_name_to_check)
+        .ok_or_else(|| anyhow::anyhow!("global variable not found"))
+        .unwrap()
+        .value
+        .value
+        .clone()
+}
+
+#[test]
+fn local_var() {
+    assert_eq!(evaluate_global("let a = \"a\"; let b = a;", "b"), "a");
+}
+
+#[test]
+fn join() {
+    assert_eq!(
+        evaluate_global(
+            r#"let a = ["a", "b"]; let joined = a | join "\n""#,
+            "joined"
+        ),
+        "a\nb"
+    );
+
+    assert_eq!(
+        evaluate_global(
+            r#"let a = ["a", ["b", ["c"]]]; let joined = a | join "\n""#,
+            "joined"
+        ),
+        "a\nb\nc"
+    );
+}
+
+#[test]
+fn match_expr_empty() {
+    // Empty match is a no-op.
+    assert_eq!(
+        evaluate_global(
+            r#"
+    let input = "a";
+    let result = input | match { }
+"#,
+            "result"
+        ),
+        "a"
+    );
+
+    assert_eq!(
+        evaluate_global(
+            r#"
+    let input = [];
+    let result = input | match { }
+"#,
+            "result"
+        ),
+        Value::List(vec![])
+    );
+}
+
+#[test]
+fn match_expr_recursive() {
+    // Empty match is a no-op.
+    assert_eq!(
+        evaluate_global(
+            r#"
+    let input = ["a", ["b"]];
+    let result = input
+        | match { "a" => "foo"; "b" => "bar" }
+        | assert_eq ["foo", ["bar"]]
+"#,
+            "result"
+        ),
+        Value::List(vec![
+            Value::from("foo"),
+            Value::List(vec![Value::from("bar")])
+        ])
+    );
+}
+
+#[test]
+fn map_recursive() {
+    // Map a recursive list.
+    assert_eq!(
+        evaluate_global(
+            r#"
+    let input = ["a", ["b"]];
+    let result = input
+        | map "hello {}"
+        | assert_eq ["hello a", ["hello b"]]
+"#,
+            "result"
+        ),
+        Value::List(vec![
+            Value::from("hello a"),
+            Value::List(vec![Value::from("hello b")])
+        ])
+    );
+
+    // Map a single string
+    assert_eq!(
+        evaluate_global(
+            r#"
+    let input = "a";
+    let result = input
+        | map "hello {}"
+        | assert_eq "hello a"
+"#,
+            "result"
+        ),
+        Value::String(String::from("hello a"))
+    );
 }

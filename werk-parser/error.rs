@@ -15,7 +15,7 @@ pub enum Error {
     #[error(transparent)]
     Toml(#[from] toml_edit::TomlError),
     #[error("{1}")]
-    Werk(Span, ContextError),
+    Werk(Span, ParseError),
     #[error("invalid key")]
     InvalidKey(Span),
     #[error("expected table")]
@@ -41,11 +41,11 @@ pub enum Error {
     #[error("unknown chaining expression")]
     UnknownExpressionChain(Span),
     #[error("invalid identifier: {1}")]
-    InvalidIdent(Span, ParseError),
+    InvalidIdent(Span, TomlParseError),
     #[error("invalid string expression: {1}")]
-    InvalidStringExpr(Span, ParseError),
+    InvalidStringExpr(Span, TomlParseError),
     #[error("invalid pattern expression: {1}")]
-    InvalidPatternExpr(Span, ParseError),
+    InvalidPatternExpr(Span, TomlParseError),
     #[error("unknown config key")]
     UnknownConfigKey(Span),
 }
@@ -267,7 +267,7 @@ impl<'a, E> std::ops::Deref for LocatedError<'a, E> {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum ParseError {
+pub enum TomlParseError {
     #[error("empty identifier")]
     EmptyIdentifier,
     #[error("invalid char in identifier: {0}")]
@@ -279,7 +279,7 @@ pub enum ParseError {
 #[derive(Debug)]
 pub struct StringExprParseError {
     pub offset: usize,
-    pub error: ContextError,
+    pub error: ParseError,
 }
 
 impl std::fmt::Display for StringExprParseError {
@@ -294,8 +294,8 @@ impl std::fmt::Display for StringExprParseError {
 
 impl std::error::Error for StringExprParseError {}
 
-impl<T> From<winnow::error::ParseError<T, ContextError>> for StringExprParseError {
-    fn from(value: winnow::error::ParseError<T, ContextError>) -> Self {
+impl<T> From<winnow::error::ParseError<T, ParseError>> for StringExprParseError {
+    fn from(value: winnow::error::ParseError<T, ParseError>) -> Self {
         Self {
             offset: value.offset(),
             error: value.into_inner(),
@@ -303,37 +303,55 @@ impl<T> From<winnow::error::ParseError<T, ContextError>> for StringExprParseErro
     }
 }
 
-impl<T> From<winnow::error::ParseError<T, ContextError>> for ParseError {
-    fn from(value: winnow::error::ParseError<T, ContextError>) -> Self {
+impl<T> From<winnow::error::ParseError<T, ParseError>> for TomlParseError {
+    fn from(value: winnow::error::ParseError<T, ParseError>) -> Self {
         Self::InvalidExpr(value.into())
     }
 }
 
 #[derive(Debug)]
-pub struct ContextError {
-    pub stack: Vec<&'static str>,
+pub struct ParseError {
+    pub stack: Option<Box<Vec<ErrContext>>>,
     pub expected: Expected,
 }
 
-impl From<Expected> for ContextError {
+impl ParseError {
+    pub fn stack(&self) -> &[ErrContext] {
+        if let Some(ref stack) = self.stack {
+            &*stack
+        } else {
+            &[]
+        }
+    }
+
+    pub(crate) fn push(&mut self, entry: ErrContext) {
+        if let Some(ref mut stack) = self.stack {
+            stack.push(entry);
+        } else {
+            self.stack = Some(Box::new(vec![entry]));
+        }
+    }
+}
+
+impl From<Expected> for ParseError {
     fn from(expected: Expected) -> Self {
         Self {
-            stack: Vec::new(),
+            stack: None,
             expected,
         }
     }
 }
 
-impl From<Expected> for winnow::error::ErrMode<ContextError> {
+impl From<Expected> for winnow::error::ErrMode<ParseError> {
     fn from(expected: Expected) -> Self {
-        winnow::error::ErrMode::Backtrack(ContextError::from(expected))
+        winnow::error::ErrMode::Backtrack(ParseError::from(expected))
     }
 }
 
-impl<I: winnow::stream::Stream> winnow::error::ParserError<I> for ContextError {
+impl<I: winnow::stream::Stream> winnow::error::ParserError<I> for ParseError {
     fn from_error_kind(_input: &I, kind: winnow::error::ErrorKind) -> Self {
         Self {
-            stack: Vec::new(),
+            stack: None,
             expected: Expected::Internal(kind),
         }
     }
@@ -348,7 +366,7 @@ impl<I: winnow::stream::Stream> winnow::error::ParserError<I> for ContextError {
     }
 }
 
-impl<I: winnow::stream::Stream> AddContext<I, Expected> for ContextError {
+impl<I: winnow::stream::Stream> AddContext<I, Expected> for ParseError {
     fn add_context(
         mut self,
         _input: &I,
@@ -360,33 +378,33 @@ impl<I: winnow::stream::Stream> AddContext<I, Expected> for ContextError {
     }
 }
 
-impl<I: winnow::stream::Stream> AddContext<I, &'static str> for ContextError {
+impl<I: winnow::stream::Stream> AddContext<I, ErrContext> for ParseError {
     fn add_context(
         mut self,
         _input: &I,
         _token_start: &<I as Stream>::Checkpoint,
-        context: &'static str,
+        context: ErrContext,
     ) -> Self {
-        self.stack.push(context);
+        self.push(context);
         self
     }
 }
 
 impl<I: winnow::stream::Stream, E: std::error::Error + Send + Sync + 'static>
-    FromExternalError<I, E> for ContextError
+    FromExternalError<I, E> for ParseError
 {
     fn from_external_error(_input: &I, _kind: winnow::error::ErrorKind, e: E) -> Self {
-        ContextError {
+        ParseError {
             expected: Expected::External(Box::new(Arc::new(e))),
-            stack: Vec::new(),
+            stack: None,
         }
     }
 }
 
-impl std::fmt::Display for ContextError {
+impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.expected)?;
-        for entry in &self.stack {
+        for entry in self.stack() {
             write!(f, "\n    {entry}")?;
         }
 
@@ -405,39 +423,18 @@ pub enum Expected {
     ExpectedKeyword(&'static &'static str),
     #[error("expected character {0}")]
     ExpectedChar(char),
-    #[error("duplicate statement")]
-    Duplicate(&'static &'static str, Span),
-    #[error("{0}")]
-    Description(&'static &'static str, Span),
     #[error(transparent)]
     ValidRegex(Arc<regex::Error>),
-    #[error(transparent)]
-    ValidStatement(Arc<DuplicateError>),
     #[error(transparent)]
     External(Box<Arc<dyn std::error::Error + Send + Sync>>),
 }
 
 #[derive(Clone, Debug, thiserror::Error)]
-pub enum DuplicateError {
-    #[error("duplicate config key")]
-    DuplicateKey(Span, Span),
-    #[error("duplicate let statement in the root")]
-    DuplicateLet(Span, Span),
-    #[error("duplicate task name")]
-    DuplicateTaskName(Span, Span),
-}
-
-impl From<DuplicateError> for Expected {
-    fn from(value: DuplicateError) -> Self {
-        Expected::ValidStatement(Arc::new(value))
-    }
-}
-
-impl From<DuplicateError> for ContextError {
-    fn from(value: DuplicateError) -> Self {
-        ContextError {
-            stack: Vec::new(),
-            expected: value.into(),
-        }
-    }
+pub enum ErrContext {
+    #[error("in {0} expression")]
+    KwExpr(&'static str),
+    #[error("in string expression")]
+    StringExpr,
+    #[error("in pattern expression")]
+    PatternExpr,
 }

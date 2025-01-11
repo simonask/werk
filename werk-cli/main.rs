@@ -250,7 +250,6 @@ async fn try_main(args: Args) -> Result<(), Error> {
     }
 
     let workspace = Workspace::new(&ast, &*io, &*watcher, workspace_dir.to_owned(), &settings)
-        .await
         .map_err(display_error)?;
 
     if args.list {

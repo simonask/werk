@@ -1,0 +1,13 @@
+let input = "a b c d e"
+let result = input
+    | split " "
+    | assert_eq ["a", "b", "c", "d", "e"]
+
+
+let input = "a\nb\nc\nd\r\ne"
+let result = input
+    | split "\n"
+    | assert_eq ["a", "b", "c", "d\r", "e"]
+let result = input
+    | lines
+    | assert_eq ["a", "b", "c", "d", "e"]

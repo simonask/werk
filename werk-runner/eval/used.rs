@@ -106,3 +106,16 @@ impl BitOr for Used {
         self
     }
 }
+
+impl BitOr<&Used> for Used {
+    type Output = Used;
+
+    fn bitor(mut self, rhs: &Self) -> Self::Output {
+        if self.vars.is_empty() {
+            return rhs.clone();
+        }
+
+        self |= rhs;
+        self
+    }
+}

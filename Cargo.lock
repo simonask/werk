@@ -1339,6 +1339,7 @@ dependencies = [
  "anyhow",
  "macro_rules_attribute",
  "parking_lot",
+ "smol",
  "smol-macros",
  "toml_edit",
  "tracing",

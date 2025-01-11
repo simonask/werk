@@ -252,6 +252,24 @@ where
     }
 }
 
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::List(vec) => {
+                f.write_str("[")?;
+                for (i, item) in vec.iter().enumerate() {
+                    if i != 0 {
+                        f.write_str(", ")?;
+                    }
+                    write!(f, "{}", item)?;
+                }
+                f.write_str("]")
+            }
+            Value::String(s) => f.write_str(s),
+        }
+    }
+}
+
 /// Display helper for values.
 pub struct DisplayFriendly<'a>(&'a Value, usize);
 impl std::fmt::Display for DisplayFriendly<'_> {

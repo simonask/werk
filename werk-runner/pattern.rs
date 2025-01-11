@@ -38,6 +38,10 @@ pub struct PatternBuilder<'a> {
     span: Span,
     string: String,
     fragments: Vec<PatternFragment<'a>>,
+    /// Whether or not this pattern should return partial matches. False when
+    /// evaluating `match` expressions or build recipes. True when evaluating
+    /// `split` expressions.
+    match_substrings: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -117,8 +121,12 @@ impl<'a> PatternBuilder<'a> {
         }
     }
 
+    pub fn set_match_substrings(&mut self, match_substrings: bool) {
+        self.match_substrings = match_substrings;
+    }
+
     pub fn build(self) -> Pattern<'a> {
-        let mut regex_pattern = String::from("^");
+        let mut regex_pattern = String::from(if self.match_substrings { "" } else { "^" });
         let mut capture_count = 0;
         let mut stem_capture_index = None;
         let mut num_capture_groups = 0;
@@ -144,7 +152,9 @@ impl<'a> PatternBuilder<'a> {
                 }
             }
         }
-        regex_pattern.push('$');
+        if !self.match_substrings {
+            regex_pattern.push('$');
+        }
 
         let regex = regex::RegexBuilder::new(&regex_pattern)
             .unicode(true)
@@ -163,7 +173,7 @@ impl<'a> PatternBuilder<'a> {
 }
 
 impl<'a> Pattern<'a> {
-    pub fn parse(pattern: &'a str) -> Result<Self, werk_parser::ParseError> {
+    pub fn parse(pattern: &'a str) -> Result<Self, werk_parser::TomlParseError> {
         let parsed = werk_parser::parse_string::parse_pattern_expr(pattern)?;
         let mut builder = PatternBuilder::default();
         for fragment in parsed.fragments {
@@ -179,7 +189,7 @@ impl<'a> Pattern<'a> {
         Ok(builder.build())
     }
 
-    pub fn match_string(&self, string: &str) -> Option<PatternMatchData> {
+    pub fn match_whole_string(&self, string: &str) -> Option<PatternMatchData> {
         let m = self.regex.captures(string)?;
         let mut capture_groups = Vec::with_capacity(self.num_capture_groups);
         let mut stem = None;
@@ -200,9 +210,9 @@ impl<'a> Pattern<'a> {
         Some(PatternMatchData::new(stem, capture_groups))
     }
 
-    pub fn match_path(&self, path: &werk_fs::Path) -> Option<PatternMatchData> {
+    pub fn match_whole_path(&self, path: &werk_fs::Path) -> Option<PatternMatchData> {
         tracing::trace!("Matching '{path}' against {:?}", self.regex);
-        self.match_string(path.as_str())
+        self.match_whole_string(path.as_str())
     }
 }
 
@@ -263,7 +273,7 @@ mod tests {
             ] as &[_]
         );
 
-        let pattern_match = pattern.match_string("/main.c").unwrap();
+        let pattern_match = pattern.match_whole_string("/main.c").unwrap();
         assert_eq!(pattern_match.stem(), Some("/main"));
         assert!(pattern_match.captures.is_empty());
     }

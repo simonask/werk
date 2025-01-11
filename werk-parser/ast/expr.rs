@@ -5,7 +5,7 @@ use crate::{
     SemanticHash,
 };
 
-use super::{token, Body, Ident, PatternExpr, StringExpr, Whitespace};
+use super::{token, Body, BodyStmt, Ident, PatternExpr, StringExpr, Whitespace};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr<'a> {
@@ -21,10 +21,19 @@ pub enum Expr<'a> {
     /// Given a list expression, flatten the list and join each element with
     /// separator.
     Join(JoinExpr<'a>),
-    Then(Box<ThenExpr<'a>>),
+    Map(MapExpr<'a>),
+    Flatten(FlattenExpr<'a>),
+    Filter(FilterExpr<'a>),
+    FilterMatch(FilterMatchExpr<'a>),
+    Discard(DiscardExpr<'a>),
+    Split(SplitExpr<'a>),
+    Lines(LinesExpr<'a>),
+    Chain(ChainExpr<'a>),
     Info(InfoExpr<'a>),
     Warn(WarnExpr<'a>),
     Error(ErrorExpr<'a>),
+
+    AssertEq(AssertEqExpr<'a>),
 }
 
 impl<'a> Expr<'a> {
@@ -45,10 +54,18 @@ impl Spanned for Expr<'_> {
             Expr::List(list) => list.span,
             Expr::Match(match_expr) => match_expr.span,
             Expr::Join(join_expr) => join_expr.span,
-            Expr::Then(then_expr) => then_expr.span,
+            Expr::Map(map_expr) => map_expr.span,
+            Expr::Flatten(flatten_expr) => flatten_expr.span(),
+            Expr::Chain(chain) => chain.span,
             Expr::Info(expr) => expr.span,
             Expr::Warn(expr) => expr.span,
             Expr::Error(expr) => expr.span,
+            Expr::AssertEq(expr) => expr.span,
+            Expr::Filter(expr) => expr.span,
+            Expr::FilterMatch(expr) => expr.span,
+            Expr::Discard(expr) => expr.span,
+            Expr::Split(expr) => expr.span,
+            Expr::Lines(expr) => expr.span(),
         }
     }
 }
@@ -66,9 +83,18 @@ impl SemanticHash for Expr<'_> {
             Expr::List(list) => list.semantic_hash(state),
             Expr::Match(expr) => expr.semantic_hash(state),
             Expr::Join(expr) => expr.semantic_hash(state),
-            Expr::Then(expr) => expr.semantic_hash(state),
+            Expr::Map(expr) => expr.semantic_hash(state),
+            Expr::Flatten(_) => (),
+            Expr::Filter(expr) => expr.semantic_hash(state),
+            Expr::FilterMatch(expr) => expr.semantic_hash(state),
+            Expr::Discard(expr) => expr.semantic_hash(state),
+            Expr::Split(expr) => expr.semantic_hash(state),
+            Expr::Lines(_) => (),
+            Expr::Chain(expr) => expr.semantic_hash(state),
             // Messages don't contribute to outdatedness.
             Expr::Info(_) | Expr::Warn(_) | Expr::Error(_) => (),
+            // Debug assertions don't contribute to outdatedness.
+            Expr::AssertEq(_) => (),
         }
     }
 }
@@ -102,16 +128,57 @@ impl<'a, E: SemanticHash> SemanticHash for ListItem<E> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct MatchExpr<'a> {
-    pub span: Span,
-    pub token_match: token::Match,
-    pub ws_1: Whitespace,
-    pub body: Body<MatchArm<'a>>,
+pub enum MatchBody<'a> {
+    Single(Box<MatchArm<'a>>),
+    Braced(Body<MatchArm<'a>>),
 }
 
-impl SemanticHash for MatchExpr<'_> {
+impl<'a> MatchBody<'a> {
+    #[inline]
+    pub fn len(&self) -> usize {
+        match self {
+            MatchBody::Single(_) => 1,
+            MatchBody::Braced(body) => body.statements.len(),
+        }
+    }
+
+    pub fn iter<'b>(&'b self) -> MatchBodyIter<'a, 'b> {
+        match self {
+            MatchBody::Single(match_arm) => MatchBodyIter::Single(Some(match_arm)),
+            MatchBody::Braced(body) => MatchBodyIter::Braced(body.statements.iter()),
+        }
+    }
+}
+
+pub enum MatchBodyIter<'a, 'b> {
+    Single(Option<&'b MatchArm<'a>>),
+    Braced(std::slice::Iter<'b, BodyStmt<MatchArm<'a>>>),
+}
+
+impl<'a, 'b> Iterator for MatchBodyIter<'a, 'b> {
+    type Item = &'b MatchArm<'a>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            MatchBodyIter::Single(match_arm) => match_arm.take(),
+            MatchBodyIter::Braced(iter) => iter.next().map(|stmt| &stmt.statement),
+        }
+    }
+}
+
+impl SemanticHash for MatchBody<'_> {
+    #[inline]
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.body.semantic_hash(state);
+        match self {
+            MatchBody::Single(match_arm) => {
+                // Hash the single arm as a slice such that a body `{ ... }`
+                // with a single arm is not different from an unbraced single
+                // match arm.
+                (&[match_arm]).semantic_hash(state);
+            }
+            MatchBody::Braced(body) => body.statements.as_slice().semantic_hash(state),
+        }
     }
 }
 
@@ -134,27 +201,40 @@ impl SemanticHash for MatchArm<'_> {
     }
 }
 
-/// Pipe the result of one expression into another (`=>`).
-///
-/// Some expressions require this, like `match`.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ThenExpr<'a> {
+pub struct ChainExpr<'a> {
     pub span: Span,
-    pub expr: Expr<'a>,
+    /// The initial expression of the chain.
+    pub head: Box<Expr<'a>>,
+    /// All subsequent links, i.e. each `| expr` part.
+    pub tail: Vec<ChainSubExpr<'a>>,
+}
+
+impl SemanticHash for ChainExpr<'_> {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.head.semantic_hash(state);
+        self.tail.as_slice().semantic_hash(state);
+    }
+}
+
+/// Entry in an expression chain `| expr`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChainSubExpr<'a> {
+    pub span: Span,
     pub ws_1: Whitespace,
     pub token_pipe: token::Pipe,
     pub ws_2: Whitespace,
-    pub then: Expr<'a>,
+    pub expr: Expr<'a>,
 }
 
-impl SemanticHash for ThenExpr<'_> {
+impl SemanticHash for ChainSubExpr<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.expr.semantic_hash(state);
-        self.then.semantic_hash(state);
     }
 }
 
 pub type JoinExpr<'a> = KwExpr<token::Join, StringExpr<'a>>;
+pub type MapExpr<'a> = KwExpr<token::Map, StringExpr<'a>>;
 pub type GlobExpr<'a> = KwExpr<token::Glob, StringExpr<'a>>;
 pub type WhichExpr<'a> = KwExpr<token::Which, StringExpr<'a>>;
 pub type EnvExpr<'a> = KwExpr<token::Env, StringExpr<'a>>;
@@ -162,6 +242,14 @@ pub type ShellExpr<'a> = KwExpr<token::Shell, StringExpr<'a>>;
 pub type InfoExpr<'a> = KwExpr<token::Info, StringExpr<'a>>;
 pub type WarnExpr<'a> = KwExpr<token::Warn, StringExpr<'a>>;
 pub type ErrorExpr<'a> = KwExpr<token::Error, StringExpr<'a>>;
+pub type AssertEqExpr<'a> = KwExpr<token::AssertEq, Box<Expr<'a>>>;
+pub type FlattenExpr<'a> = token::Flatten;
+pub type SplitExpr<'a> = KwExpr<token::Split, PatternExpr<'a>>;
+pub type LinesExpr<'a> = token::Lines;
+pub type FilterExpr<'a> = KwExpr<token::Filter, PatternExpr<'a>>;
+pub type FilterMatchExpr<'a> = KwExpr<token::FilterMatch, MatchBody<'a>>;
+pub type MatchExpr<'a> = KwExpr<token::Match, MatchBody<'a>>;
+pub type DiscardExpr<'a> = KwExpr<token::Discard, PatternExpr<'a>>;
 
 /// Expression that is a pair of a token and a parameter, such as `<keyword>
 /// <expr>`. Example: `join ","`

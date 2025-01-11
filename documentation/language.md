@@ -18,6 +18,9 @@ The rules for string interpolation also apply to TOML manifests.
 - Lists are surrounded by `[ ... ]`, and elements are comma-separated.
 - There are no functions or loops, but expressions can be "chained" using the
   `=>` operator.
+- All variables are immutable - there is no assignment operation.
+- Local variables may shadow global variables or previously defined local
+  variables in the same scope.
 
 ### `let` statement
 
@@ -213,6 +216,8 @@ match {
 Given a list of values, convert the list to a string (recursively), where each
 element is separated by a separator.
 
+When given a string, returns the string unmodified.
+
 The "input" to the operation is whatever value it receives via expression
 piping.
 
@@ -226,26 +231,110 @@ Example:
 
 ```werk
 let cflags = ["-O0", "-g"]
-let arguments = cflags | join " "
+let arguments = cflags | join " "   # "-O0 -g"
 ```
 
 ### `split` expression
 
-Given a string, convert it to a list by splitting it by some separator.
+Given a string, convert it to a list by splitting it by some separator. The
+separator is a pattern expression. If the separator is not present in the
+string, returns a list with one entry containing the original string.
 
-See also [`split-pattern`](#split-pattern-expression) and
-[`lines`](#lines-expression).
+See also [`lines`](#lines-expression).
 
-### `split-pattern` expression
+Example:
 
-Given a string, convert it to a list by splitting it by some separator
-identified by a pattern.
+```werk
+let split = "Hello World" | split " "    # ["Hello", "World]
+```
 
 ### `lines` expression
 
 Given a string, convert it to a list by splitting it into separate lines.
 
 This is similar to `split "\n"`, except it also handles CRLF line breaks.
+
+### `flatten` expression
+
+Given a list containing other lists, return a flat list containing all strings
+of the left-hand-side.
+
+When given a string, returns a list with a single element containing that string
+(equivalent to `[string]`).
+
+May only appear on the right-hand-side of a piping expression.
+
+Example:
+
+```werk
+let flattened = ["a", ["b", ["c"]]]   # ["a", "b", "c"]
+```
+
+### `filter` expression
+
+Given a list, filter elements (recursively) through a pattern, keeping only the
+elements that matched the pattern. This also flattens the list if it contains
+other lists.
+
+Always produces a list.
+
+Example:
+
+```werk
+let filtered = ["a.c", "b.cpp"] | filter "%.cpp"   # ["b.cpp"]
+```
+
+### `filter-match` expression
+
+Given a list, filter elements (recursively) through a pattern, and replace each
+match with the right-hand side of the pattern match, keeping only the elements
+that matched the pattern. This also flattens the list if it contains other
+lists.
+
+Always produces a list. When given a string, the string is filtered as if it was
+the element of a list.
+
+This is a combination of the [`filter`](#filter-expression) and
+[`map`](#map-expression) expressions, or the [`match`](#match-expression).
+Compared to `filter | map`, the difference is that the mapping operation has
+access to pattern-match stem, capture groups, etc., and not just the string that
+matched. Compared to `filter | match` or `match | filter`, the difference is
+that the filter condition is that the pattern failed to match.
+
+Example:
+
+```werk
+let mapped = ["a.c", "b.cpp"]
+           | filter-match "%.c" => "{%}.o"  # ["a.o"]
+```
+
+### `discard` expression
+
+Inverse of [`filter`](#filter-expression): Retains only elements that do _not_
+match the pattern(s).
+
+Always produces a list.
+
+Example:
+
+```werk
+let filtered = ["a.c", "b.cpp"] | detain "%.cpp"   # ["a.c"]
+```
+
+### `map` expression
+
+Given a list expression, pass each element through a string expression where the
+"implied" value is the entry in the original list. Produces a list.
+
+Given a string, evaluate the right-hand string expression once with the string
+as the implied value. Produces a string.
+
+Example:
+
+```werk
+let mapped = ["a", "b"] | map "hello {}"    # ["hello a", "hello b"]
+let mapped = "a" | map "hello {}"           # "hello a"
+```
 
 ### `which` expression
 

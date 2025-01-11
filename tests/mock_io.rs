@@ -542,7 +542,7 @@ impl MockIo {
 }
 
 impl werk_runner::Io for MockIo {
-    fn run_build_command<'a>(
+    fn run_recipe_command<'a>(
         &'a self,
         command_line: &'a ShellCommandLine,
         _working_dir: &'a Absolute<std::path::Path>,
@@ -565,26 +565,24 @@ impl werk_runner::Io for MockIo {
         })
     }
 
-    fn run_during_eval<'a>(
-        &'a self,
-        command_line: &'a ShellCommandLine,
-        _working_dir: &'a Absolute<std::path::Path>,
-    ) -> werk_runner::PinBoxFut<'a, Result<std::process::Output, std::io::Error>> {
+    fn run_during_eval(
+        &self,
+        command_line: &ShellCommandLine,
+        _working_dir: &Absolute<std::path::Path>,
+    ) -> Result<std::process::Output, std::io::Error> {
         self.oplog
             .lock()
             .push(MockIoOp::RunDuringEval(command_line.clone()));
 
-        Box::pin(async {
-            let mut programs = self.programs.lock();
-            let Some(program) = programs.get_mut(&*command_line.program) else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "program not found",
-                ));
-            };
-            let mut fs = self.filesystem.lock();
-            program(command_line, &mut *fs)
-        })
+        let mut programs = self.programs.lock();
+        let Some(program) = programs.get_mut(&*command_line.program) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "program not found",
+            ));
+        };
+        let mut fs = self.filesystem.lock();
+        program(command_line, &mut *fs)
     }
 
     fn which(&self, command: &str) -> Result<Absolute<std::path::PathBuf>, WhichError> {
@@ -599,11 +597,11 @@ impl werk_runner::Io for MockIo {
             .ok_or(WhichError::CannotFindBinaryPath)
     }
 
-    fn glob_workspace<'a>(
-        &'a self,
-        path: &'a Absolute<std::path::Path>,
-        settings: &'a GlobSettings,
-    ) -> werk_runner::PinBoxFut<'a, Result<Vec<DirEntry>, Error>> {
+    fn glob_workspace(
+        &self,
+        path: &Absolute<std::path::Path>,
+        settings: &GlobSettings,
+    ) -> Result<Vec<DirEntry>, Error> {
         tracing::trace!("glob workspace: {}", path.display());
         let fs = self.filesystem.lock();
 
@@ -642,7 +640,7 @@ impl werk_runner::Io for MockIo {
         let mut results = Vec::new();
         let result = glob(path, workspace, &mut results, &settings.ignore_explicitly);
 
-        Box::pin(std::future::ready(result.map(move |_| results)))
+        result.map(move |_| results)
     }
 
     fn metadata(&self, path: &Absolute<std::path::Path>) -> Result<Metadata, Error> {
@@ -652,99 +650,71 @@ impl werk_runner::Io for MockIo {
             .map_err(Into::into)
     }
 
-    fn read_file<'a>(
-        &'a self,
-        path: &'a Absolute<std::path::Path>,
-    ) -> werk_runner::PinBoxFut<'a, Result<Vec<u8>, std::io::Error>> {
+    fn read_file(&self, path: &Absolute<std::path::Path>) -> Result<Vec<u8>, std::io::Error> {
         self.oplog.lock().push(MockIoOp::ReadFile(path.to_owned()));
-        let fut = async move {
-            let fs = self.filesystem.lock();
-            let (entry, data) = read_fs(&*fs, path)?;
-            if !entry.metadata.is_file {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::IsADirectory,
-                    "is a directory",
-                ));
-            }
-            let data = Vec::from(data);
-            Ok(data)
-        };
-
-        Box::pin(fut)
+        let fs = self.filesystem.lock();
+        let (entry, data) = read_fs(&*fs, path)?;
+        if !entry.metadata.is_file {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::IsADirectory,
+                "is a directory",
+            ));
+        }
+        let data = Vec::from(data);
+        Ok(data)
     }
 
-    fn write_file<'a>(
-        &'a self,
-        path: &'a Absolute<std::path::Path>,
-        data: &'a [u8],
-    ) -> werk_runner::PinBoxFut<'a, Result<(), std::io::Error>> {
+    fn write_file(
+        &self,
+        path: &Absolute<std::path::Path>,
+        data: &[u8],
+    ) -> Result<(), std::io::Error> {
         let path = path.to_path_buf();
         self.oplog.lock().push(MockIoOp::WriteFile(path.clone()));
 
-        let fut = async move {
-            let mut fs = self.filesystem.lock();
-            insert_fs(
-                &mut *fs,
-                &path,
-                (
-                    Metadata {
-                        mtime: self.now(),
-                        is_file: true,
-                        is_symlink: false,
-                    },
-                    Vec::from(data),
-                ),
-            )
-        };
-
-        Box::pin(fut)
+        let mut fs = self.filesystem.lock();
+        insert_fs(
+            &mut *fs,
+            &path,
+            (
+                Metadata {
+                    mtime: self.now(),
+                    is_file: true,
+                    is_symlink: false,
+                },
+                Vec::from(data),
+            ),
+        )
     }
 
-    fn copy_file<'a>(
-        &'a self,
-        from: &'a Absolute<std::path::Path>,
-        to: &'a Absolute<std::path::Path>,
-    ) -> werk_runner::PinBoxFut<'a, Result<(), std::io::Error>> {
+    fn copy_file(
+        &self,
+        from: &Absolute<std::path::Path>,
+        to: &Absolute<std::path::Path>,
+    ) -> Result<(), std::io::Error> {
         self.oplog
             .lock()
             .push(MockIoOp::CopyFile(from.to_path_buf(), to.to_path_buf()));
 
-        let fut = async move {
-            let mut fs = self.filesystem.lock();
-            copy_fs(&mut *fs, from, to)
-        };
-        Box::pin(fut)
+        let mut fs = self.filesystem.lock();
+        copy_fs(&mut *fs, from, to)
     }
 
-    fn delete_file<'a>(
-        &'a self,
-        path: &'a Absolute<std::path::Path>,
-    ) -> werk_runner::PinBoxFut<'a, Result<(), std::io::Error>> {
+    fn delete_file(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
         let path = path.to_path_buf();
         self.oplog.lock().push(MockIoOp::DeleteFile(path.clone()));
 
-        let fut = async move {
-            let mut fs = self.filesystem.lock();
-            remove_fs(&mut *fs, &path)
-        };
-
-        Box::pin(fut)
+        let mut fs = self.filesystem.lock();
+        remove_fs(&mut *fs, &path)
     }
 
-    fn create_parent_dirs<'a>(
-        &'a self,
-        path: &'a Absolute<std::path::Path>,
-    ) -> werk_runner::PinBoxFut<'a, Result<(), std::io::Error>> {
+    fn create_parent_dirs(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
         self.oplog
             .lock()
             .push(MockIoOp::CreateParentDirs(path.to_path_buf()));
 
-        let fut = async move {
-            let mut fs = self.filesystem.lock();
-            create_parent_dirs(&mut *fs, path)
-        };
-
-        Box::pin(fut)
+        let mut fs = self.filesystem.lock();
+        create_parent_dirs(&mut *fs, path)
     }
 
     fn read_env(&self, name: &str) -> Option<String> {

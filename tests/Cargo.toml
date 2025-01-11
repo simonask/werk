@@ -13,6 +13,7 @@ parking_lot.workspace = true
 ahash.workspace = true
 tracing.workspace = true
 tracing-subscriber = "0.3.18"
+smol.workspace = true
 smol-macros = "0.1.1"
 macro_rules_attribute = "0.2.0"
 toml_edit.workspace = true
@@ -31,3 +32,7 @@ path = "test_pattern_match.rs"
 [[test]]
 name = "test_outdatedness"
 path = "test_outdatedness.rs"
+
+[[test]]
+name = "test_cases"
+path = "test_cases.rs"

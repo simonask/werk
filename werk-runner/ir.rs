@@ -30,7 +30,7 @@ impl<'a> Manifest<'a> {
         path: &Absolute<werk_fs::Path>,
     ) -> Result<Option<BuildRecipeMatch<'b>>, crate::Error> {
         let matches = self.build_recipes.iter().filter_map(|recipe| {
-            if let Some(match_data) = recipe.pattern.match_path(&path) {
+            if let Some(match_data) = recipe.pattern.match_whole_path(&path) {
                 Some((recipe, match_data))
             } else {
                 None

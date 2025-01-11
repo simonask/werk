@@ -6,8 +6,12 @@ pub trait SemanticHash {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H);
 }
 
-impl<T: SemanticHash> SemanticHash for &[T] {
+impl<T: SemanticHash> SemanticHash for [T] {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Would use `std::hash::Hasher::write_length_prefix()`, but that's
+        // unstable.
+        state.write_usize(self.len());
+
         for item in self.iter() {
             item.semantic_hash(state);
         }
@@ -20,6 +24,18 @@ impl<T: SemanticHash> SemanticHash for Option<T> {
         if let Some(value) = self {
             value.semantic_hash(state);
         }
+    }
+}
+
+impl<T: SemanticHash + ?Sized> SemanticHash for Box<T> {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        T::semantic_hash(self, state);
+    }
+}
+
+impl<T: SemanticHash + ?Sized> SemanticHash for &T {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        T::semantic_hash(self, state);
     }
 }
 

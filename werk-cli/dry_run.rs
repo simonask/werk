@@ -10,7 +10,7 @@ impl DryRun {
 }
 
 impl werk_runner::Io for DryRun {
-    fn run_build_command<'a>(
+    fn run_recipe_command<'a>(
         &'a self,
         command_line: &'a ShellCommandLine,
         _working_dir: &'a Absolute<std::path::Path>,
@@ -23,11 +23,11 @@ impl werk_runner::Io for DryRun {
         })))
     }
 
-    fn run_during_eval<'a>(
-        &'a self,
-        command_line: &'a ShellCommandLine,
-        working_dir: &'a Absolute<std::path::Path>,
-    ) -> PinBoxFut<'a, Result<std::process::Output, std::io::Error>> {
+    fn run_during_eval(
+        &self,
+        command_line: &ShellCommandLine,
+        working_dir: &Absolute<std::path::Path>,
+    ) -> Result<std::process::Output, std::io::Error> {
         tracing::warn!(
             "[DRY-MODE] Running executable, despite dry-run mode: {}",
             command_line.display()
@@ -42,11 +42,11 @@ impl werk_runner::Io for DryRun {
         self.0.which(command)
     }
 
-    fn glob_workspace<'a>(
-        &'a self,
-        path: &'a Absolute<std::path::Path>,
-        settings: &'a werk_runner::GlobSettings,
-    ) -> PinBoxFut<'a, Result<Vec<DirEntry>, Error>> {
+    fn glob_workspace(
+        &self,
+        path: &Absolute<std::path::Path>,
+        settings: &werk_runner::GlobSettings,
+    ) -> Result<Vec<DirEntry>, Error> {
         self.0.glob_workspace(path, settings)
     }
 
@@ -54,56 +54,47 @@ impl werk_runner::Io for DryRun {
         self.0.metadata(path)
     }
 
-    fn read_file<'a>(
-        &'a self,
-        path: &'a Absolute<std::path::Path>,
-    ) -> PinBoxFut<'a, Result<Vec<u8>, std::io::Error>> {
+    fn read_file(&self, path: &Absolute<std::path::Path>) -> Result<Vec<u8>, std::io::Error> {
         self.0.read_file(path)
     }
 
-    fn write_file<'a>(
-        &'a self,
-        path: &'a Absolute<std::path::Path>,
-        data: &'a [u8],
-    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
+    fn write_file(
+        &self,
+        path: &Absolute<std::path::Path>,
+        data: &[u8],
+    ) -> Result<(), std::io::Error> {
         tracing::info!(
             "[DRY-RUN] Would write file '{}' ({} bytes)",
             path.display(),
             data.len()
         );
-        Box::pin(std::future::ready(Ok(())))
+        Ok(())
     }
 
-    fn copy_file<'a>(
-        &'a self,
-        from: &'a Absolute<std::path::Path>,
-        to: &'a Absolute<std::path::Path>,
-    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
+    fn copy_file(
+        &self,
+        from: &Absolute<std::path::Path>,
+        to: &Absolute<std::path::Path>,
+    ) -> Result<(), std::io::Error> {
         tracing::info!(
             "[DRY-RUN] Would copy file '{}' to '{}'",
             from.display(),
             to.display()
         );
-        Box::pin(std::future::ready(Ok(())))
+        Ok(())
     }
 
-    fn delete_file<'a>(
-        &'a self,
-        path: &'a Absolute<std::path::Path>,
-    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
+    fn delete_file(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
         tracing::info!("[DRY-RUN] Would delete file '{}'", path.display());
-        Box::pin(std::future::ready(Ok(())))
+        Ok(())
     }
 
-    fn create_parent_dirs<'a>(
-        &'a self,
-        path: &'a Absolute<std::path::Path>,
-    ) -> PinBoxFut<'a, Result<(), std::io::Error>> {
+    fn create_parent_dirs(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
         tracing::info!(
             "[DRY-RUN] Would create parent directories for '{}'",
             path.display()
         );
-        Box::pin(std::future::ready(Ok(())))
+        Ok(())
     }
 
     fn read_env(&self, name: &str) -> Option<String> {

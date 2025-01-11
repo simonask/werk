@@ -12,16 +12,12 @@ use winnow::{
 };
 
 use crate::{
-    ast::{
-        self,
-        token::{self, Keyword},
-        ws_ignore,
-    },
+    ast::{self, token, ws_ignore},
     parse_string::{
         path_interpolation, pattern_one_of, push_pattern_fragment, push_string_fragment,
         string_interpolation, StringFragment,
     },
-    Expected,
+    ErrContext, Expected,
 };
 
 mod span;
@@ -29,7 +25,7 @@ mod span;
 pub use span::*;
 
 pub type Input<'a> = winnow::stream::Located<&'a str>;
-pub type PError = crate::error::ContextError;
+pub type PError = crate::error::ParseError;
 pub type PResult<T> = winnow::PResult<T, PError>;
 
 pub fn parse_werk<'a>(source_code: &'a str) -> Result<crate::Document<'a>, crate::Error> {
@@ -76,13 +72,12 @@ where
     CloseParser: Parser<Input<'a>, Close, PError>,
     ParseNextItem: Parser<Input<'a>, Item, PError>,
 {
-    let mut parse_next = parse_next.with_token_span();
+    let mut parse_next = parse_next;
 
     move |input: &mut Input<'a>| -> PResult<(Open, Vec<ast::BodyStmt<Item>>, ast::Whitespace, Close)> {
         let mut accum = Vec::new();
 
         let mut has_separator = true;
-        let mut last_item_span = Span::default();
 
         let open = initial.parse_next(input)?;
         // Ignore all whitespace (including comments) until the first statement
@@ -98,15 +93,13 @@ where
             }
 
             if !has_separator {
-                return Err(Expected::Description(
-                    &"statements must be separated by semicolon or newlines",
-                    last_item_span,
+                return Err(Expected::Expected(
+                    &"statement separator (comma or newline)",
                 )
                 .into());
             }
 
-            let (item, span) = parse_next.parse_next(input)?;
-            last_item_span = span;
+            let item = parse_next.parse_next(input)?;
             let preceding_whitespace = last_decor;
             let trailing_whitespace;
 
@@ -347,6 +340,7 @@ where
     PParser: Parser<Input<'a>, P, PError>,
 {
     (keyword::<T>, whitespace_nonempty, cut_err(param))
+        .context(ErrContext::KwExpr(T::TOKEN))
         .with_token_span()
         .map(|((token, ws_1, value), span)| ast::KwExpr {
             span,
@@ -373,49 +367,49 @@ fn run_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::RunStmt<'a>> {
 }
 
 fn info_expr<'a>(input: &mut Input<'a>) -> PResult<ast::InfoExpr<'a>> {
-    kw_expr(string_expr.context(Expected::Expected(
-        &"`info` keyword must be followed by a string literal",
-    )))
-    .parse_next(input)
+    kw_expr(string_expr).parse_next(input)
 }
 
 fn warn_expr<'a>(input: &mut Input<'a>) -> PResult<ast::WarnExpr<'a>> {
-    kw_expr(string_expr.context(Expected::Expected(
-        &"`warn` keyword must be followed by a string literal",
-    )))
-    .parse_next(input)
+    kw_expr(string_expr).parse_next(input)
 }
 
 /// Expression with chaining (`ast::ThenExpr`).
 fn expression_chain<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
-    let mut expr = Some(expression_leaf.parse_next(input)?);
+    let expr = expression_head.parse_next(input)?;
 
-    // "=>" expression_leaf
-    fn expression_chain_link<'a>(
-        input: &mut Input<'a>,
-    ) -> PResult<(ast::Whitespace, token::Pipe, ast::Whitespace, ast::Expr<'a>)> {
-        (whitespace, token, whitespace, cut_err(expression_leaf)).parse_next(input)
+    // "|" expression_tail
+    fn expression_pipe<'a>(input: &mut Input<'a>) -> PResult<ast::ChainSubExpr<'a>> {
+        let (mut subexpr, span) = seq! { ast::ChainSubExpr {
+            span: default,
+            ws_1: whitespace,
+            token_pipe: token,
+            ws_2: whitespace,
+            expr: cut_err(expression_tail),
+        }}
+        .with_token_span()
+        .parse_next(input)?;
+        subexpr.span = span;
+        Ok(subexpr)
     }
 
-    repeat(0.., expression_chain_link)
-        .fold(
-            move || expr.take().unwrap(),
-            |expr, (decor_1, token_pipe, decor_2, then)| {
-                ast::Expr::Then(Box::new(ast::ThenExpr {
-                    span: expr.span().merge(then.span()),
-                    expr,
-                    ws_1: decor_1,
-                    token_pipe,
-                    ws_2: decor_2,
-                    then,
-                }))
-            },
-        )
-        .parse_next(input)
+    let (tail, tail_span): (Vec<_>, _) = repeat(0.., expression_pipe)
+        .with_token_span()
+        .parse_next(input)?;
+
+    if tail.is_empty() {
+        Ok(expr)
+    } else {
+        Ok(ast::Expr::Chain(ast::ChainExpr {
+            span: expr.span().merge(tail_span),
+            head: Box::new(expr),
+            tail,
+        }))
+    }
 }
 
 /// Expression with no chaining.
-fn expression_leaf<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
+fn expression_head<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
     alt((
         string_expr.map(ast::Expr::StringExpr),
         list_of(expression_chain).map(ast::Expr::List),
@@ -424,12 +418,35 @@ fn expression_leaf<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
         which_expr.map(ast::Expr::Which),
         join_expr.map(ast::Expr::Join),
         env_expr.map(ast::Expr::Env),
+        identifier.map(ast::Expr::Ident),
+    ))
+    .context(Expected::Expected(&"expression start; expression chains must start with a value, or an `env`, `glob`, `which`, or `shell` operation"))
+    .parse_next(input)
+}
+
+/// Expression after a `|` in an expression chain.
+fn expression_tail<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
+    alt((
+        string_expr.map(ast::Expr::StringExpr),
+        shell_expr.map(ast::Expr::Shell),
+        glob_expr.map(ast::Expr::Glob),
+        which_expr.map(ast::Expr::Which),
+        join_expr.map(ast::Expr::Join),
+        map_expr.map(ast::Expr::Map),
+        keyword.map(ast::Expr::Flatten),
+        kw_expr(pattern_expr).map(ast::Expr::Filter),
+        kw_expr(cut_err(match_body)).map(ast::Expr::FilterMatch),
+        kw_expr(pattern_expr).map(ast::Expr::Discard),
+        kw_expr(pattern_expr).map(ast::Expr::Split),
+        keyword.map(ast::Expr::Lines),
+        env_expr.map(ast::Expr::Env),
         match_expr.map(ast::Expr::Match),
         info_expr.map(ast::Expr::Info),
         warn_expr.map(ast::Expr::Warn),
         error_expr.map(ast::Expr::Error),
-        identifier.map(ast::Expr::Ident),
+        assert_eq_expr.map(ast::Expr::AssertEq),
     ))
+    .context(Expected::Expected(&"a chaining operation; one of `join`, `flatten`, `map`, `match`, `env`, `glob`, `which`, `shell`, or a string expression"))
     .parse_next(input)
 }
 
@@ -489,32 +506,44 @@ fn copy_expr<'a>(input: &mut Input<'a>) -> PResult<ast::CopyExpr<'a>> {
 }
 
 fn shell_expr<'a>(input: &mut Input<'a>) -> PResult<ast::ShellExpr<'a>> {
-    kw_expr(string_expr.context(Expected::Expected(&"string literal after `shell` keyword")))
-        .parse_next(input)
+    kw_expr(string_expr).parse_next(input)
 }
 
 fn glob_expr<'a>(input: &mut Input<'a>) -> PResult<ast::GlobExpr<'a>> {
-    kw_expr(string_expr.context(Expected::Expected(&"string literal after `glob` keyword")))
-        .parse_next(input)
+    kw_expr(string_expr).parse_next(input)
 }
 
 fn which_expr<'a>(input: &mut Input<'a>) -> PResult<ast::WhichExpr<'a>> {
-    kw_expr(string_expr.context(Expected::Expected(&"string literal after `which` keyword")))
-        .parse_next(input)
+    kw_expr(string_expr).parse_next(input)
 }
 
 fn join_expr<'a>(input: &mut Input<'a>) -> PResult<ast::JoinExpr<'a>> {
-    kw_expr(string_expr.context(Expected::Expected(&"string literal after `join` keyword")))
-        .parse_next(input)
+    kw_expr(string_expr).parse_next(input)
+}
+
+fn map_expr<'a>(input: &mut Input<'a>) -> PResult<ast::MapExpr<'a>> {
+    kw_expr(string_expr).parse_next(input)
 }
 
 fn env_expr<'a>(input: &mut Input<'a>) -> PResult<ast::EnvExpr<'a>> {
-    kw_expr(string_expr.context(Expected::Expected(&"string literal after `env` keyword")))
-        .parse_next(input)
+    kw_expr(string_expr).parse_next(input)
 }
 
 fn match_expr<'a>(input: &mut Input<'a>) -> PResult<ast::MatchExpr<'a>> {
-    fn match_arm<'a>(input: &mut Input<'a>) -> PResult<ast::MatchArm<'a>> {
+    let (mut expr, span) = seq! {ast::MatchExpr {
+        span: default,
+        token: keyword::<token::Match>,
+        ws_1: whitespace,
+        param: cut_err(match_body),
+    }}
+    .with_token_span()
+    .parse_next(input)?;
+    expr.span = span;
+    Ok(expr)
+}
+
+fn match_body<'a>(input: &mut Input<'a>) -> PResult<ast::MatchBody<'a>> {
+    fn match_arm_braced<'a>(input: &mut Input<'a>) -> PResult<ast::MatchArm<'a>> {
         let (mut arm, span) = seq! {ast::MatchArm {
             span: default,
             pattern: cut_err(pattern_expr.context(Expected::Expected(&"match arm must start with a pattern literal"))),
@@ -529,35 +558,63 @@ fn match_expr<'a>(input: &mut Input<'a>) -> PResult<ast::MatchExpr<'a>> {
         Ok(arm)
     }
 
-    let (mut expr, span) = seq! {ast::MatchExpr {
-        span: default,
-        token_match: keyword::<token::Match>,
-        ws_1: whitespace,
-        body: cut_err(body(match_arm))
-    }}
+    fn match_arm_single<'a>(input: &mut Input<'a>) -> PResult<ast::MatchArm<'a>> {
+        let (mut arm, span) = seq! {ast::MatchArm {
+            span: default,
+            pattern: cut_err(pattern_expr.context(Expected::Expected(&"inline match must start with a pattern literal"))),
+            ws_1: whitespace,
+            token_fat_arrow: cut_err(keyword.context(Expected::Expected(&"inline match is missing a `=>`"))),
+            ws_2: whitespace,
+            expr: cut_err(string_expr.context(ErrContext::StringExpr)).map(ast::Expr::StringExpr),
+        }}
+        .with_token_span()
+        .parse_next(input)?;
+        arm.span = span;
+        Ok(arm)
+    }
+
+    alt((
+        preceded(
+            peek(token::<'{'>),
+            cut_err(body(match_arm_braced)).map(ast::MatchBody::Braced),
+        ),
+        match_arm_single.map(Box::new).map(ast::MatchBody::Single),
+    ))
+    .context(Expected::Expected(
+        &"match body { ... } or a single match arm",
+    ))
+    .parse_next(input)
+}
+
+fn error_expr<'a>(input: &mut Input<'a>) -> PResult<ast::ErrorStmt<'a>> {
+    kw_expr(string_expr).parse_next(input)
+}
+
+fn assert_eq_expr<'a>(input: &mut Input<'a>) -> PResult<ast::AssertEqExpr<'a>> {
+    kw_expr(expression_head.map(Box::new)).parse_next(input)
+}
+
+fn string_expr<'a>(input: &mut Input<'a>) -> PResult<ast::StringExpr<'a>> {
+    let (mut expr, span) = delimited(
+        '"'.context(Expected::Expected(&"string literal")),
+        string_expr_inside_quotes,
+        cut_err('"').context(Expected::ExpectedChar('"')),
+    )
     .with_token_span()
+    .context(Expected::Expected(&"string literal"))
     .parse_next(input)?;
     expr.span = span;
     Ok(expr)
 }
 
-fn error_expr<'a>(input: &mut Input<'a>) -> PResult<ast::ErrorStmt<'a>> {
-    kw_expr(string_expr.context(Expected::Expected(&"string literal after `error` keyword")))
-        .parse_next(input)
-}
-
-fn string_expr<'a>(input: &mut Input<'a>) -> PResult<ast::StringExpr<'a>> {
-    let (mut expr, span) = delimited('"', string_expr_inside_quotes, cut_err('"'))
-        .with_token_span()
-        .parse_next(input)?;
-    expr.span = span;
-    Ok(expr)
-}
-
 fn pattern_expr<'a>(input: &mut Input<'a>) -> PResult<ast::PatternExpr<'a>> {
-    let (mut expr, span) = delimited('"', pattern_expr_inside_quotes, cut_err('"'))
-        .with_token_span()
-        .parse_next(input)?;
+    let (mut expr, span) = delimited(
+        '"'.context(Expected::Expected(&"pattern literal")),
+        pattern_expr_inside_quotes,
+        cut_err('"').context(Expected::ExpectedChar('"')),
+    )
+    .with_token_span()
+    .parse_next(input)?;
     expr.span = span;
     Ok(expr)
 }
@@ -595,7 +652,6 @@ fn string_fragment<'a>(input: &mut Input<'a>) -> PResult<StringFragment<'a>> {
         string_interpolation.map(StringFragment::Interpolation),
         path_interpolation.map(StringFragment::Interpolation),
     ))
-    .context("string fragment")
     .parse_next(input)
 }
 
@@ -610,7 +666,6 @@ fn pattern_fragment<'a>(input: &mut Input<'a>) -> PResult<StringFragment<'a>> {
         string_interpolation.map(StringFragment::Interpolation),
         path_interpolation.map(StringFragment::Interpolation),
     ))
-    .context("pattern fragment")
     .parse_next(input)
 }
 
@@ -658,7 +713,7 @@ fn list_of<'a, Item, ParseItem>(
 where
     ParseItem: Parser<Input<'a>, Item, PError>,
 {
-    let mut parse_item = cut_err(parse_item).with_token_span();
+    let mut parse_item = cut_err(parse_item);
 
     move |input: &mut Input<'a>| -> PResult<ast::ListExpr<Item>> {
         let token_open = token.parse_next(input)?;
@@ -666,7 +721,6 @@ where
 
         let mut has_separator = true;
         let mut last_decor = whitespace.parse_next(input)?;
-        let mut last_item_span = Span::default();
 
         loop {
             match token.parse_next(input) {
@@ -683,15 +737,10 @@ where
             }
 
             if !has_separator {
-                return Err(Expected::Description(
-                    &"list items must be separated by commas",
-                    last_item_span,
-                )
-                .into());
+                return Err(Expected::Expected(&"statement separator (comma or newline)").into());
             }
 
-            let (item, span) = parse_item.parse_next(input)?;
-            last_item_span = span;
+            let item = parse_item.parse_next(input)?;
 
             let whitespace_before_comma = whitespace.parse_next(input)?;
             let comma_and_whitespace = opt((token, whitespace)).parse_next(input)?;
@@ -720,31 +769,30 @@ where
     }
 }
 
-fn identifier_literal<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
-    const KEYWORDS: &[&str] = &["let"];
-
-    fn is_identifier_start(ch: char) -> bool {
-        unicode_ident::is_xid_start(ch)
-    }
-
-    fn is_identifier_continue(ch: char) -> bool {
-        // Allow kebab-case identifiers
-        ch == '-' || unicode_ident::is_xid_continue(ch)
-    }
-
-    (
-        take_while(1, |ch| is_identifier_start(ch)),
-        take_while(0.., |ch| is_identifier_continue(ch)),
-    )
-        .context(Expected::Expected(&"identifier"))
-        .take()
-        .verify(|s| !KEYWORDS.contains(s))
-        .parse_next(input)
-}
-
 fn identifier<'a>(input: &mut Input<'a>) -> PResult<ast::Ident<'a>> {
-    let (ident, span) = identifier_literal.with_token_span().parse_next(input)?;
+    fn identifier_chars<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
+        const KEYWORDS: &[&str] = &["let"];
 
+        fn is_identifier_start(ch: char) -> bool {
+            unicode_ident::is_xid_start(ch)
+        }
+
+        fn is_identifier_continue(ch: char) -> bool {
+            // Allow kebab-case identifiers
+            ch == '-' || unicode_ident::is_xid_continue(ch)
+        }
+
+        (
+            take_while(1, |ch| is_identifier_start(ch)),
+            take_while(0.., |ch| is_identifier_continue(ch)),
+        )
+            .context(Expected::Expected(&"identifier"))
+            .take()
+            .verify(|s| !KEYWORDS.contains(s))
+            .parse_next(input)
+    }
+
+    let (ident, span) = identifier_chars.with_token_span().parse_next(input)?;
     Ok(ast::Ident { span, ident })
 }
 
@@ -830,6 +878,7 @@ fn whitespace_parsed(input: &mut Input) -> PResult<ParsedWhitespace> {
 fn whitespace_parsed_nonempty(input: &mut Input) -> PResult<ParsedWhitespace> {
     whitespace_parsed
         .verify(|ws| !ws.span.is_empty())
+        .context(Expected::Expected(&"whitespace"))
         .parse_next(input)
 }
 
@@ -916,8 +965,8 @@ where
 mod tests {
     use super::Input;
     use crate::{
-        ast::{self, ws, ws_ignore},
-        parser::{span, Offset, ParsedWhitespace},
+        ast::{self, token::Keyword as _, ws, ws_ignore},
+        parser::{span, token, Offset, ParsedWhitespace},
     };
     use winnow::Parser as _;
 
@@ -1261,6 +1310,34 @@ mod tests {
                 has_newlines: true,
                 has_comments: false
             }
+        );
+    }
+
+    #[test]
+    fn filter_match() {
+        assert_eq!(
+            super::expression_tail
+                .parse(Input::new("filter-match \"a\" => \"b\""))
+                .unwrap(),
+            ast::Expr::FilterMatch(ast::KwExpr {
+                span: span(0..23),
+                token: ast::token::FilterMatch::with_span(span(0..12)),
+                ws_1: ws_ignore(),
+                param: ast::MatchBody::Single(Box::new(ast::MatchArm {
+                    span: span(13..23),
+                    pattern: ast::PatternExpr {
+                        span: span(13..16),
+                        fragments: vec![ast::PatternFragment::Literal("a".into())]
+                    },
+                    ws_1: ws_ignore(),
+                    token_fat_arrow: ast::token::FatArrow::with_span(span(17..19)),
+                    ws_2: ws_ignore(),
+                    expr: ast::Expr::StringExpr(ast::StringExpr {
+                        span: span(20..23),
+                        fragments: vec![ast::StringFragment::Literal("b".into())]
+                    })
+                }))
+            })
         );
     }
 }

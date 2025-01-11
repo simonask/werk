@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use werk_parser::parser::Span;
 
-use crate::{depfile::DepfileError, OwnedDependencyChain, ShellCommandLine, TaskId};
+use crate::{depfile::DepfileError, OwnedDependencyChain, ShellCommandLine, TaskId, Value};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
@@ -244,6 +244,8 @@ pub enum EvalError {
     Path(Span, werk_fs::PathError),
     #[error("{1}")]
     ErrorExpression(Span, String),
+    #[error("assertion failed: {} != {}", .1 .0, .1 .1)]
+    AssertionFailed(Span, Box<(Value, Value)>),
 }
 
 impl werk_parser::parser::Spanned for EvalError {
@@ -274,7 +276,8 @@ impl werk_parser::parser::Spanned for EvalError {
             | EvalError::Glob(span, _)
             | EvalError::Shell(span, _)
             | EvalError::Path(span, _)
-            | EvalError::ErrorExpression(span, _) => *span,
+            | EvalError::ErrorExpression(span, _)
+            | EvalError::AssertionFailed(span, _) => *span,
         }
     }
 }

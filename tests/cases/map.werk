@@ -1,0 +1,11 @@
+# map recursive list
+let input = ["a", ["b"]];
+let result = input
+    | map "hello {}"
+    | assert_eq ["hello a", ["hello b"]]
+
+# map string
+let input = "a";
+let result = input
+    | map "hello {}"
+    | assert_eq "hello a"

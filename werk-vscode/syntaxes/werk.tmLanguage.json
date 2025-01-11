@@ -6,7 +6,16 @@
 			"include": "#keywords"
 		},
 		{
+			"include": "#operators"
+		},
+		{
+			"include": "#builtins"
+		},
+		{
 			"include": "#strings"
+		},
+		{
+			"include": "#constants"
 		},
 		{
 			"include": "#comments"
@@ -17,7 +26,23 @@
 			"patterns": [
 				{
 					"name": "keyword.control.werk",
-					"match": "\\b(config|let|build|task|match|from|to|depfile|run|write|copy|delete|info|warn|error)\\b"
+					"match": "\\b(config|let|build|task|from|to|depfile|run)\\b"
+				}
+			]
+		},
+		"operators": {
+			"patterns": [
+				{
+					"name": "keyword.operator.werk",
+					"match": "(\\||=>)"
+				}
+			]
+		},
+		"builtins": {
+			"patterns": [
+				{
+					"name": "support.function.werk",
+					"match": "\\b(glob|which|env|shell|write|copy|delete|info|warn|error|flatten|join|split|split-pattern|map|lines|filter-match|filter|discard|match|assert_eq)\\b"
 				}
 			]
 		},
@@ -29,6 +54,26 @@
 				{
 					"name": "constant.character.escape.werk",
 					"match": "\\\\."
+				},
+				{
+					"name": "support.variable.werk",
+					"match": "\\{.*?\\}"
+				},
+				{
+					"name": "support.variable.werk",
+					"match": "\\<.*?\\>"
+				},
+				{
+					"name": "constant.language.werk",
+					"match": "%"
+				}
+			]
+		},
+		"constants": {
+			"patterns": [
+				{
+					"name": "constant.language.werk",
+					"match": "\\b(true|false)\\b"
 				}
 			]
 		},

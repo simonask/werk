@@ -438,11 +438,8 @@ impl<'a> Inner<'a> {
                 // previous run of this recipe. Parse it and add its
                 // dependencies!
                 tracing::debug!("Parsing depfile: {}", depfile_entry.path.display());
-                let depfile_contents = self
-                    .workspace
-                    .io
-                    .read_file(depfile_entry.path.as_deref())
-                    .await?;
+                let depfile_contents =
+                    self.workspace.io.read_file(depfile_entry.path.as_deref())?;
                 let depfile = Depfile::parse(&depfile_contents)?;
                 for dep in &depfile.deps {
                     // Translate the filesystem path produced by the compiler into an
@@ -594,7 +591,7 @@ impl<'a> Inner<'a> {
                     let result = self
                         .workspace
                         .io
-                        .run_build_command(&command_line, self.workspace.project_root())
+                        .run_recipe_command(&command_line, self.workspace.project_root())
                         .await;
                     self.workspace.watcher.did_execute(
                         task_id,
@@ -614,18 +611,13 @@ impl<'a> Inner<'a> {
                     }
                 }
                 RunCommand::Write(path_buf, vec) => {
-                    self.workspace
-                        .io
-                        .write_file(path_buf.as_deref(), &vec)
-                        .await?
+                    self.workspace.io.write_file(path_buf.as_deref(), &vec)?
                 }
-                RunCommand::Copy(from, to) => {
-                    self.workspace
-                        .io
-                        .copy_file(from.as_deref(), to.as_deref())
-                        .await?
-                }
-                RunCommand::Delete(path) => self.workspace.io.delete_file(path.as_deref()).await?,
+                RunCommand::Copy(from, to) => self
+                    .workspace
+                    .io
+                    .copy_file(from.as_deref(), to.as_deref())?,
+                RunCommand::Delete(path) => self.workspace.io.delete_file(path.as_deref())?,
                 RunCommand::Info(message) => {
                     self.workspace.watcher.message(Some(task_id), &message);
                 }

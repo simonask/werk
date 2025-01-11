@@ -119,22 +119,19 @@ struct Caches {
 pub const WERK_CACHE_FILENAME: &str = ".werk-cache";
 
 impl<'a> Workspace<'a> {
-    pub async fn new(
+    pub fn new(
         ast: &'a werk_parser::Document<'a>,
         io: &'a dyn Io,
         watcher: &'a dyn Watcher,
         project_root: Absolute<std::path::PathBuf>,
         settings: &WorkspaceSettings,
     ) -> Result<Self, Error> {
-        let werk_cache = read_workspace_cache(&*io, settings.output_directory.as_deref()).await;
+        let werk_cache = read_workspace_cache(&*io, settings.output_directory.as_deref());
 
         let mut workspace_files =
             IndexMap::with_capacity_and_hasher(1024, ahash::RandomState::default());
 
-        for entry in io
-            .glob_workspace(project_root.as_deref(), &settings.glob)
-            .await?
-        {
+        for entry in io.glob_workspace(project_root.as_deref(), &settings.glob)? {
             if entry.path.file_name() == Some(WERK_CACHE_FILENAME.as_ref()) {
                 return Err(Error::ClobberedWorkspace(entry.path.into_inner()));
             }
@@ -185,14 +182,14 @@ impl<'a> Workspace<'a> {
         };
 
         // Manifest document is currently empty - populate it by evaluating the AST.
-        workspace.evaluate_globals_and_recipes(ast).await?;
+        workspace.evaluate_globals_and_recipes(ast)?;
 
         Ok(workspace)
     }
 
     /// Evaluate global variables, tasks, and recipe patterns. Also gathers
     /// documentation for each global item.
-    async fn evaluate_globals_and_recipes(
+    fn evaluate_globals_and_recipes(
         &mut self,
         ast: &'a werk_parser::Document<'a>,
     ) -> Result<(), EvalError> {
@@ -232,7 +229,7 @@ impl<'a> Workspace<'a> {
                         );
                     } else {
                         let scope = RootScope::new(self);
-                        let value = eval::eval(&scope, &let_stmt.value).await?;
+                        let value = eval::eval(&scope, &let_stmt.value)?;
                         tracing::trace!("(global) let `{}` = {:?}", let_stmt.ident, value);
                         self.manifest.globals.insert(
                             let_stmt.ident.ident.to_owned(),
@@ -294,7 +291,7 @@ impl<'a> Workspace<'a> {
     /// Write outdatedness cache (`which` and `glob`)  to "<out-dir>/.werk-cache".
     pub async fn finalize(&self) -> std::io::Result<()> {
         let cache = self.werk_cache.lock();
-        write_workspace_cache(&*self.io, self.output_directory.as_deref(), &*cache).await
+        write_workspace_cache(&*self.io, self.output_directory.as_deref(), &*cache)
     }
 
     #[inline]
@@ -358,7 +355,6 @@ impl<'a> Workspace<'a> {
             .expect("out dir resolve error");
         self.io
             .create_parent_dirs(fs_path.as_deref())
-            .await
             .map_err(Into::into)
     }
 
@@ -520,10 +516,10 @@ fn compute_glob_hash(files: &[Absolute<werk_fs::PathBuf>]) -> Hash128 {
     compute_stable_hash(files)
 }
 
-async fn read_workspace_cache(io: &dyn Io, output_dir: &Absolute<std::path::Path>) -> WerkCache {
+fn read_workspace_cache(io: &dyn Io, output_dir: &Absolute<std::path::Path>) -> WerkCache {
     let werk_cache_path = Absolute::new_unchecked(output_dir.join(WERK_CACHE_FILENAME));
     tracing::debug!("trying to read .werk-cache: {}", werk_cache_path.display());
-    let data = match io.read_file(werk_cache_path.as_deref()).await {
+    let data = match io.read_file(werk_cache_path.as_deref()) {
         Ok(data) => data,
         Err(err) => {
             if err.kind() != std::io::ErrorKind::NotFound {
@@ -551,7 +547,7 @@ async fn read_workspace_cache(io: &dyn Io, output_dir: &Absolute<std::path::Path
     }
 }
 
-async fn write_workspace_cache(
+fn write_workspace_cache(
     io: &dyn Io,
     output_dir: &Absolute<std::path::Path>,
     cache: &WerkCache,
@@ -594,7 +590,7 @@ async fn write_workspace_cache(
     let path = Absolute::new_unchecked(output_dir.join(WERK_CACHE_FILENAME));
     tracing::debug!("writing .werk-cache to {}", path.display());
 
-    if let Err(err) = io.create_parent_dirs(path.as_deref()).await {
+    if let Err(err) = io.create_parent_dirs(path.as_deref()) {
         tracing::error!(
             "Error creating parent directory for .werk-cache '{}': {err}",
             output_dir.display()
@@ -602,7 +598,7 @@ async fn write_workspace_cache(
         return Err(err);
     }
 
-    match io.write_file(path.as_deref(), toml.as_bytes()).await {
+    match io.write_file(path.as_deref(), toml.as_bytes()) {
         Ok(()) => Ok(()),
         Err(err) => {
             tracing::error!("Error writing .werk-cache: {err}");

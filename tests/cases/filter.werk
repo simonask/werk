@@ -1,0 +1,21 @@
+let input = ["a.c", "b.cpp"]
+let result = input
+    | filter "%.c"
+    | assert_eq ["a.c"]
+let result = input
+    | filter "%.(c|cpp)"
+    | assert_eq ["a.c", "b.cpp"]
+let result = input
+    | filter "%.(a|b)"
+    | assert_eq []
+
+# recursive, flattens implicitly
+let input = ["a.c", ["b.c", ["c.c", "d.c"]]]
+let result = input
+    | filter "%.c"
+    | assert_eq ["a.c", "b.c", "c.c", "d.c"]
+
+let input = ["a.c", "b.cpp"]
+let result = input
+    | filter-match "%.c" => "{%}.o"
+    | assert_eq ["a.o"]

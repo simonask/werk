@@ -3,7 +3,7 @@ use std::{borrow::Cow, sync::Arc};
 use crate::{
     ast,
     parser::{Input, TokenParserExt as _},
-    ContextError, Expected, ParseError,
+    Expected, ParseError, TomlParseError,
 };
 use winnow::{
     ascii::{digit1, multispace1, space0},
@@ -14,7 +14,7 @@ use winnow::{
     Parser,
 };
 
-pub type PResult<T> = winnow::PResult<T, ContextError>;
+pub type PResult<T> = winnow::PResult<T, ParseError>;
 
 fn is_identifier_start(ch: char) -> bool {
     unicode_ident::is_xid_start(ch)
@@ -25,32 +25,32 @@ fn is_identifier_continue(ch: char) -> bool {
     ch == '-' || unicode_ident::is_xid_continue(ch)
 }
 
-pub fn parse_ident(input: &str) -> Result<&str, ParseError> {
+pub fn parse_ident(input: &str) -> Result<&str, TomlParseError> {
     let mut chars = input.chars();
     let Some(first) = chars.next() else {
-        return Err(ParseError::EmptyIdentifier);
+        return Err(TomlParseError::EmptyIdentifier);
     };
 
     if !is_identifier_start(first) {
-        return Err(ParseError::InvalidIdentifier(first));
+        return Err(TomlParseError::InvalidIdentifier(first));
     }
 
     while let Some(ch) = chars.next() {
         if !is_identifier_continue(ch) {
-            return Err(ParseError::InvalidIdentifier(ch));
+            return Err(TomlParseError::InvalidIdentifier(ch));
         }
     }
 
     Ok(input)
 }
 
-pub fn parse_string_expr(input: &str) -> Result<ast::StringExpr<'_>, ParseError> {
+pub fn parse_string_expr(input: &str) -> Result<ast::StringExpr<'_>, TomlParseError> {
     string_expr_inside_quotes
         .parse(Input::new(input))
         .map_err(Into::into)
 }
 
-pub fn parse_pattern_expr(input: &str) -> Result<ast::PatternExpr, ParseError> {
+pub fn parse_pattern_expr(input: &str) -> Result<ast::PatternExpr, TomlParseError> {
     pattern_expr_inside_quotes
         .parse(Input::new(input))
         .map_err(Into::into)
@@ -164,7 +164,6 @@ fn string_fragment<'a>(input: &mut Input<'a>) -> PResult<StringFragment<'a>> {
         string_interpolation.map(StringFragment::Interpolation),
         path_interpolation.map(StringFragment::Interpolation),
     ))
-    .context("string fragment")
     .parse_next(input)
 }
 
@@ -179,7 +178,6 @@ fn pattern_fragment<'a>(input: &mut Input<'a>) -> PResult<StringFragment<'a>> {
         string_interpolation.map(StringFragment::Interpolation),
         path_interpolation.map(StringFragment::Interpolation),
     ))
-    .context("pattern fragment")
     .parse_next(input)
 }
 
@@ -229,20 +227,18 @@ pub(crate) fn pattern_one_of<'a>(input: &mut Input<'a>) -> PResult<Vec<Cow<'a, s
 pub(crate) fn string_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation<'a>> {
     delimited(
         '{',
-        cut_err(interpolation_inner::<'}'>).context("interpolation contents"),
+        cut_err(interpolation_inner::<'}'>),
         cut_err('}').context(Expected::ExpectedChar('}')),
     )
-    .context("{...} interpolation")
     .parse_next(input)
 }
 
 pub(crate) fn path_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation<'a>> {
     let mut interp = delimited(
-        '<',
+        '<'.context(Expected::Expected(&"path interpolation block")),
         cut_err(interpolation_inner::<'>'>),
         cut_err('>').context(Expected::ExpectedChar('>')),
     )
-    .context("<...> interpolation")
     .parse_next(input)?;
 
     interp
@@ -271,7 +267,6 @@ fn interpolation_inner<'a, const TERMINATE: char>(
             options: None,
         }),
     ))
-    .context(Expected::Expected(&"interpolation expression"))
     .parse_next(input)
 }
 
@@ -290,7 +285,6 @@ fn interpolation_inner_with_stem<'a, const TERMINATE: char>(
             &"interpolation options or end of interpolation",
         )),
     )
-        .context("interpolation with stem and options")
         .map(|(stem, options)| ast::Interpolation { stem, options })
         .parse_next(input)
 }
@@ -334,7 +328,7 @@ fn interpolation_options<'a>(
 fn interpolation_join<'a>(input: &mut Input<'a>) -> PResult<Cow<'a, str>> {
     const VALID_JOIN_SEPARATORS: &[char] = &['+', ',', '.', '|', '/', '\\', ':', ';', ' '];
     let sep: String = terminated(repeat(0.., one_of(VALID_JOIN_SEPARATORS)), '*')
-        .context("join separator")
+        .context(Expected::Expected(&"join separator"))
         .parse_next(input)?;
     if sep.is_empty() {
         return Ok(Cow::Borrowed(" "));
@@ -345,7 +339,7 @@ fn interpolation_join<'a>(input: &mut Input<'a>) -> PResult<Cow<'a, str>> {
 // At least one interpolation option
 fn interpolation_ops<'a>(input: &mut Input<'a>) -> PResult<Vec<ast::InterpolationOp<'a>>> {
     preceded(':', separated(0.., interpolation_op, ','))
-        .context("interpolation options")
+        .context(Expected::Expected(&"interpolation options"))
         .parse_next(input)
 }
 
@@ -385,8 +379,8 @@ fn regex_replace_pattern(input: &mut Input) -> PResult<regex::Regex> {
     let regex_pattern = take_till(1.., ['/']).parse_next(input)?;
 
     regex::Regex::new(&regex_pattern).map_err(|err| {
-        winnow::error::ErrMode::Backtrack(ContextError {
-            stack: Vec::new(),
+        winnow::error::ErrMode::Backtrack(ParseError {
+            stack: None,
             expected: Expected::ValidRegex(Arc::new(err)),
         })
     })
@@ -399,7 +393,7 @@ fn file_extension<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
             ch.is_alphanumeric() || ch == '.' || ch == '-' || ch.is_whitespace() || ch == '_'
         }),
     )
-    .context("file extension")
+    .context(Expected::Expected(&"file extension"))
     .take()
     .parse_next(input)
 }

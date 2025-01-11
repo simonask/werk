@@ -1,7 +1,7 @@
 use crate::{
     ast::{self, kw_ignore, token_ignore, ws_ignore},
     parse_string,
-    parser::{span, Offset, Span, Spanned as _, SpannedValue},
+    parser::{span, Span, Spanned as _, SpannedValue},
     Error, LocatedError,
 };
 
@@ -439,14 +439,14 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
 
                 ast::Expr::Match(ast::MatchExpr {
                     span,
-                    token_match: Default::default(),
+                    token: kw_ignore(),
                     ws_1: ws_ignore(),
-                    body: ast::Body {
+                    param: ast::MatchBody::Braced(ast::Body {
                         token_open: ast::token::Token(span.start),
                         statements: arms,
                         ws_trailing: Default::default(),
                         token_close: ast::token::Token(span.end),
-                    },
+                    }),
                 })
             }
             "join" => {
@@ -505,9 +505,9 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
 
                 ast::Expr::Match(ast::MatchExpr {
                     span,
-                    token_match: Default::default(),
+                    token: kw_ignore(),
                     ws_1: ws_ignore(),
-                    body: ast::Body {
+                    param: ast::MatchBody::Braced(ast::Body {
                         token_open: ast::token::Token(span.start),
                         statements: vec![ast::BodyStmt {
                             ws_pre: ws_ignore(),
@@ -523,7 +523,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                         }],
                         ws_trailing: ws_ignore(),
                         token_close: ast::token::Token(span.end),
-                    },
+                    }),
                 })
             }
             _ => {
@@ -533,14 +533,27 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
             }
         };
 
-        expr = ast::Expr::Then(Box::new(ast::ThenExpr {
-            span,
-            expr,
-            ws_1: ws_ignore(),
-            token_pipe: token_ignore(),
-            then,
-            ws_2: ws_ignore(),
-        }));
+        if let ast::Expr::Chain(ref mut chain_expr) = expr {
+            chain_expr.tail.push(ast::ChainSubExpr {
+                span,
+                ws_1: ws_ignore(),
+                token_pipe: token_ignore(),
+                ws_2: ws_ignore(),
+                expr: then,
+            });
+        } else {
+            expr = ast::Expr::Chain(ast::ChainExpr {
+                span,
+                head: Box::new(expr),
+                tail: vec![ast::ChainSubExpr {
+                    span,
+                    ws_1: ws_ignore(),
+                    token_pipe: token_ignore(),
+                    ws_2: ws_ignore(),
+                    expr: then,
+                }],
+            })
+        }
     }
 
     Ok(expr)

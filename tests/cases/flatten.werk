@@ -1,0 +1,35 @@
+let input = []
+let result = input | flatten | assert_eq []
+
+let input = "a"
+let result = input | flatten | assert_eq ["a"]
+
+let input = ["a", "b"]
+let result = input | flatten | assert_eq ["a", "b"]
+
+let input = ["a", ["b"]]
+let result = input | flatten | assert_eq ["a", "b"]
+
+let input = ["a", ["b", "c"]]
+let result = input | flatten | assert_eq ["a", "b", "c"]
+
+let input = ["a", ["b", ["c", "d"]]]
+let result = input | flatten | assert_eq ["a", "b", "c", "d"]
+
+let input = [[[]]]
+let result = input | flatten | assert_eq []
+
+let input = [[["a"]]]
+let result = input | flatten | assert_eq ["a"]
+
+let input = [[["a"], "b"]]
+let result = input | flatten | assert_eq ["a", "b"]
+
+let input = [[["a"], ["b"]]]
+let result = input | flatten | assert_eq ["a", "b"]
+
+let input = [[["a"], ["b", "c"]]]
+let result = input | flatten | assert_eq ["a", "b", "c"]
+
+let input = [[["a"], ["b", ["c", "d"]]]]
+let result = input | flatten | assert_eq ["a", "b", "c", "d"]
