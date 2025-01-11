@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use winnow::{
     ascii::{line_ending, multispace0, space0, space1},
     combinator::{
-        alt, cut_err, delimited, eof, peek, preceded, repeat, separated_pair, terminated,
+        alt, cut_err, delimited, eof, opt, peek, preceded, repeat, separated_pair, terminated,
     },
     error::{StrContext, StrContextValue},
     token::{none_of, take_till},
@@ -137,6 +137,9 @@ fn parse_rule_name(input: &mut &str) -> PResult<String> {
 }
 
 fn parse_prerequisite(input: &mut &str) -> PResult<String> {
+    // Skip a Windows canonical path prefix.
+    opt("\\\\?\\").parse_next(input)?;
+
     repeat(1.., prerequisite_fragment)
         .fold(String::new, |mut string, fragment| {
             match fragment {
@@ -272,6 +275,22 @@ mod tests {
     #[test]
     fn windows_paths_example_c() {
         let input = r#"E:\werk\examples\c\main.c: E:\werk\examples\c\main.c \
+  E:\werk\examples\c\foo.h
+  "#;
+        let (target, deps) = parse_depfile.parse(input).unwrap();
+        assert_eq!(target, "E:\\werk\\examples\\c\\main.c");
+        assert_eq!(
+            deps,
+            vec![
+                "E:\\werk\\examples\\c\\main.c",
+                "E:\\werk\\examples\\c\\foo.h",
+            ]
+        );
+    }
+
+    #[test]
+    fn windows_paths_canonical() {
+        let input = r#"E:\werk\examples\c\main.c: \\?\E:\werk\examples\c\main.c \
   E:\werk\examples\c\foo.h
   "#;
         let (target, deps) = parse_depfile.parse(input).unwrap();
