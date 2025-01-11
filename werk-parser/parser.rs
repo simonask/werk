@@ -418,6 +418,7 @@ fn expression_head<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
         which_expr.map(ast::Expr::Which),
         join_expr.map(ast::Expr::Join),
         env_expr.map(ast::Expr::Env),
+        error_expr.map(ast::Expr::Error),
         identifier.map(ast::Expr::Ident),
     ))
     .context(Expected::Expected(&"expression start; expression chains must start with a value, or an `env`, `glob`, `which`, or `shell` operation"))
