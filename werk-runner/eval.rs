@@ -1168,10 +1168,11 @@ pub(crate) async fn eval_build_recipe_statements(
             }
             ast::BuildRecipeStmt::Depfile(ref expr) => {
                 let value = eval(scope, &expr.param)?;
-                used |= value.used;
+                used |= &value.used;
                 match value.value {
-                    Value::String(depfile) => {
-                        evaluated.depfile = Some(depfile);
+                    Value::String(ref depfile) => {
+                        evaluated.depfile = Some(depfile.clone());
+                        scope.set(String::from("depfile"), value);
                     }
                     Value::List(_) => {
                         return Err(EvalError::UnexpectedList(expr.span));
