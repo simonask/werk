@@ -10,6 +10,7 @@ pub type GlobalVariables = indexmap::IndexMap<String, GlobalVar>;
 
 pub struct GlobalVar {
     pub value: Eval<Value>,
+    /// Doc comment.
     pub comment: String,
 }
 
@@ -34,12 +35,15 @@ pub struct BuildRecipeScope<'a> {
 
 pub struct SubexprScope<'a> {
     parent: &'a dyn Scope,
+    /// The value in the current scope that will be used in stemless `{}` string
+    /// interpolations.
     pub implied_value: &'a Eval<Value>,
 }
 
 pub struct MatchScope<'a> {
     parent: &'a dyn Scope,
     pattern_match: &'a PatternMatchData,
+    /// The matched string.
     pub implied_value: &'a Eval<Value>,
 }
 

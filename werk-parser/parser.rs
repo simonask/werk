@@ -333,6 +333,10 @@ fn let_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::LetStmt<'a>> {
     Ok(stmt)
 }
 
+/// `<keyword> <param>`
+///
+/// If the keyword is successfully parsed, parse the param with `cut_err(...)`,
+/// so no backtracking.
 fn kw_expr<'a, T: token::Keyword, P, PParser>(
     param: PParser,
 ) -> impl Parser<Input<'a>, ast::KwExpr<T, P>, PError>
@@ -385,7 +389,7 @@ fn expression_chain<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
             ws_1: whitespace,
             token_pipe: token,
             ws_2: whitespace,
-            expr: cut_err(expression_tail),
+            expr: cut_err(expression_chain_op),
         }}
         .with_token_span()
         .parse_next(input)?;
@@ -413,12 +417,11 @@ fn expression_head<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
     alt((
         string_expr.map(ast::Expr::StringExpr),
         list_of(expression_chain).map(ast::Expr::List),
-        shell_expr.map(ast::Expr::Shell),
-        glob_expr.map(ast::Expr::Glob),
-        which_expr.map(ast::Expr::Which),
-        join_expr.map(ast::Expr::Join),
-        env_expr.map(ast::Expr::Env),
-        error_expr.map(ast::Expr::Error),
+        kw_expr(string_expr).map(ast::Expr::Shell),
+        kw_expr(string_expr).map(ast::Expr::Glob),
+        kw_expr(string_expr).map(ast::Expr::Which),
+        kw_expr(string_expr).map(ast::Expr::Env),
+        kw_expr(string_expr).map(ast::Expr::Error),
         identifier.map(ast::Expr::Ident),
     ))
     .context(Expected::Expected(&"expression start; expression chains must start with a value, or an `env`, `glob`, `which`, or `shell` operation"))
@@ -426,26 +429,22 @@ fn expression_head<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
 }
 
 /// Expression after a `|` in an expression chain.
-fn expression_tail<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
+fn expression_chain_op<'a>(input: &mut Input<'a>) -> PResult<ast::ExprOp<'a>> {
     alt((
-        string_expr.map(ast::Expr::StringExpr),
-        shell_expr.map(ast::Expr::Shell),
-        glob_expr.map(ast::Expr::Glob),
-        which_expr.map(ast::Expr::Which),
-        join_expr.map(ast::Expr::Join),
-        map_expr.map(ast::Expr::Map),
-        keyword.map(ast::Expr::Flatten),
-        kw_expr(pattern_expr).map(ast::Expr::Filter),
-        kw_expr(cut_err(match_body)).map(ast::Expr::FilterMatch),
-        kw_expr(pattern_expr).map(ast::Expr::Discard),
-        kw_expr(pattern_expr).map(ast::Expr::Split),
-        keyword.map(ast::Expr::Lines),
-        env_expr.map(ast::Expr::Env),
-        match_expr.map(ast::Expr::Match),
-        info_expr.map(ast::Expr::Info),
-        warn_expr.map(ast::Expr::Warn),
-        error_expr.map(ast::Expr::Error),
-        assert_eq_expr.map(ast::Expr::AssertEq),
+        kw_expr(match_body).map(ast::ExprOp::Match),
+        kw_expr(string_expr).map(ast::ExprOp::Map),
+        keyword.map(ast::ExprOp::Flatten),
+        kw_expr(pattern_expr).map(ast::ExprOp::Filter),
+        kw_expr(match_body).map(ast::ExprOp::FilterMatch),
+        kw_expr(pattern_expr).map(ast::ExprOp::Discard),
+        kw_expr(string_expr).map(ast::ExprOp::Join),
+        kw_expr(pattern_expr).map(ast::ExprOp::Split),
+        keyword.map(ast::ExprOp::Lines),
+        kw_expr(string_expr).map(ast::ExprOp::Info),
+        kw_expr(string_expr).map(ast::ExprOp::Warn),
+        kw_expr(string_expr).map(ast::ExprOp::Error),
+        kw_expr(expression_head.map(Box::new)).map(ast::ExprOp::AssertEq),
+        kw_expr(pattern_expr.map(Box::new)).map(ast::ExprOp::AssertMatch),
     ))
     .context(Expected::Expected(&"a chaining operation; one of `join`, `flatten`, `map`, `match`, `env`, `glob`, `which`, `shell`, or a string expression"))
     .parse_next(input)
@@ -462,9 +461,9 @@ fn run_expression<'a>(input: &mut Input<'a>) -> PResult<ast::RunExpr<'a>> {
             })
         }),
         list_of(run_expression).map(ast::RunExpr::List),
-        shell_expr.map(ast::RunExpr::Shell),
-        info_expr.map(ast::RunExpr::Info),
-        warn_expr.map(ast::RunExpr::Warn),
+        kw_expr(string_expr).map(ast::RunExpr::Shell),
+        kw_expr(string_expr).map(ast::RunExpr::Info),
+        kw_expr(string_expr).map(ast::RunExpr::Warn),
         write_expr.map(ast::RunExpr::Write),
         copy_expr.map(ast::RunExpr::Copy),
         body(run_expression).map(ast::RunExpr::Block),
@@ -499,43 +498,6 @@ fn copy_expr<'a>(input: &mut Input<'a>) -> PResult<ast::CopyExpr<'a>> {
         token_to: cut_err(keyword),
         ws_3: whitespace,
         dest: cut_err(string_expr),
-    }}
-    .with_token_span()
-    .parse_next(input)?;
-    expr.span = span;
-    Ok(expr)
-}
-
-fn shell_expr<'a>(input: &mut Input<'a>) -> PResult<ast::ShellExpr<'a>> {
-    kw_expr(string_expr).parse_next(input)
-}
-
-fn glob_expr<'a>(input: &mut Input<'a>) -> PResult<ast::GlobExpr<'a>> {
-    kw_expr(string_expr).parse_next(input)
-}
-
-fn which_expr<'a>(input: &mut Input<'a>) -> PResult<ast::WhichExpr<'a>> {
-    kw_expr(string_expr).parse_next(input)
-}
-
-fn join_expr<'a>(input: &mut Input<'a>) -> PResult<ast::JoinExpr<'a>> {
-    kw_expr(string_expr).parse_next(input)
-}
-
-fn map_expr<'a>(input: &mut Input<'a>) -> PResult<ast::MapExpr<'a>> {
-    kw_expr(string_expr).parse_next(input)
-}
-
-fn env_expr<'a>(input: &mut Input<'a>) -> PResult<ast::EnvExpr<'a>> {
-    kw_expr(string_expr).parse_next(input)
-}
-
-fn match_expr<'a>(input: &mut Input<'a>) -> PResult<ast::MatchExpr<'a>> {
-    let (mut expr, span) = seq! {ast::MatchExpr {
-        span: default,
-        token: keyword::<token::Match>,
-        ws_1: whitespace,
-        param: cut_err(match_body),
     }}
     .with_token_span()
     .parse_next(input)?;
@@ -585,14 +547,6 @@ fn match_body<'a>(input: &mut Input<'a>) -> PResult<ast::MatchBody<'a>> {
         &"match body { ... } or a single match arm",
     ))
     .parse_next(input)
-}
-
-fn error_expr<'a>(input: &mut Input<'a>) -> PResult<ast::ErrorStmt<'a>> {
-    kw_expr(string_expr).parse_next(input)
-}
-
-fn assert_eq_expr<'a>(input: &mut Input<'a>) -> PResult<ast::AssertEqExpr<'a>> {
-    kw_expr(expression_head.map(Box::new)).parse_next(input)
 }
 
 fn string_expr<'a>(input: &mut Input<'a>) -> PResult<ast::StringExpr<'a>> {
@@ -967,7 +921,7 @@ mod tests {
     use super::Input;
     use crate::{
         ast::{self, token::Keyword as _, ws, ws_ignore},
-        parser::{span, token, Offset, ParsedWhitespace},
+        parser::{span, Offset, ParsedWhitespace},
     };
     use winnow::Parser as _;
 
@@ -1317,10 +1271,10 @@ mod tests {
     #[test]
     fn filter_match() {
         assert_eq!(
-            super::expression_tail
+            super::expression_chain_op
                 .parse(Input::new("filter-match \"a\" => \"b\""))
                 .unwrap(),
-            ast::Expr::FilterMatch(ast::KwExpr {
+            ast::ExprOp::FilterMatch(ast::KwExpr {
                 span: span(0..23),
                 token: ast::token::FilterMatch::with_span(span(0..12)),
                 ws_1: ws_ignore(),

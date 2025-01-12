@@ -17,23 +17,10 @@ pub enum Expr<'a> {
     Which(WhichExpr<'a>),
     Env(EnvExpr<'a>),
     List(ListExpr<Expr<'a>>),
-    Match(MatchExpr<'a>),
-    /// Given a list expression, flatten the list and join each element with
-    /// separator.
-    Join(JoinExpr<'a>),
-    Map(MapExpr<'a>),
-    Flatten(FlattenExpr<'a>),
-    Filter(FilterExpr<'a>),
-    FilterMatch(FilterMatchExpr<'a>),
-    Discard(DiscardExpr<'a>),
-    Split(SplitExpr<'a>),
-    Lines(LinesExpr<'a>),
+    /// `<expr> | ...`
     Chain(ChainExpr<'a>),
-    Info(InfoExpr<'a>),
-    Warn(WarnExpr<'a>),
-    Error(ErrorExpr<'a>),
 
-    AssertEq(AssertEqExpr<'a>),
+    Error(ErrorExpr<'a>),
 }
 
 impl<'a> Expr<'a> {
@@ -43,6 +30,7 @@ impl<'a> Expr<'a> {
 }
 
 impl Spanned for Expr<'_> {
+    #[inline]
     fn span(&self) -> Span {
         match self {
             Expr::Ident(ident) => ident.span,
@@ -52,20 +40,8 @@ impl Spanned for Expr<'_> {
             Expr::Which(expr) => expr.span,
             Expr::Env(expr) => expr.span,
             Expr::List(list) => list.span,
-            Expr::Match(match_expr) => match_expr.span,
-            Expr::Join(join_expr) => join_expr.span,
-            Expr::Map(map_expr) => map_expr.span,
-            Expr::Flatten(flatten_expr) => flatten_expr.span(),
             Expr::Chain(chain) => chain.span,
-            Expr::Info(expr) => expr.span,
-            Expr::Warn(expr) => expr.span,
             Expr::Error(expr) => expr.span,
-            Expr::AssertEq(expr) => expr.span,
-            Expr::Filter(expr) => expr.span,
-            Expr::FilterMatch(expr) => expr.span,
-            Expr::Discard(expr) => expr.span,
-            Expr::Split(expr) => expr.span,
-            Expr::Lines(expr) => expr.span(),
         }
     }
 }
@@ -81,20 +57,75 @@ impl SemanticHash for Expr<'_> {
             Expr::Which(s) => s.semantic_hash(state),
             Expr::Env(s) => s.semantic_hash(state),
             Expr::List(list) => list.semantic_hash(state),
-            Expr::Match(expr) => expr.semantic_hash(state),
-            Expr::Join(expr) => expr.semantic_hash(state),
-            Expr::Map(expr) => expr.semantic_hash(state),
-            Expr::Flatten(_) => (),
-            Expr::Filter(expr) => expr.semantic_hash(state),
-            Expr::FilterMatch(expr) => expr.semantic_hash(state),
-            Expr::Discard(expr) => expr.semantic_hash(state),
-            Expr::Split(expr) => expr.semantic_hash(state),
-            Expr::Lines(_) => (),
             Expr::Chain(expr) => expr.semantic_hash(state),
-            // Messages don't contribute to outdatedness.
-            Expr::Info(_) | Expr::Warn(_) | Expr::Error(_) => (),
-            // Debug assertions don't contribute to outdatedness.
-            Expr::AssertEq(_) => (),
+            // The error message does not contribute to outdatedness.
+            Expr::Error(_) => (),
+        }
+    }
+}
+
+/// An operation within an expression chain (`... | <op>`).
+///
+/// These are expressions that take an input (left-hand side of the pipe symbol)
+/// and produce an output, which will be passed to any subsequent operations, or
+/// returned as the value.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ExprOp<'a> {
+    Match(MatchExpr<'a>),
+    Map(MapExpr<'a>),
+    Flatten(FlattenExpr<'a>),
+    Filter(FilterExpr<'a>),
+    FilterMatch(FilterMatchExpr<'a>),
+    Discard(DiscardExpr<'a>),
+    Join(JoinExpr<'a>),
+    Split(SplitExpr<'a>),
+    Lines(LinesExpr<'a>),
+    Info(InfoExpr<'a>),
+    Warn(WarnExpr<'a>),
+    Error(ErrorExpr<'a>),
+    AssertEq(AssertEqExpr<'a>),
+    AssertMatch(AssertMatchExpr<'a>),
+}
+
+impl Spanned for ExprOp<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        match self {
+            ExprOp::Match(expr) => expr.span,
+            ExprOp::Map(expr) => expr.span,
+            ExprOp::Flatten(expr) => expr.span(),
+            ExprOp::Filter(expr) => expr.span,
+            ExprOp::FilterMatch(expr) => expr.span,
+            ExprOp::Discard(expr) => expr.span,
+            ExprOp::Join(expr) => expr.span,
+            ExprOp::Split(expr) => expr.span,
+            ExprOp::Lines(expr) => expr.span(),
+            ExprOp::Info(expr) => expr.span,
+            ExprOp::Warn(expr) => expr.span,
+            ExprOp::Error(expr) => expr.span,
+            ExprOp::AssertEq(expr) => expr.span,
+            ExprOp::AssertMatch(expr) => expr.span,
+        }
+    }
+}
+
+impl SemanticHash for ExprOp<'_> {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            ExprOp::Match(expr) => expr.semantic_hash(state),
+            ExprOp::Map(expr) => expr.semantic_hash(state),
+            ExprOp::Flatten(_) => (),
+            ExprOp::Filter(expr) => expr.semantic_hash(state),
+            ExprOp::FilterMatch(expr) => expr.semantic_hash(state),
+            ExprOp::Discard(expr) => expr.semantic_hash(state),
+            ExprOp::Join(expr) => expr.semantic_hash(state),
+            ExprOp::Split(expr) => expr.semantic_hash(state),
+            ExprOp::Lines(_) => (),
+            // Contents of messages do not contribute to outdatedness.
+            ExprOp::Info(_) | ExprOp::Warn(_) | ExprOp::Error(_) => (),
+            // Assertions do not contribute to outdatedness.
+            ExprOp::AssertEq(_) | ExprOp::AssertMatch(_) => (),
         }
     }
 }
@@ -224,7 +255,7 @@ pub struct ChainSubExpr<'a> {
     pub ws_1: Whitespace,
     pub token_pipe: token::Pipe,
     pub ws_2: Whitespace,
-    pub expr: Expr<'a>,
+    pub expr: ExprOp<'a>,
 }
 
 impl SemanticHash for ChainSubExpr<'_> {
@@ -243,6 +274,7 @@ pub type InfoExpr<'a> = KwExpr<token::Info, StringExpr<'a>>;
 pub type WarnExpr<'a> = KwExpr<token::Warn, StringExpr<'a>>;
 pub type ErrorExpr<'a> = KwExpr<token::Error, StringExpr<'a>>;
 pub type AssertEqExpr<'a> = KwExpr<token::AssertEq, Box<Expr<'a>>>;
+pub type AssertMatchExpr<'a> = KwExpr<token::AssertEq, Box<PatternExpr<'a>>>;
 pub type FlattenExpr<'a> = token::Flatten;
 pub type SplitExpr<'a> = KwExpr<token::Split, PatternExpr<'a>>;
 pub type LinesExpr<'a> = token::Lines;

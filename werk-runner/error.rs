@@ -246,6 +246,8 @@ pub enum EvalError {
     ErrorExpression(Span, String),
     #[error("assertion failed: {} != {}", .1 .0, .1 .1)]
     AssertionFailed(Span, Box<(Value, Value)>),
+    #[error("assertion failed: \"{}\" does not match the pattern '{}'", .1 .0.escape_default(), .1 .1)]
+    AssertionMatchFailed(Span, Box<(String, String)>),
 }
 
 impl werk_parser::parser::Spanned for EvalError {
@@ -277,7 +279,8 @@ impl werk_parser::parser::Spanned for EvalError {
             | EvalError::Shell(span, _)
             | EvalError::Path(span, _)
             | EvalError::ErrorExpression(span, _)
-            | EvalError::AssertionFailed(span, _) => *span,
+            | EvalError::AssertionFailed(span, _)
+            | EvalError::AssertionMatchFailed(span, _) => *span,
         }
     }
 }

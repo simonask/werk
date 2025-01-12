@@ -412,7 +412,12 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
         let span = item.span().unwrap_or_default().into();
 
         let then = match key {
-            "then" => ast::Expr::StringExpr(parse_item_string_expr(item)?),
+            "then" => ast::ExprOp::Map(ast::MapExpr {
+                span: item.span().unwrap_or_default().into(),
+                token: kw_ignore(),
+                ws_1: ws_ignore(),
+                param: parse_item_string_expr(item)?,
+            }),
             "match" => {
                 let Some(table) = item.as_table_like() else {
                     return Err(Error::ExpectedTable(span));
@@ -437,7 +442,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                     });
                 }
 
-                ast::Expr::Match(ast::MatchExpr {
+                ast::ExprOp::Match(ast::MatchExpr {
                     span,
                     token: kw_ignore(),
                     ws_1: ws_ignore(),
@@ -451,7 +456,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
             }
             "join" => {
                 let separator = parse_item_string_expr(item)?;
-                ast::Expr::Join(ast::JoinExpr {
+                ast::ExprOp::Join(ast::JoinExpr {
                     span,
                     token: Default::default(),
                     ws_1: ws_ignore(),
@@ -460,7 +465,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
             }
             "warn" => {
                 let message = parse_item_string_expr(item)?;
-                ast::Expr::Warn(ast::WarnExpr {
+                ast::ExprOp::Warn(ast::WarnExpr {
                     span,
                     token: Default::default(),
                     ws_1: ws_ignore(),
@@ -469,7 +474,16 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
             }
             "info" => {
                 let message = parse_item_string_expr(item)?;
-                ast::Expr::Info(ast::InfoExpr {
+                ast::ExprOp::Info(ast::InfoExpr {
+                    span,
+                    token: Default::default(),
+                    ws_1: ws_ignore(),
+                    param: message,
+                })
+            }
+            "error" => {
+                let message = parse_item_string_expr(item)?;
+                ast::ExprOp::Error(ast::ErrorExpr {
                     span,
                     token: Default::default(),
                     ws_1: ws_ignore(),
@@ -503,7 +517,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                     return Err(Error::ExpectedKey(span, &"replacement"));
                 };
 
-                ast::Expr::Match(ast::MatchExpr {
+                ast::ExprOp::Match(ast::MatchExpr {
                     span,
                     token: kw_ignore(),
                     ws_1: ws_ignore(),

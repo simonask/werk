@@ -74,7 +74,7 @@ fn parse_as_expected() -> anyhow::Result<()> {
                 ws_1: ws_ignore(),
                 token_pipe: token_ignore(),
                 ws_2: ws_ignore(),
-                expr: ast::Expr::Match(ast::MatchExpr {
+                expr: ast::ExprOp::Match(ast::MatchExpr {
                     span: Span::ignore(),
                     token: kw_ignore(),
                     ws_1: ws_ignore(),
@@ -112,7 +112,7 @@ fn parse_as_expected() -> anyhow::Result<()> {
                     ws_1: ws_ignore(),
                     token_pipe: token_ignore(),
                     ws_2: ws_ignore(),
-                    expr: ast::Expr::Match(ast::MatchExpr {
+                    expr: ast::ExprOp::Match(ast::MatchExpr {
                         span: Span::ignore(),
                         token: kw_ignore(),
                         ws_1: ws_ignore(),
