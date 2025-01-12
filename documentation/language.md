@@ -504,13 +504,15 @@ let cflags = profile | match {
 
 ### `assert-eq` expression
 
-When this appear as part of a chaining expression, evaluate the assertion and
-fail evaluation if the two sides are not equal.
+When this appear as part of an expression chain, fail evaluation if the two
+sides are not equal.
+
+Returns the value unchanged.
 
 Syntax:
 
 ```werk
-... | assert_eq <expr>
+... | assert-eq <expr>
 ```
 
 Example:
@@ -518,6 +520,29 @@ Example:
 ```werk
 let input = ["a", "b"]
 let result = input | map "{}.c" | assert-eq ["a.c", "b.c"]
+```
+
+### `assert-match` expression
+
+When this appear as part of an expression chain, fail evaluation if the left
+side does not match the pattern.
+
+When the left hand side is a list, the pattern is evaluated for all strings in
+the list (recursively).
+
+Returns the value unchanged.
+
+Syntax:
+
+```werk
+... | assert-match <pattern>
+```
+
+Example:
+
+```werk
+let input = ["a.c", "b.c"]
+let result = input | assert-match "%.c"
 ```
 
 ## Built-in variables and constants
