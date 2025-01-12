@@ -393,7 +393,7 @@ This can only be used in `run` statements in recipes.
 Syntax:
 
 ```werk
-write <expression>, <filename>
+write <expression> to <filename>
 ```
 
 Example:
@@ -402,8 +402,54 @@ Example:
 build "message.txt" {
     let message = "Hello, World!"
     run {
-        write message, "<out>"
+        write message to "<out>"
     }
+}
+```
+
+### `copy` operation
+
+Copy a file to another.
+
+This can only be used in `run` statements in recipes.
+
+Syntax:
+
+```werk
+copy <source-path> to <destination-path>
+```
+
+Example:
+
+```werk
+build "b.txt" {
+  from "a.txt"
+  run {
+    copy "a.txt" to "b.txt"
+  }
+}
+```
+
+### `delete` operation
+
+Delete a file or list of files.
+
+This can only be used in `run` statements in recipes.
+
+Syntax:
+
+```werk
+delete <paths>
+```
+
+Example:
+
+```werk
+task clean-objects {
+  let files = glob "*.c" | map "{}.o"
+  run {
+    delete files
+  }
 }
 ```
 
@@ -454,6 +500,24 @@ let cflags = profile | match {
     "release" => "-O3"
     "%" => error "Invalid profile: {profile}. Valid values are \"debug\" and \"release\"."
 }
+```
+
+### `assert-eq` expression
+
+When this appear as part of a chaining expression, evaluate the assertion and
+fail evaluation if the two sides are not equal.
+
+Syntax:
+
+```werk
+... | assert_eq <expr>
+```
+
+Example:
+
+```werk
+let input = ["a", "b"]
+let result = input | map "{}.c" | assert-eq ["a.c", "b.c"]
 ```
 
 ## Built-in variables and constants

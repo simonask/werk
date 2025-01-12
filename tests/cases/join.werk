@@ -1,10 +1,10 @@
 let input = ["a.c", "b.cpp"]
 let result = input
     | join "\n"
-    | assert_eq "a.c\nb.cpp"
+    | assert-eq "a.c\nb.cpp"
 
 # recursive
 let input = ["a.c", ["b.c", ["c.c", "d.c"]]]
 let result = input
     | join "--"
-    | assert_eq "a.c--b.c--c.c--d.c"
+    | assert-eq "a.c--b.c--c.c--d.c"

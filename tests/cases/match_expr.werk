@@ -2,13 +2,13 @@
 let input = "a";
 let result = input
     | match {}
-    | assert_eq "a"
+    | assert-eq "a"
 
 # empty match
 let input = [];
 let result = input
     | match {}
-    | assert_eq []
+    | assert-eq []
 
 # match maps the string
 let input = "foo.c"
@@ -16,7 +16,7 @@ let result = input
     | match {
         "%.c" => "{%}.o"
     }
-    | assert_eq "foo.o"
+    | assert-eq "foo.o"
 
 # mismatch falls back to the input value
 let input = "foo.cpp"
@@ -24,7 +24,7 @@ let result = input
     | match {
         "%.c" => "{%}.o"
     }
-    | assert_eq "foo.cpp"
+    | assert-eq "foo.cpp"
 
 # explicit fallback
 let input = "foo.cpp"
@@ -33,7 +33,7 @@ let result = input
         "%.c" => "{%}.o"
         "%" => "fallback"
     }
-    | assert_eq "fallback"
+    | assert-eq "fallback"
 
 # fallback not hit
 let input = "foo.c"
@@ -42,11 +42,11 @@ let result = input
         "%.c" => "{%}.o"
         "%" => "fallback"
     }
-    | assert_eq "foo.o"
+    | assert-eq "foo.o"
 
 # recursive preserves structure
 let input = ["a.c", ["b.c", ["c.c", "d.c"]]]
     | match {
         "%.c" => "{%}.o"
     }
-    | assert_eq ["a.o", ["b.o", ["c.o", "d.o"]]]
+    | assert-eq ["a.o", ["b.o", ["c.o", "d.o"]]]

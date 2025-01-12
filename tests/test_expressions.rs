@@ -409,7 +409,7 @@ fn match_expr_recursive() {
     let input = ["a", ["b"]];
     let result = input
         | match { "a" => "foo"; "b" => "bar" }
-        | assert_eq ["foo", ["bar"]]
+        | assert-eq ["foo", ["bar"]]
 "#,
             "result"
         ),
@@ -429,7 +429,7 @@ fn map_recursive() {
     let input = ["a", ["b"]];
     let result = input
         | map "hello {}"
-        | assert_eq ["hello a", ["hello b"]]
+        | assert-eq ["hello a", ["hello b"]]
 "#,
             "result"
         ),
@@ -446,7 +446,7 @@ fn map_recursive() {
     let input = "a";
     let result = input
         | map "hello {}"
-        | assert_eq "hello a"
+        | assert-eq "hello a"
 "#,
             "result"
         ),

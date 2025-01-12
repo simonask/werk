@@ -100,7 +100,7 @@ def_keyword!(Discard, "discard");
 def_keyword!(Split, "split");
 def_keyword!(Lines, "lines");
 
-def_keyword!(AssertEq, "assert_eq");
+def_keyword!(AssertEq, "assert-eq");
 
 def_token!(Colon, ':');
 def_token!(Eq, '=');
