@@ -16,8 +16,8 @@ The rules for string interpolation also apply to TOML manifests.
   supported).
 - Strings and patterns are always double-quoted.
 - Lists are surrounded by `[ ... ]`, and elements are comma-separated.
-- There are no functions or loops, but expressions can be "chained" using the
-  `=>` operator.
+- There are no functions or loops, but expressions can be "chained" or "piped"
+  using the `|` operator.
 - All variables are immutable - there is no assignment operation.
 - Local variables may shadow global variables or previously defined local
   variables in the same scope.
