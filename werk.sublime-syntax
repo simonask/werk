@@ -1,0 +1,44 @@
+%YAML 1.2
+---
+# http://www.sublimetext.com/docs/syntax.html
+name: Werk
+scope: source.werk
+contexts:
+  main:
+    - include: keywords
+    - include: operators
+    - include: builtins
+    - include: strings
+    - include: constants
+    - include: comments
+  builtins:
+    - match: |-
+
+        \b(glob|which|env|shell|write|copy|delete|info|warn|error|flatten|join|split|split-pattern|map|lines|filter-match|filter|discard|match|assert-eq|assert-match)\b
+      scope: support.function.werk
+  comments:
+    - match: '#.*$'
+      scope: comment.line.werk
+  constants:
+    - match: \b(true|false)\b
+      scope: constant.language.werk
+  keywords:
+    - match: \b(config|let|build|task|from|to|depfile|run)\b
+      scope: keyword.control.werk
+  operators:
+    - match: (\||=>)
+      scope: keyword.operator.werk
+  strings:
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.werk
+        - match: '"'
+          pop: true
+        - match: \\.
+          scope: constant.character.escape.werk
+        - match: '\{.*?\}'
+          scope: support.variable.werk
+        - match: \<.*?\>
+          scope: support.variable.werk
+        - match: '%'
+          scope: constant.language.werk
