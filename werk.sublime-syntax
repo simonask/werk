@@ -14,7 +14,7 @@ contexts:
   builtins:
     - match: |-
 
-        \b(glob|which|env|shell|write|copy|delete|info|warn|error|flatten|join|split|split-pattern|map|lines|filter-match|filter|discard|match|assert-eq|assert-match)\b
+        \b(glob|which|env|shell|which|info|warn|error|write|copy|delete|info|warn|error|flatten|join|split|split-pattern|map|lines|filter-match|filter|discard|match|assert-eq|assert-match)\b
       scope: support.function.werk
   comments:
     - match: '#.*$'
