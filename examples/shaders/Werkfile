@@ -1,0 +1,18 @@
+config out-dir = "../../target/examples/shaders"
+config default = "build"
+
+let tar = which "tar"
+
+build "%.(frag|vert|comp).spv" {
+    from "{%}.{0}"
+    run "glslc <in> -o <out>"
+}
+
+build "assets.tar.gz" {
+    from glob "*.\{frag,vert,comp\}" | map "{}.spv"
+    run "{tar} -zcf <out> <in*>"
+}
+
+task build {
+    build "assets.tar.gz"
+}
