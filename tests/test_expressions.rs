@@ -68,7 +68,10 @@ fn parse_as_expected() -> anyhow::Result<()> {
         ast.find_global("object-files").unwrap().value,
         ast::Expr::Chain(ast::ChainExpr {
             span: Span::ignore(),
-            head: Box::new(ast::Expr::Ident(ast::Ident::new(400..414, "source-files"))),
+            head: Box::new(ast::Expr::Ident(ast::Ident::new(
+                Span::ignore(),
+                "source-files"
+            ))),
             tail: vec![ast::ChainSubExpr {
                 span: Span::ignore(),
                 ws_1: ws_ignore(),
