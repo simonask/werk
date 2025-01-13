@@ -16,3 +16,7 @@ regex = "1.11.1"
 serde = { version = "1.0.215", features = ["derive"] }
 smol = "2.0.2"
 toml_edit = "0.22.22"
+
+[profile.release]
+codegen-units = 1
+lto = true
