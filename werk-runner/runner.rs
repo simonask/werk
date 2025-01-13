@@ -1,6 +1,6 @@
 use std::{future::Future, pin::Pin, sync::Arc, time::SystemTime};
 
-use futures::channel::oneshot;
+use futures::{channel::oneshot, StreamExt};
 use indexmap::{map::Entry, IndexMap};
 use parking_lot::Mutex;
 use werk_fs::{Absolute, Path};
@@ -9,8 +9,9 @@ use crate::{
     depfile::Depfile,
     eval::{self, Eval},
     ir::{self},
-    AmbiguousPatternError, BuildRecipeScope, Error, Outdatedness, OutdatednessTracker, Reason,
-    RootScope, Scope as _, ShellCommandLine, TaskRecipeScope, Value, Workspace, WorkspaceSettings,
+    AmbiguousPatternError, BuildRecipeScope, ChildCaptureOutput, ChildLinesStream, Error,
+    Outdatedness, OutdatednessTracker, Reason, RootScope, Scope as _, ShellCommandLine,
+    TaskRecipeScope, Value, Workspace, WorkspaceSettings,
 };
 
 /// Workspace-wide runner state.
@@ -588,11 +589,52 @@ impl<'a> Inner<'a> {
                     self.workspace
                         .watcher
                         .will_execute(task_id, &command_line, step, num_steps);
-                    let result = self
+                    let mut child = self
                         .workspace
                         .io
-                        .run_recipe_command(&command_line, self.workspace.project_root())
-                        .await;
+                        .run_recipe_command(&command_line, self.workspace.project_root())?;
+
+                    // TODO: Avoid this heavy machinery when the watcher isn't
+                    // interested in the output.
+                    let mut reader = ChildLinesStream::new(&mut *child, true);
+                    let result = loop {
+                        match reader.next().await {
+                            Some(Err(err)) => break Err(err),
+                            Some(Ok(output)) => match output {
+                                ChildCaptureOutput::StdoutLine(line) => {
+                                    self.workspace.watcher.on_child_process_stdout_line(
+                                        task_id,
+                                        &command_line,
+                                        &line,
+                                        !print_successful,
+                                    );
+                                }
+                                ChildCaptureOutput::StderrLine(line) => {
+                                    self.workspace.watcher.on_child_process_stderr_line(
+                                        task_id,
+                                        &command_line,
+                                        &line,
+                                    );
+                                }
+                                ChildCaptureOutput::Both(stdout, stderr) => {
+                                    self.workspace.watcher.on_child_process_stdout_line(
+                                        task_id,
+                                        &command_line,
+                                        &stdout,
+                                        !print_successful,
+                                    );
+                                    self.workspace.watcher.on_child_process_stderr_line(
+                                        task_id,
+                                        &command_line,
+                                        &stderr,
+                                    );
+                                }
+                                ChildCaptureOutput::Exit(status) => break Ok(status),
+                            },
+                            None => panic!("child process stream ended without an exit status"),
+                        }
+                    };
+
                     self.workspace.watcher.did_execute(
                         task_id,
                         &command_line,
@@ -602,9 +644,9 @@ impl<'a> Inner<'a> {
                         print_successful,
                     );
                     match result {
-                        Ok(output) => {
-                            if !output.status.success() {
-                                return Err(Error::CommandFailed(output.status));
+                        Ok(status) => {
+                            if !status.success() {
+                                return Err(Error::CommandFailed(status));
                             }
                         }
                         Err(err) => return Err(err.into()),

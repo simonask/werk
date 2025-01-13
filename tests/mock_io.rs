@@ -2,6 +2,7 @@ use core::panic;
 use std::{
     collections::{hash_map, HashMap},
     ffi::OsString,
+    pin::Pin,
     sync::atomic::AtomicU64,
     time::SystemTime,
 };
@@ -36,7 +37,7 @@ pub enum MockWatcherEvent {
     DidExecute(
         TaskId,
         ShellCommandLine,
-        Result<std::process::Output, ()>,
+        Result<std::process::ExitStatus, ()>,
         usize,
         usize,
     ),
@@ -84,7 +85,7 @@ impl werk_runner::Watcher for MockWatcher {
         &self,
         task_id: &TaskId,
         command: &ShellCommandLine,
-        result: &Result<std::process::Output, std::io::Error>,
+        result: &Result<std::process::ExitStatus, std::io::Error>,
         step: usize,
         num_steps: usize,
         _print_successful: bool,
@@ -541,28 +542,88 @@ impl MockIo {
     }
 }
 
+struct MockChild {
+    stdout: Option<Pin<Box<futures::io::Cursor<Vec<u8>>>>>,
+    stderr: Option<Pin<Box<futures::io::Cursor<Vec<u8>>>>>,
+    status:
+        Option<Pin<Box<futures::future::Ready<Result<std::process::ExitStatus, std::io::Error>>>>>,
+}
+
+impl werk_runner::Child for MockChild {
+    fn stdin(
+        self: std::pin::Pin<&mut Self>,
+    ) -> Option<std::pin::Pin<&mut dyn futures::AsyncWrite>> {
+        None
+    }
+
+    fn stdout(
+        self: std::pin::Pin<&mut Self>,
+    ) -> Option<std::pin::Pin<&mut dyn futures::AsyncRead>> {
+        let this = Pin::into_inner(self);
+        this.stdout.as_mut().map(|v| v.as_mut() as _)
+    }
+
+    fn stderr(
+        self: std::pin::Pin<&mut Self>,
+    ) -> Option<std::pin::Pin<&mut dyn futures::AsyncRead>> {
+        let this = Pin::into_inner(self);
+        this.stderr.as_mut().map(|v| v.as_mut() as _)
+    }
+
+    fn take_stdin(&mut self) -> Option<std::pin::Pin<Box<dyn futures::AsyncWrite + Send>>> {
+        None
+    }
+
+    fn take_stdout(&mut self) -> Option<std::pin::Pin<Box<dyn futures::AsyncRead + Send>>> {
+        self.stdout.take().map(|v| v as _)
+    }
+
+    fn take_stderr(&mut self) -> Option<std::pin::Pin<Box<dyn futures::AsyncRead + Send>>> {
+        self.stderr.take().map(|v| v as _)
+    }
+
+    fn status(
+        &mut self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<std::process::ExitStatus, std::io::Error>>
+                + Send,
+        >,
+    > {
+        self.status.take().unwrap()
+    }
+}
+
 impl werk_runner::Io for MockIo {
-    fn run_recipe_command<'a>(
-        &'a self,
-        command_line: &'a ShellCommandLine,
-        _working_dir: &'a Absolute<std::path::Path>,
-    ) -> werk_runner::PinBoxFut<'a, Result<std::process::Output, std::io::Error>> {
+    fn run_recipe_command(
+        &self,
+        command_line: &ShellCommandLine,
+        _working_dir: &Absolute<std::path::Path>,
+    ) -> std::io::Result<Box<dyn werk_runner::Child>> {
         tracing::trace!("run during build: {}", command_line.display());
         self.oplog
             .lock()
             .push(MockIoOp::RunDuringBuild(command_line.clone()));
 
-        Box::pin(async {
-            let mut programs = self.programs.lock();
-            let Some(program) = programs.get_mut(command_line.program.as_deref()) else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "program not found",
-                ));
-            };
-            let mut fs = self.filesystem.lock();
-            program(command_line, &mut *fs)
-        })
+        let mut programs = self.programs.lock();
+        let Some(program) = programs.get_mut(command_line.program.as_deref()) else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "program not found",
+            ));
+        };
+        let mut fs = self.filesystem.lock();
+        let std::process::Output {
+            status,
+            stdout,
+            stderr,
+        } = program(command_line, &mut *fs)?;
+
+        Ok(Box::new(MockChild {
+            stdout: Some(Box::pin(futures::io::Cursor::new(stdout))),
+            stderr: Some(Box::pin(futures::io::Cursor::new(stderr))),
+            status: Some(Box::pin(futures::future::ready(Ok(status)))),
+        }))
     }
 
     fn run_during_eval(

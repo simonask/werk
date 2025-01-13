@@ -1,6 +1,7 @@
 use std::{
     future::Future,
     path::{Path, PathBuf},
+    pin::Pin,
     time::SystemTime,
 };
 
@@ -9,6 +10,9 @@ use parking_lot::Mutex;
 use werk_fs::Absolute;
 
 use crate::{Error, GlobSettings, ShellCommandLine};
+
+mod child;
+pub use child::*;
 
 /// Convenience type alias.
 pub type PinBox<T> = std::pin::Pin<Box<T>>;
@@ -28,11 +32,11 @@ pub type BoxIter<'a, T> = Box<dyn Iterator<Item = T> + 'a>;
 /// environment.
 pub trait Io: Send + Sync + 'static {
     /// Run a command as part of a recipe. This will do nothing in dry-run mode.
-    fn run_recipe_command<'a>(
-        &'a self,
-        command_line: &'a ShellCommandLine,
-        working_dir: &'a Absolute<Path>,
-    ) -> PinBoxFut<'a, Result<std::process::Output, std::io::Error>>;
+    fn run_recipe_command(
+        &self,
+        command_line: &ShellCommandLine,
+        working_dir: &Absolute<Path>,
+    ) -> Result<Box<dyn Child>, std::io::Error>;
 
     /// Run a command as part of evaluating the contents of a werk.toml file.
     /// This might still do something in dry-run mode.
@@ -156,36 +160,33 @@ impl RealSystem {
 }
 
 impl Io for RealSystem {
-    fn run_recipe_command<'a>(
-        &'a self,
-        command_line: &'a ShellCommandLine,
-        working_dir: &'a Absolute<Path>,
-    ) -> PinBoxFut<'a, Result<std::process::Output, std::io::Error>> {
-        Box::pin(async move {
-            let mut command = smol::process::Command::new(&*command_line.program);
-            command
-                .args(
-                    command_line
-                        .arguments
-                        .iter()
-                        .filter(|s| !s.trim().is_empty()),
-                )
-                .envs(&command_line.env)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                // All spawned commands always run in the project root.
-                .current_dir(working_dir);
+    fn run_recipe_command(
+        &self,
+        command_line: &ShellCommandLine,
+        working_dir: &Absolute<Path>,
+    ) -> Result<Box<dyn Child>, std::io::Error> {
+        let mut command = smol::process::Command::new(&*command_line.program);
+        command
+            .args(
+                command_line
+                    .arguments
+                    .iter()
+                    .filter(|s| !s.trim().is_empty()),
+            )
+            .envs(&command_line.env)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            // All spawned commands always run in the project root.
+            .current_dir(working_dir);
 
-            for k in &command_line.env_remove {
-                command.env_remove(k);
-            }
+        for k in &command_line.env_remove {
+            command.env_remove(k);
+        }
 
-            tracing::trace!("spawning {command:?}");
-            let child = command.spawn()?;
-            let output = child.output().await?;
-            Ok(output)
-        })
+        tracing::trace!("spawning {command:?}");
+        let child = command.spawn()?;
+        Ok(Box::new(child))
     }
 
     fn run_during_eval(

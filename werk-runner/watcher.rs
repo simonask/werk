@@ -14,6 +14,26 @@ pub trait Watcher: Send + Sync {
         step: usize,
         num_steps: usize,
     );
+
+    fn on_child_process_stdout_line(
+        &self,
+        task_id: &TaskId,
+        command: &ShellCommandLine,
+        line_without_eol: &[u8],
+        capture: bool,
+    ) {
+        _ = (task_id, command, line_without_eol, capture);
+    }
+
+    fn on_child_process_stderr_line(
+        &self,
+        task_id: &TaskId,
+        command: &ShellCommandLine,
+        line_without_eol: &[u8],
+    ) {
+        _ = (task_id, command, line_without_eol);
+    }
+
     /// Run command is finished executing, or failed to start. Note that
     /// `result` will be `Ok` even if the command returned an error, allowing
     /// access to the command's stdout/stderr.
@@ -24,7 +44,7 @@ pub trait Watcher: Send + Sync {
         &self,
         task_id: &TaskId,
         command: &ShellCommandLine,
-        result: &Result<std::process::Output, std::io::Error>,
+        status: &std::io::Result<std::process::ExitStatus>,
         step: usize,
         num_steps: usize,
         print_success: bool,

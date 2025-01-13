@@ -1,5 +1,7 @@
+use std::{future::Future, pin::Pin};
+
 use werk_fs::Absolute;
-use werk_runner::{DirEntry, Error, PinBoxFut, ShellCommandLine};
+use werk_runner::{Child, DirEntry, Error, PinBoxFut, ShellCommandLine};
 
 pub struct DryRun(werk_runner::RealSystem);
 
@@ -9,18 +11,57 @@ impl DryRun {
     }
 }
 
+#[derive(Default)]
+struct DryRunChild {
+    stdin: Option<Pin<Box<Vec<u8>>>>,
+    stdout: Option<Pin<Box<&'static [u8]>>>,
+    stderr: Option<Pin<Box<&'static [u8]>>>,
+}
+
+impl Child for DryRunChild {
+    fn stdin(self: Pin<&mut Self>) -> Option<Pin<&mut dyn smol::io::AsyncWrite>> {
+        let this = Pin::into_inner(self);
+        this.stdin.as_mut().map(|v| v.as_mut() as _)
+    }
+
+    fn stdout(self: Pin<&mut Self>) -> Option<Pin<&mut dyn smol::io::AsyncRead>> {
+        let this = Pin::into_inner(self);
+        this.stdout.as_mut().map(|v| v.as_mut() as _)
+    }
+
+    fn stderr(self: Pin<&mut Self>) -> Option<Pin<&mut dyn smol::io::AsyncRead>> {
+        let this = Pin::into_inner(self);
+        this.stderr.as_mut().map(|v| v.as_mut() as _)
+    }
+
+    fn take_stdin(&mut self) -> Option<Pin<Box<dyn smol::io::AsyncWrite + Send>>> {
+        self.stdin.take().map(|v| v as _)
+    }
+
+    fn take_stdout(&mut self) -> Option<Pin<Box<dyn smol::io::AsyncRead + Send>>> {
+        self.stdout.take().map(|v| v as _)
+    }
+
+    fn take_stderr(&mut self) -> Option<Pin<Box<dyn smol::io::AsyncRead + Send>>> {
+        self.stderr.take().map(|v| v as _)
+    }
+
+    fn status(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<std::process::ExitStatus, std::io::Error>> + Send>>
+    {
+        Box::pin(std::future::ready(Ok(std::process::ExitStatus::default())))
+    }
+}
+
 impl werk_runner::Io for DryRun {
-    fn run_recipe_command<'a>(
-        &'a self,
-        command_line: &'a ShellCommandLine,
-        _working_dir: &'a Absolute<std::path::Path>,
-    ) -> PinBoxFut<'a, Result<std::process::Output, std::io::Error>> {
+    fn run_recipe_command(
+        &self,
+        command_line: &ShellCommandLine,
+        _working_dir: &Absolute<std::path::Path>,
+    ) -> std::io::Result<Box<dyn Child>> {
         tracing::info!("[DRY-RUN] Would run: {}", command_line.display());
-        Box::pin(std::future::ready(Ok(std::process::Output {
-            status: std::process::ExitStatus::default(),
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        })))
+        Ok(Box::new(DryRunChild::default()))
     }
 
     fn run_during_eval(

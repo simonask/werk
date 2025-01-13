@@ -32,3 +32,4 @@ thiserror.workspace = true
 toml_edit.workspace = true
 smol.workspace = true
 num_cpus = "1.16.0"
+pin-project-lite = "0.2.16"

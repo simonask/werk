@@ -263,63 +263,13 @@ impl<'a> StdioLock<'a> {
                 Bracketed(Step(inner.num_completed_tasks, inner.num_tasks)).bright_cyan()
             );
 
-            fn num_width(num: usize) -> usize {
-                match num.checked_ilog10() {
-                    None => 1,
-                    Some(n) => n as usize + 1,
-                }
+            // Write the name of the last task in the map.
+            if let Some((last_id, _)) = inner.current_tasks.last() {
+                _ = write!(buffer, "{}", last_id);
             }
 
-            // The width of the "[N/N] Building: " prefix.
-            let mut written_width =
-                11 + 2 + num_width(inner.num_completed_tasks) + 1 + num_width(inner.num_tasks);
-            let num_tasks = inner.current_tasks.len();
-
-            for (i, (task, (step, num_steps))) in inner.current_tasks.iter().enumerate() {
-                let is_last = i + 1 == num_tasks;
-
-                let mut available_width = inner.width.saturating_sub(written_width);
-                if !is_last {
-                    // Make space for ", ..." at the end.
-                    available_width = available_width.saturating_sub(5);
-                }
-
-                let mut task_width = 0;
-                if i != 0 {
-                    // Make space for ", " between tasks.
-                    task_width += 2;
-                }
-                // Make space for "[N/N] "
-                task_width += 1 + num_width(*step) + 1 + num_width(*num_steps) + 2;
-
-                // Make space for the task name
-                task_width += task.as_str().len();
-
-                if task_width > available_width {
-                    if i != 0 {
-                        write!(buffer, ", ").unwrap();
-                    }
-                    if *num_steps > 1 {
-                        write!(
-                            buffer,
-                            "{} {}",
-                            task,
-                            Bracketed(Step(*step, *num_steps)).bright_yellow()
-                        )
-                        .unwrap();
-                    } else {
-                        write!(buffer, "{}", task).unwrap();
-                    }
-                    written_width += task_width;
-                    continue;
-                } else {
-                    if i == 0 {
-                        buffer.push_str("...");
-                    } else if is_last {
-                        buffer.push_str(", ...");
-                    }
-                    break;
-                }
+            if inner.current_tasks.len() > 1 {
+                _ = write!(buffer, ", and {} more", inner.current_tasks.len() - 1);
             }
 
             crossterm::queue!(&mut self.stdout, crossterm::terminal::DisableLineWrap).unwrap();
@@ -430,38 +380,47 @@ impl<'a> StdioLock<'a> {
         self.render();
     }
 
+    fn on_child_process_stdout_line(
+        &mut self,
+        _task_id: &TaskId,
+        _command: &ShellCommandLine,
+        line_without_eol: &[u8],
+    ) {
+        self.clear_current_line();
+        _ = self.stdout.write_all(line_without_eol);
+        _ = self.stdout.write(&[b'\n']);
+        self.render();
+    }
+
+    fn on_child_process_stderr_line(
+        &mut self,
+        _task_id: &TaskId,
+        _command: &ShellCommandLine,
+        line_without_eol: &[u8],
+    ) {
+        self.clear_current_line();
+        _ = self.stdout.write_all(line_without_eol);
+        _ = self.stdout.write(&[b'\n']);
+        self.render();
+    }
+
     fn did_execute(
         &mut self,
         task_id: &TaskId,
         command: &ShellCommandLine,
-        result: &Result<std::process::Output, std::io::Error>,
+        result: &Result<std::process::ExitStatus, std::io::Error>,
         step: usize,
         num_steps: usize,
-        print_successful: bool,
     ) {
         match result {
-            Ok(output) => {
-                if !output.status.success() {
+            Ok(status) => {
+                if !status.success() {
                     self.clear_current_line();
                     _ = writeln!(
                         self.stdout,
-                        "{} Command failed while building '{task_id}': {}\nstderr:\n{}",
+                        "{} Command failed while building '{task_id}': {}",
                         Bracketed(Step(step, num_steps)).red(),
                         command.display(),
-                        String::from_utf8_lossy(&output.stderr)
-                    );
-                    self.render();
-                } else if print_successful || self.settings.no_capture {
-                    self.clear_current_line();
-                    _ = writeln!(
-                        self.stdout,
-                        "{} {task_id}",
-                        Bracketed(Step(step + 1, num_steps)).green()
-                    );
-                    _ = writeln!(
-                        self.stdout,
-                        "{}",
-                        String::from_utf8_lossy(&output.stdout).trim()
                     );
                     self.render();
                 }
@@ -523,17 +482,40 @@ impl werk_runner::Watcher for StdoutWatcher {
         self.lock().will_execute(task_id, command, step, num_steps);
     }
 
+    fn on_child_process_stdout_line(
+        &self,
+        task_id: &TaskId,
+        command: &ShellCommandLine,
+        line_without_eol: &[u8],
+        capture: bool,
+    ) {
+        if !capture || self.settings.no_capture {
+            self.lock()
+                .on_child_process_stdout_line(task_id, command, line_without_eol);
+        }
+    }
+
+    fn on_child_process_stderr_line(
+        &self,
+        task_id: &TaskId,
+        command: &ShellCommandLine,
+        line_without_eol: &[u8],
+    ) {
+        self.lock()
+            .on_child_process_stderr_line(task_id, command, line_without_eol);
+    }
+
     fn did_execute(
         &self,
         task_id: &TaskId,
         command: &ShellCommandLine,
-        result: &Result<std::process::Output, std::io::Error>,
+        result: &Result<std::process::ExitStatus, std::io::Error>,
         step: usize,
         num_steps: usize,
-        print_successful: bool,
+        _print_successful: bool,
     ) {
         self.lock()
-            .did_execute(task_id, command, result, step, num_steps, print_successful);
+            .did_execute(task_id, command, result, step, num_steps);
     }
 
     fn message(&self, task_id: Option<&TaskId>, message: &str) {

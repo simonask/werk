@@ -8,8 +8,8 @@ let ld = cc
 let profile = "debug"
 let executable = "{profile}/example{EXE_SUFFIX}"
 let cflags = profile | match {
-    "debug" => ["-g", "-O0", "-fcolor-diagnostics"]
-    "release" => ["-O3", "-fcolor-diagnostics"]
+    "debug" => ["-g", "-O0", "-fdiagnostics-color=always", "-fcolor-diagnostics", "-fansi-escape-codes"]
+    "release" => ["-O3", "-fdiagnostics-color=always", "-fcolor-diagnostics", "-fansi-escape-codes"]
     "%" => error "Unknown profile '{}'; valid options are 'debug' and 'release'"
 }
 

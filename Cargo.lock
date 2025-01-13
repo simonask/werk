@@ -967,9 +967,9 @@ checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pin-project-lite"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "915a1e146535de9163f3987b8944ed8cf49a18bb0056bcebcdcece385cece4ff"
+checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
 
 [[package]]
 name = "pin-utils"
@@ -1337,6 +1337,7 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "anyhow",
+ "futures",
  "macro_rules_attribute",
  "parking_lot",
  "smol",
@@ -1605,6 +1606,7 @@ dependencies = [
  "num_cpus",
  "owo-colors",
  "parking_lot",
+ "pin-project-lite",
  "ratatui",
  "smol",
  "thiserror",
@@ -1648,7 +1650,9 @@ dependencies = [
  "globset",
  "ignore",
  "indexmap",
+ "memchr",
  "parking_lot",
+ "pin-project-lite",
  "regex",
  "rustc-stable-hash",
  "serde",

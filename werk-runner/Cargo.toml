@@ -26,3 +26,5 @@ toml_edit = { workspace = true, features = ["serde"] }
 rustc-stable-hash = "0.1.0"
 winnow.workspace = true
 smol.workspace = true
+pin-project-lite = "0.2.16"
+memchr = "2.7.4"
