@@ -14,11 +14,9 @@ anyhow = "1.0.93"
 clap = { version = "4.5.20", features = ["derive"] }
 clio = "0.3.5"
 crossterm = "0.28.1"
-flume = "0.11.1"
 indexmap.workspace = true
 owo-colors = "4.1.0"
 parking_lot.workspace = true
-ratatui = "0.29.0"
 tracing-subscriber = { version = "0.3.18", features = ["std", "env-filter"] }
 tracing.workspace = true
 werk-fs.workspace = true
@@ -32,4 +30,3 @@ thiserror.workspace = true
 toml_edit.workspace = true
 smol.workspace = true
 num_cpus = "1.16.0"
-pin-project-lite = "0.2.16"

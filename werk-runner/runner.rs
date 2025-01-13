@@ -122,6 +122,19 @@ impl TaskId {
             None
         }
     }
+
+    #[inline]
+    pub fn short_name(&self) -> &str {
+        if self.is_command() {
+            &*self.0
+        } else {
+            let Some((_prefix, filename)) = self.0.rsplit_once('/') else {
+                // The string starts with a slash.
+                unreachable!()
+            };
+            filename
+        }
+    }
 }
 
 impl std::fmt::Display for TaskId {

@@ -255,6 +255,14 @@ async fn try_main(args: Args) -> Result<(), Error> {
 
     let runner = Runner::new(&workspace);
 
+    let watcher2 = watcher.clone();
+    let render_watcher_task = smol::spawn(async move {
+        loop {
+            smol::Timer::after(std::time::Duration::from_millis(100)).await;
+            watcher2.render_force_flush();
+        }
+    });
+
     // Hide cursor and disable line wrapping while running.
     watcher.lock().start_advanced_rendering();
 
@@ -262,6 +270,8 @@ async fn try_main(args: Args) -> Result<(), Error> {
 
     // Show the cursor again and re-enable line wrapping.
     watcher.lock().finish_advanced_rendering();
+
+    render_watcher_task.cancel().await;
 
     let write_cache = match result {
         Ok(_) => true,

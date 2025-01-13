@@ -4,6 +4,12 @@ use std::{
 };
 
 use anstream::stream::{AsLockedWrite, IsTerminal};
+use crossterm::{
+    cursor::MoveToColumn,
+    queue,
+    style::Print,
+    terminal::{Clear, ClearType},
+};
 use indexmap::IndexMap;
 use owo_colors::OwoColorize;
 use parking_lot::{Mutex, MutexGuard};
@@ -180,6 +186,8 @@ impl StdoutWatcher {
                 num_tasks: 0,
                 num_completed_tasks: 0,
                 render_buffer: String::with_capacity(1024),
+                spinner_frame: 0,
+                last_spinner_tick: std::time::Instant::now(),
             }),
             settings,
             kind,
@@ -198,6 +206,10 @@ impl StdoutWatcher {
             settings: &self.settings,
         }
     }
+
+    pub fn render_force_flush(&self) {
+        self.lock().render();
+    }
 }
 
 struct Inner {
@@ -205,6 +217,8 @@ struct Inner {
     num_tasks: usize,
     num_completed_tasks: usize,
     render_buffer: String,
+    spinner_frame: u64,
+    last_spinner_tick: std::time::Instant,
 }
 
 pub struct StdioLock<'a> {
@@ -216,7 +230,7 @@ pub struct StdioLock<'a> {
 impl<'a> StdioLock<'a> {
     pub fn start_advanced_rendering(&mut self) {
         if self.stdout.advanced_rendering() {
-            crossterm::execute!(
+            queue!(
                 &mut self.stdout,
                 crossterm::cursor::Hide,
                 crossterm::terminal::DisableLineWrap
@@ -236,19 +250,35 @@ impl<'a> StdioLock<'a> {
         }
     }
 
-    fn clear_current_line(&mut self) {
+    fn start_line_overwrite(&mut self) {
         if self.stdout.advanced_rendering() && !self.settings.logging_enabled {
-            crossterm::execute!(
+            queue!(&mut self.stdout, MoveToColumn(0)).unwrap();
+        }
+    }
+
+    fn newline_overwrite(&mut self) {
+        if self.stdout.advanced_rendering() && !self.settings.logging_enabled {
+            _ = queue!(
                 &mut self.stdout,
-                crossterm::cursor::MoveToColumn(0),
-                crossterm::terminal::Clear(crossterm::terminal::ClearType::CurrentLine)
-            )
-            .unwrap();
+                Clear(ClearType::UntilNewLine),
+                Print('\n')
+            );
         }
     }
 
     fn render(&mut self) {
         if self.stdout.advanced_rendering() && !self.settings.logging_enabled {
+            let now = std::time::Instant::now();
+            if now.duration_since(self.inner.last_spinner_tick)
+                > std::time::Duration::from_millis(100)
+            {
+                self.inner.spinner_frame += 1;
+                self.inner.last_spinner_tick = now;
+            }
+
+            const SPINNER_CHARS: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+            let spinner = SPINNER_CHARS[(self.inner.spinner_frame % 10) as usize];
+
             let inner = &mut *self.inner;
             let buffer = &mut inner.render_buffer;
             if inner.current_tasks.is_empty() {
@@ -257,24 +287,44 @@ impl<'a> StdioLock<'a> {
             buffer.clear();
             _ = write!(
                 buffer,
-                "{} Building: ",
+                "{} {spinner} ",
                 Bracketed(Step(inner.num_completed_tasks, inner.num_tasks)).bright_cyan()
             );
 
             // Write the name of the last task in the map.
-            if let Some((last_id, _)) = inner.current_tasks.last() {
-                _ = write!(buffer, "{}", last_id);
+            let mut width_written = 20;
+            let mut tasks_written = 0;
+            let max_width = 100;
+
+            for (index, (id, _)) in inner.current_tasks.iter().enumerate() {
+                if width_written > max_width {
+                    let num_remaining = inner.current_tasks.len() - (index + 1);
+                    if num_remaining > 0 {
+                        if tasks_written > 0 {
+                            _ = write!(buffer, " + {} more", num_remaining);
+                        } else {
+                            _ = write!(buffer, "{} recipes", num_remaining);
+                        }
+                    }
+                    break;
+                }
+
+                if index != 0 {
+                    _ = write!(buffer, ", ");
+                    width_written += 2;
+                }
+
+                let short_name = id.short_name();
+                buffer.push_str(short_name);
+                tasks_written += 1;
+                // Note: Overaccounts for Unicode characters. Probably fine for now.
+                width_written += short_name.len();
             }
 
-            if inner.current_tasks.len() > 1 {
-                _ = write!(buffer, ", and {} more", inner.current_tasks.len() - 1);
-            }
-
-            crossterm::queue!(&mut self.stdout, crossterm::terminal::DisableLineWrap).unwrap();
-            self.stdout.write_all(buffer.as_bytes()).unwrap();
-            crossterm::queue!(&mut self.stdout, crossterm::terminal::EnableLineWrap).unwrap();
-
-            self.stdout.flush().unwrap();
+            _ = queue!(&mut self.stdout, MoveToColumn(0));
+            _ = self.stdout.write_all(buffer.as_bytes()).unwrap();
+            _ = queue!(&mut self.stdout, Clear(ClearType::UntilNewLine));
+            _ = self.stdout.flush();
         }
     }
 
@@ -282,26 +332,30 @@ impl<'a> StdioLock<'a> {
         self.inner
             .current_tasks
             .insert(task_id.clone(), (0, num_steps));
-        self.clear_current_line();
+        self.inner.num_tasks += 1;
+        self.start_line_overwrite();
 
         if self.settings.explain && outdated.is_outdated() {
             if let Some(path) = task_id.as_path() {
-                _ = writeln!(
+                _ = write!(
                     self.stdout,
                     "{} rebuilding `{path}`",
-                    Bracketed(Step(0, num_steps)).bright_yellow(),
+                    Bracketed(Step(0, num_steps)).bright_yellow().bold(),
                 );
             } else {
-                _ = writeln!(
+                _ = write!(
                     self.stdout,
                     "{} running task `{}`",
-                    Bracketed(Step(0, num_steps)).bright_yellow(),
+                    Bracketed(Step(0, num_steps)).bright_yellow().bold(),
                     task_id.as_str(),
                 );
             };
+            self.newline_overwrite();
 
             for reason in &outdated.reasons {
-                _ = writeln!(self.stdout, "  {} {reason}", "Cause:".yellow());
+                // Use normal writeln because we already wrote at least one line
+                // (so no overwrite needed).
+                _ = writeln!(self.stdout, "  {} {reason}", "Cause:".bright_yellow());
             }
         }
 
@@ -317,38 +371,42 @@ impl<'a> StdioLock<'a> {
             .current_tasks
             .shift_remove(task_id)
             .unwrap_or_default();
+        self.inner.num_completed_tasks += 1;
 
-        self.clear_current_line();
+        self.start_line_overwrite();
         match result {
             Ok(BuildStatus::Complete(_task_id, outdatedness)) => {
                 if outdatedness.is_outdated() {
-                    _ = writeln!(
+                    _ = write!(
                         &mut self.stdout,
                         "{} {task_id}{}",
-                        Bracketed(" ok ").bright_green(),
+                        Bracketed(" ok ").bright_green().bold(),
                         if self.settings.dry_run {
                             " (dry-run)"
                         } else {
                             ""
                         }
                     );
+                    self.newline_overwrite();
                 } else if self.settings.print_fresh {
-                    _ = writeln!(
+                    _ = write!(
                         &mut self.stdout,
                         "{} {task_id}",
                         Bracketed(" -- ").bright_blue()
                     );
+                    self.newline_overwrite();
                 }
             }
             Ok(BuildStatus::Exists(..)) => {
                 // Print nothing for file existence checks.
             }
             Err(err) => {
-                _ = writeln!(
+                _ = write!(
                     &mut self.stdout,
                     "{} {task_id}\n{err}",
-                    Bracketed("ERROR").bright_red()
+                    Bracketed("ERROR").bright_red().bold()
                 );
+                self.newline_overwrite();
             }
         }
         self.render();
@@ -366,14 +424,15 @@ impl<'a> StdioLock<'a> {
             .current_tasks
             .get_mut(task_id)
             .expect("task not registered") = (step + 1, num_steps);
-        self.clear_current_line();
+        self.start_line_overwrite();
         if self.settings.dry_run || self.settings.print_recipe_commands {
-            _ = writeln!(
+            _ = write!(
                 self.stdout,
                 "{} {task_id}: {}",
-                Bracketed(Step(step + 1, num_steps)).bright_yellow(),
+                Bracketed(Step(step + 1, num_steps)).dimmed(),
                 command.display()
             );
+            self.newline_overwrite();
         }
         self.render();
     }
@@ -384,9 +443,9 @@ impl<'a> StdioLock<'a> {
         _command: &ShellCommandLine,
         line_without_eol: &[u8],
     ) {
-        self.clear_current_line();
+        self.start_line_overwrite();
         _ = self.stdout.write_all(line_without_eol);
-        _ = self.stdout.write(&[b'\n']);
+        self.newline_overwrite();
         self.render();
     }
 
@@ -396,9 +455,9 @@ impl<'a> StdioLock<'a> {
         _command: &ShellCommandLine,
         line_without_eol: &[u8],
     ) {
-        self.clear_current_line();
+        self.start_line_overwrite();
         _ = self.stdout.write_all(line_without_eol);
-        _ = self.stdout.write(&[b'\n']);
+        self.newline_overwrite();
         self.render();
     }
 
@@ -413,46 +472,42 @@ impl<'a> StdioLock<'a> {
         match result {
             Ok(status) => {
                 if !status.success() {
-                    self.clear_current_line();
-                    _ = writeln!(
+                    self.start_line_overwrite();
+                    _ = write!(
                         self.stdout,
                         "{} Command failed while building '{task_id}': {}",
-                        Bracketed(Step(step, num_steps)).red(),
+                        Bracketed(Step(step, num_steps)).bright_red().bold(),
                         command.display(),
                     );
+                    self.newline_overwrite();
                     self.render();
                 }
             }
             Err(err) => {
-                self.clear_current_line();
-                _ = writeln!(
+                self.start_line_overwrite();
+                _ = write!(
                     self.stdout,
                     "{} Error evaluating command while building '{task_id}': {}\n{err}",
-                    Bracketed(Step(step + 1, num_steps)).red(),
+                    Bracketed(Step(step + 1, num_steps)).bright_red().bold(),
                     command.display(),
                 );
+                self.newline_overwrite();
                 self.render();
             }
         }
     }
 
-    fn message(&mut self, task_id: Option<&TaskId>, message: &str) {
-        self.clear_current_line();
-        if let Some(task_id) = task_id {
-            _ = writeln!(self.stdout, "{} {}", Bracketed(task_id).cyan(), message);
-        } else {
-            _ = writeln!(self.stdout, "{} {}", "[info]".cyan(), message);
-        }
+    fn message(&mut self, _task_id: Option<&TaskId>, message: &str) {
+        self.start_line_overwrite();
+        _ = write!(self.stdout, "{} {}", "[info]".bright_green(), message);
+        self.newline_overwrite();
         self.render();
     }
 
-    fn warning(&mut self, task_id: Option<&TaskId>, message: &str) {
-        self.clear_current_line();
-        if let Some(task_id) = task_id {
-            _ = writeln!(self.stdout, "{} {}", Bracketed(task_id).yellow(), message);
-        } else {
-            _ = writeln!(self.stdout, "{} {}", "[warn]".yellow(), message);
-        }
+    fn warning(&mut self, _task_id: Option<&TaskId>, message: &str) {
+        self.start_line_overwrite();
+        _ = write!(self.stdout, "{} {}", "[warn]".bright_yellow(), message);
+        self.newline_overwrite();
         self.render();
     }
 }
@@ -527,9 +582,7 @@ impl werk_runner::Watcher for StdoutWatcher {
 struct Bracketed<T>(pub T);
 impl<T: Display> Display for Bracketed<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_char('[')?;
-        self.0.fmt(f)?;
-        f.write_char(']')
+        write!(f, "[{}]", self.0)
     }
 }
 
