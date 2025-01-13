@@ -1120,6 +1120,16 @@ pub(crate) async fn eval_build_recipe_statements(
                 let message = eval_string_expr(scope, &expr.param)?;
                 evaluated.commands.push(RunCommand::Warn(message.value));
             }
+            ast::BuildRecipeStmt::SetCapture(ref kw_expr) => {
+                evaluated
+                    .commands
+                    .push(RunCommand::SetCapture(kw_expr.param.1));
+            }
+            ast::BuildRecipeStmt::SetNoCapture(ref kw_expr) => {
+                evaluated
+                    .commands
+                    .push(RunCommand::SetCapture(!kw_expr.param.1));
+            }
         }
     }
 
@@ -1167,6 +1177,12 @@ pub(crate) async fn eval_task_recipe_statements(
                 let message = eval_string_expr(scope, &expr.param)?;
                 evaluated.commands.push(RunCommand::Warn(message.value));
             }
+            ast::TaskRecipeStmt::SetCapture(ref kw_expr) => evaluated
+                .commands
+                .push(RunCommand::SetCapture(kw_expr.param.1)),
+            ast::TaskRecipeStmt::SetNoCapture(ref kw_expr) => evaluated
+                .commands
+                .push(RunCommand::SetCapture(!kw_expr.param.1)),
         }
     }
 

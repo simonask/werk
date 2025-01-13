@@ -47,7 +47,6 @@ pub trait Watcher: Send + Sync {
         status: &std::io::Result<std::process::ExitStatus>,
         step: usize,
         num_steps: usize,
-        print_success: bool,
     );
 
     fn message(&self, task_id: Option<&TaskId>, message: &str);

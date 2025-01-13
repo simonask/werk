@@ -1,7 +1,6 @@
 use std::{
     future::Future,
     path::{Path, PathBuf},
-    pin::Pin,
     time::SystemTime,
 };
 
@@ -13,13 +12,6 @@ use crate::{Error, GlobSettings, ShellCommandLine};
 
 mod child;
 pub use child::*;
-
-/// Convenience type alias.
-pub type PinBox<T> = std::pin::Pin<Box<T>>;
-/// Convenience type alias.
-pub type PinBoxFut<'a, T> = PinBox<dyn Future<Output = T> + Send + 'a>;
-/// Convenience type alias.
-pub type BoxIter<'a, T> = Box<dyn Iterator<Item = T> + 'a>;
 
 /// Abstract interface to the file system and OS.
 ///

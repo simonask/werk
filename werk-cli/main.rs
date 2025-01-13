@@ -39,7 +39,7 @@ pub struct Args {
     pub print_fresh: bool,
 
     /// Forward the stdout of all executed commands to the terminal, even when
-    /// successful. Implied by `--verbose`.
+    /// successful. Stderr output is always forwarded. Implied by `--verbose`.
     #[clap(long)]
     pub no_capture: bool,
 
@@ -67,9 +67,7 @@ pub struct Args {
     #[clap(long)]
     pub workspace_dir: Option<std::path::PathBuf>,
 
-    /// Use the output directory instead of the default. In unspecified, uses
-    /// the `out-dir` configuration variable from werk.toml, or if that is
-    /// unspecified, uses`target` next to the root werk.toml file.
+    /// Use the output directory instead of the default.
     #[clap(long)]
     pub output_dir: Option<std::path::PathBuf>,
 
@@ -78,11 +76,13 @@ pub struct Args {
     #[clap(long, short = 'D')]
     pub define: Vec<String>,
 
-    /// Enable debug logging to stdout. The value is a logging directive (same
-    /// syntax as the conventional `RUST_LOG` environment variable), so it can
-    /// be a log level like "info" or "trace", or a module path like
-    /// "werk_runner=debug". If passed without a directive string, this enables
-    /// logging at the "info" level for only the `werk` runner.
+    /// Enable debug logging to stdout.
+    ///
+    /// The value is a logging directive (same syntax as the conventional
+    /// `RUST_LOG` environment variable), so it can be a log level like "info"
+    /// or "trace", or a module path like "werk_runner=debug". If passed without
+    /// a directive string, this enables logging at the "info" level for only
+    /// the `werk` runner.
     #[clap(long)]
     pub log: Option<Option<String>>,
 }
@@ -91,20 +91,11 @@ pub struct Args {
 #[derive(Clone, Copy, Default, Debug, clap::ValueEnum)]
 pub enum ColorChoice {
     /// Probe the current terminal and environment variables for color support.
-    /// If the command is not running in a terminal, color is disabled. If the
-    /// command is running in a terminal color is enabled for `werk` and all
-    /// subcommands or disabled if the `NO_COLOR` environment variable is set.
     #[default]
     Auto,
     /// Force color output, even if the command is not running in a terminal.
-    /// Equivalent to settings the `FORCE_COLOR` environment variable. Note:
-    /// Setting this also sets `FORCE_COLOR` and `CLICOLOR_FORCE` for executed
-    /// shell commands.
     Always,
-    /// Do not use color output, regardless of whether the command is running in
-    /// a terminal. Equivalent to setting the `NO_COLOR` environment variable.
-    /// Note: Setting this does not implicitly set `NO_COLOR` for executed shell
-    /// commands.
+    /// Do not use color output.
     Never,
 }
 

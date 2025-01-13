@@ -34,7 +34,10 @@ fn parse_as_expected() -> anyhow::Result<()> {
     assert_eq!(ast.num_build_recipes(), 0);
     assert_eq!(
         ast.find_config("out-dir").unwrap().value,
-        ast::ConfigValue::String("../target/werk-examples/expressions")
+        ast::ConfigValue::String(ast::ConfigString(
+            Span::ignore(),
+            "../target/werk-examples/expressions".into()
+        ))
     );
 
     assert_eq!(

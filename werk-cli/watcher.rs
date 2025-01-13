@@ -180,7 +180,6 @@ impl StdoutWatcher {
                 num_tasks: 0,
                 num_completed_tasks: 0,
                 render_buffer: String::with_capacity(1024),
-                width: crossterm::terminal::size().map_or(80, |(w, _)| w as usize),
             }),
             settings,
             kind,
@@ -206,7 +205,6 @@ struct Inner {
     num_tasks: usize,
     num_completed_tasks: usize,
     render_buffer: String,
-    width: usize,
 }
 
 pub struct StdioLock<'a> {
@@ -512,7 +510,6 @@ impl werk_runner::Watcher for StdoutWatcher {
         result: &Result<std::process::ExitStatus, std::io::Error>,
         step: usize,
         num_steps: usize,
-        _print_successful: bool,
     ) {
         self.lock()
             .did_execute(task_id, command, result, step, num_steps);

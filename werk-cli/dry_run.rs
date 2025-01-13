@@ -1,7 +1,7 @@
 use std::{future::Future, pin::Pin};
 
 use werk_fs::Absolute;
-use werk_runner::{Child, DirEntry, Error, PinBoxFut, ShellCommandLine};
+use werk_runner::{Child, DirEntry, Error, ShellCommandLine};
 
 pub struct DryRun(werk_runner::RealSystem);
 

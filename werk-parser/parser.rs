@@ -171,7 +171,7 @@ fn config_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::ConfigStmt<'a>> {
         ws_2: whitespace,
         token_eq: cut_err(token),
         ws_3: whitespace,
-        value: cut_err(config_value(ident.ident)),
+        value: cut_err(config_value),
     }}
     .with_token_span()
     .parse_next(input)?;
@@ -192,14 +192,14 @@ fn config_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::ConfigStmt<'a>> {
                 ));
             }
         }
-        "out-dir" => {
+        "out-dir" | "output-directory" => {
             if !matches!(config.value, ast::ConfigValue::String(_)) {
                 return Err(ErrMode::Cut(
                     Expected::Expected(&"string literal for `out-dir`").into(),
                 ));
             }
         }
-        "default" => {
+        "default" | "default-target" => {
             if !matches!(config.value, ast::ConfigValue::String(_)) {
                 return Err(ErrMode::Cut(
                     Expected::Expected(&"string literal for `default`").into(),
@@ -219,23 +219,25 @@ fn config_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::ConfigStmt<'a>> {
     Ok(config)
 }
 
-fn config_value<'a>(key: &str) -> impl Parser<Input<'a>, ast::ConfigValue<'a>, PError> + '_ {
-    move |input: &mut Input<'a>| {
-        if key == "print-commands" {
-            alt((
-                keyword::<token::True>.value(ast::ConfigValue::Bool(true)),
-                keyword::<token::False>.value(ast::ConfigValue::Bool(false)),
-                fail.context(Expected::Expected(
-                    &"`true` or `false` for `print-commands`",
-                )),
-            ))
-            .parse_next(input)
-        } else {
-            cut_err(escaped_string)
-                .map(ast::ConfigValue::String)
-                .parse_next(input)
-        }
-    }
+fn config_bool(input: &mut Input) -> PResult<ast::ConfigBool> {
+    let (value, span) = alt((
+        keyword::<token::True>.value(true),
+        keyword::<token::False>.value(false),
+    ))
+    .with_token_span()
+    .parse_next(input)?;
+    Ok(ast::ConfigBool(span, value))
+}
+
+fn config_value<'a>(input: &mut Input<'a>) -> PResult<ast::ConfigValue<'a>> {
+    alt((
+        config_bool.map(ast::ConfigValue::Bool),
+        escaped_string
+            .with_token_span()
+            .map(|(string, span)| ast::ConfigValue::String(ast::ConfigString(span, string.into()))),
+    ))
+    .context(Expected::Expected(&"string literal or boolean value"))
+    .parse_next(input)
 }
 
 fn task_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::CommandRecipe<'a>> {
@@ -246,6 +248,8 @@ fn task_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::CommandRecipe<'a>> {
             run_stmt.map(ast::TaskRecipeStmt::Run),
             info_expr.map(ast::TaskRecipeStmt::Info),
             warn_expr.map(ast::TaskRecipeStmt::Warn),
+            kw_expr(config_bool).map(ast::TaskRecipeStmt::SetCapture),
+            kw_expr(config_bool).map(ast::TaskRecipeStmt::SetNoCapture),
             cut_err(fail).context(Expected::Expected(
                 &"`let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
             )),
@@ -278,6 +282,8 @@ fn build_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::BuildRecipe<'a>> {
             run_stmt.map(ast::BuildRecipeStmt::Run),
             info_expr.map(ast::BuildRecipeStmt::Info),
             warn_expr.map(ast::BuildRecipeStmt::Warn),
+            kw_expr(config_bool).map(ast::BuildRecipeStmt::SetCapture),
+            kw_expr(config_bool).map(ast::BuildRecipeStmt::SetNoCapture),
             cut_err(fail).context(Expected::Expected(
                 &"`let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
             )),
@@ -964,7 +970,10 @@ mod tests {
                             ws_2: ws_ignore(),
                             token_eq: ast::token::Token(Offset(15)),
                             ws_3: ws_ignore(),
-                            value: ast::ConfigValue::String("../target"),
+                            value: ast::ConfigValue::String(ast::ConfigString(
+                                span(17..28),
+                                "../target".into()
+                            )),
                         }),
                         ws_trailing: None,
                     },

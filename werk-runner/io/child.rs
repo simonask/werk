@@ -76,7 +76,9 @@ pub enum ChildCaptureOutput {
 pub struct ChildLinesStream {
     stdout: Option<ByteLines<BufReader<Pin<Box<dyn AsyncRead + Send>>>>>,
     stderr: Option<ByteLines<BufReader<Pin<Box<dyn AsyncRead + Send>>>>>,
-    status: Pin<Box<dyn Future<Output = std::io::Result<std::process::ExitStatus>> + Send>>,
+    status_fut:
+        Option<Pin<Box<dyn Future<Output = std::io::Result<std::process::ExitStatus>> + Send>>>,
+    status: Option<std::io::Result<std::process::ExitStatus>>,
 }
 
 impl ChildLinesStream {
@@ -110,7 +112,8 @@ impl ChildLinesStream {
         ChildLinesStream {
             stdout,
             stderr,
-            status,
+            status_fut: Some(status),
+            status: None,
         }
     }
 }
@@ -121,25 +124,46 @@ impl Stream for ChildLinesStream {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = Pin::into_inner(self);
 
+        // Note: All futures must be polled every time we are woken up (unless
+        // they already completed), in order to properly register wakers. We
+        // don't know which one actually woke us up.
+
         let stdout = if let Some(stdout) = this.stdout.as_mut() {
-            match ready!(Pin::new(stdout).poll_next(cx)) {
-                Some(Ok(line)) => Some(line),
-                Some(Err(e)) => return Poll::Ready(Some(Err(e))),
-                None => None,
+            match Pin::new(stdout).poll_next(cx) {
+                Poll::Ready(Some(Ok(line))) => Some(line),
+                Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e))),
+                Poll::Ready(None) => {
+                    this.stdout = None;
+                    None
+                }
+                Poll::Pending => None,
             }
         } else {
             None
         };
 
         let stderr = if let Some(stderr) = this.stderr.as_mut() {
-            match ready!(Pin::new(stderr).poll_next(cx)) {
-                Some(Ok(line)) => Some(line),
-                Some(Err(e)) => return Poll::Ready(Some(Err(e))),
-                None => None,
+            match Pin::new(stderr).poll_next(cx) {
+                Poll::Ready(Some(Ok(line))) => Some(line),
+                Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e))),
+                Poll::Ready(None) => {
+                    this.stderr = None;
+                    None
+                }
+                Poll::Pending => None,
             }
         } else {
             None
         };
+
+        if let Some(status_fut) = this.status_fut.as_mut() {
+            match Pin::new(status_fut).poll(cx) {
+                Poll::Ready(status) => {
+                    this.status = Some(status);
+                }
+                Poll::Pending => (),
+            }
+        }
 
         match (stdout, stderr) {
             (Some(stdout), Some(stderr)) => {
@@ -147,10 +171,16 @@ impl Stream for ChildLinesStream {
             }
             (Some(stdout), None) => Poll::Ready(Some(Ok(ChildCaptureOutput::StdoutLine(stdout)))),
             (None, Some(stderr)) => Poll::Ready(Some(Ok(ChildCaptureOutput::StderrLine(stderr)))),
-            (None, None) => match ready!(this.status.as_mut().poll(cx)) {
-                Ok(status) => Poll::Ready(Some(Ok(ChildCaptureOutput::Exit(status)))),
-                Err(e) => Poll::Ready(Some(Err(e))),
-            },
+            (None, None) => {
+                if let Some(status) = this.status.take() {
+                    Poll::Ready(Some(status.map(ChildCaptureOutput::Exit)))
+                } else {
+                    if this.status_fut.is_none() {
+                        panic!("child process polled after Exit");
+                    }
+                    Poll::Pending
+                }
+            }
         }
     }
 }

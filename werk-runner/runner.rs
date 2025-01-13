@@ -499,7 +499,7 @@ impl<'a> Inner<'a> {
         let result = if outdated.is_outdated() {
             tracing::debug!("Rebuilding");
             tracing::trace!("Reasons: {:?}", outdated);
-            self.execute_recipe_commands(task_id, evaluated.commands, false)
+            self.execute_recipe_commands(task_id, evaluated.commands, true)
                 .await
                 .map(|_| BuildStatus::Complete(task_id.clone(), outdated))
         } else {
@@ -568,7 +568,7 @@ impl<'a> Inner<'a> {
         &self,
         task_id: &TaskId,
         run_commands: Vec<RunCommand>,
-        print_successful: bool,
+        capture_by_default: bool,
     ) -> Result<(), Error> {
         let num_steps = run_commands.len();
         if num_steps == 0 {
@@ -582,6 +582,8 @@ impl<'a> Inner<'a> {
             .concurrency_limit
             .acquire()
             .await;
+
+        let mut capture = capture_by_default;
 
         for (step, run_command) in run_commands.into_iter().enumerate() {
             match run_command {
@@ -606,7 +608,7 @@ impl<'a> Inner<'a> {
                                         task_id,
                                         &command_line,
                                         &line,
-                                        !print_successful,
+                                        capture,
                                     );
                                 }
                                 ChildCaptureOutput::StderrLine(line) => {
@@ -621,7 +623,7 @@ impl<'a> Inner<'a> {
                                         task_id,
                                         &command_line,
                                         &stdout,
-                                        !print_successful,
+                                        capture,
                                     );
                                     self.workspace.watcher.on_child_process_stderr_line(
                                         task_id,
@@ -641,7 +643,6 @@ impl<'a> Inner<'a> {
                         &result,
                         step,
                         num_steps,
-                        print_successful,
                     );
                     match result {
                         Ok(status) => {
@@ -665,6 +666,15 @@ impl<'a> Inner<'a> {
                 }
                 RunCommand::Warn(message) => {
                     self.workspace.watcher.warning(Some(task_id), &message);
+                }
+                RunCommand::SetCapture(value) => {
+                    capture = value;
+                }
+                RunCommand::SetEnv(key, value) => {
+                    todo!()
+                }
+                RunCommand::RemoveEnv(key) => {
+                    todo!()
                 }
             }
         }
@@ -767,6 +777,9 @@ pub(crate) enum RunCommand {
     Info(String),
     Warn(String),
     Delete(Absolute<std::path::PathBuf>),
+    SetCapture(bool),
+    SetEnv(String, String),
+    RemoveEnv(String),
 }
 
 impl std::fmt::Display for RunCommand {
@@ -788,6 +801,9 @@ impl std::fmt::Display for RunCommand {
             RunCommand::Delete(path) => {
                 write!(f, "delete '{}'", path.display())
             }
+            RunCommand::SetCapture(value) => write!(f, "set_capture = {value}"),
+            RunCommand::SetEnv(key, value) => write!(f, "env {} = {}", key, value),
+            RunCommand::RemoveEnv(key) => write!(f, "env-remove {}", key),
         }
     }
 }

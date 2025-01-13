@@ -168,28 +168,36 @@ impl Config {
             match config_stmt.ident.ident {
                 "edition" => {
                     let edition = match config_stmt.value {
-                        ast::ConfigValue::String("v1") => Edition::V1,
+                        ast::ConfigValue::String(ast::ConfigString(_, ref edition))
+                            if edition == "v1" =>
+                        {
+                            Edition::V1
+                        }
                         _ => return Err(EvalError::InvalidEdition(config_stmt.span)),
                     };
                     config.edition = edition;
                 }
                 "out-dir" | "output-directory" => {
                     let value = match config_stmt.value {
-                        ast::ConfigValue::String(value) => value.to_string(),
+                        ast::ConfigValue::String(ast::ConfigString(_, ref value)) => {
+                            value.to_string()
+                        }
                         _ => return Err(EvalError::ExpectedConfigString(config_stmt.span)),
                     };
                     config.output_directory = Some(value);
                 }
                 "print-commands" => {
                     let value = match config_stmt.value {
-                        ast::ConfigValue::Bool(value) => value,
+                        ast::ConfigValue::Bool(ast::ConfigBool(_, ref value)) => *value,
                         _ => return Err(EvalError::ExpectedConfigBool(config_stmt.span)),
                     };
                     config.print_commands = Some(value);
                 }
                 "default" | "default-target" => {
                     let value = match config_stmt.value {
-                        ast::ConfigValue::String(value) => value.to_string(),
+                        ast::ConfigValue::String(ast::ConfigString(_, ref value)) => {
+                            value.to_string()
+                        }
                         _ => return Err(EvalError::ExpectedConfigString(config_stmt.span)),
                     };
                     config.default_target = Some(value);

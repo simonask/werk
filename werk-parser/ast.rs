@@ -1,4 +1,4 @@
-use std::hash::Hash as _;
+use std::{borrow::Cow, hash::Hash as _};
 
 use crate::{
     hash_is_semantic,
@@ -86,11 +86,17 @@ pub struct ConfigStmt<'a> {
     pub value: ConfigValue<'a>,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ConfigValue<'a> {
-    String(&'a str),
-    Bool(bool),
+    String(ConfigString<'a>),
+    Bool(ConfigBool),
 }
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ConfigString<'a>(pub Span, pub Cow<'a, str>);
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct ConfigBool(pub Span, pub bool);
 
 #[derive(Clone, PartialEq)]
 pub struct Ident<'a> {
@@ -226,6 +232,8 @@ pub enum BuildRecipeStmt<'a> {
     Run(RunStmt<'a>),
     Info(InfoExpr<'a>),
     Warn(WarnExpr<'a>),
+    SetCapture(KwExpr<token::SetCapture, ConfigBool>),
+    SetNoCapture(KwExpr<token::SetNoCapture, ConfigBool>),
 }
 
 impl SemanticHash for BuildRecipeStmt<'_> {
@@ -237,7 +245,10 @@ impl SemanticHash for BuildRecipeStmt<'_> {
             BuildRecipeStmt::Depfile(stmt) => stmt.semantic_hash(state),
             BuildRecipeStmt::Run(stmt) => stmt.semantic_hash(state),
             // Information statements do not contribute to outdatedness.
-            BuildRecipeStmt::Info(_) | BuildRecipeStmt::Warn(_) => {}
+            BuildRecipeStmt::SetCapture(_)
+            | BuildRecipeStmt::SetNoCapture(_)
+            | BuildRecipeStmt::Info(_)
+            | BuildRecipeStmt::Warn(_) => {}
         }
     }
 }
@@ -249,6 +260,8 @@ pub enum TaskRecipeStmt<'a> {
     Run(RunStmt<'a>),
     Info(InfoExpr<'a>),
     Warn(WarnExpr<'a>),
+    SetCapture(KwExpr<token::SetCapture, ConfigBool>),
+    SetNoCapture(KwExpr<token::SetNoCapture, ConfigBool>),
 }
 
 impl SemanticHash for TaskRecipeStmt<'_> {
@@ -259,7 +272,10 @@ impl SemanticHash for TaskRecipeStmt<'_> {
             TaskRecipeStmt::Build(stmt) => stmt.semantic_hash(state),
             TaskRecipeStmt::Run(stmt) => stmt.semantic_hash(state),
             // Information statements do not contribute to outdatedness.
-            TaskRecipeStmt::Info(_) | TaskRecipeStmt::Warn(_) => {}
+            TaskRecipeStmt::SetCapture(_)
+            | TaskRecipeStmt::SetNoCapture(_)
+            | TaskRecipeStmt::Info(_)
+            | TaskRecipeStmt::Warn(_) => {}
         }
     }
 }

@@ -134,25 +134,25 @@ fn parse_config_table<'a>(
                 let Some(value) = item.as_str() else {
                     return Err(Error::ExpectedString(span));
                 };
-                ast::ConfigValue::String(value)
+                ast::ConfigValue::String(ast::ConfigString(span, value.into()))
             }
             "edition" => {
                 let Some(value) = item.as_str() else {
                     return Err(Error::ExpectedString(span));
                 };
-                ast::ConfigValue::String(value)
+                ast::ConfigValue::String(ast::ConfigString(span, value.into()))
             }
             "print-commands" => {
                 let Some(value) = item.as_bool() else {
                     return Err(Error::ExpectedString(span));
                 };
-                ast::ConfigValue::Bool(value)
+                ast::ConfigValue::Bool(ast::ConfigBool(span, value))
             }
             "default" => {
                 let Some(value) = item.as_str() else {
                     return Err(Error::ExpectedString(span));
                 };
-                ast::ConfigValue::String(value)
+                ast::ConfigValue::String(ast::ConfigString(span, value.into()))
             }
             _ => {
                 let span = table

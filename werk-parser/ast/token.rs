@@ -101,6 +101,10 @@ def_keyword!(Split, "split");
 def_keyword!(Lines, "lines");
 
 def_keyword!(AssertEq, "assert-eq");
+def_keyword!(SetCapture, "capture");
+def_keyword!(SetNoCapture, "no-capture");
+def_keyword!(SetEnv, "env");
+def_keyword!(RemoveEnv, "env-remove");
 
 def_token!(Colon, ':');
 def_token!(Eq, '=');
