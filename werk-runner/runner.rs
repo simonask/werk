@@ -146,6 +146,12 @@ impl std::fmt::Display for TaskId {
 enum TaskSpec<'a> {
     Recipe(ir::RecipeMatch<'a>),
     CheckExists(Absolute<werk_fs::PathBuf>),
+    /// Check if the file exists, but don't emit an error if it doesn't. This
+    /// applies to dependencies discovered through depfiles, where the depfile
+    /// may be outdated (from a previous build).
+    ///
+    /// If the file does not exist, the task will be considered outdated.
+    CheckExistsRelaxed(Absolute<werk_fs::PathBuf>),
 }
 
 enum DepfileSpec<'a> {
@@ -164,7 +170,9 @@ impl<'a> TaskSpec<'a> {
             TaskSpec::Recipe(ir::RecipeMatch::Task(command_recipe_match)) => {
                 TaskId::command(command_recipe_match.name)
             }
-            TaskSpec::CheckExists(path_buf) => TaskId::build(path_buf.clone().into_boxed_path()),
+            TaskSpec::CheckExists(path_buf) | TaskSpec::CheckExistsRelaxed(path_buf) => {
+                TaskId::build(path_buf.clone().into_boxed_path())
+            }
         }
     }
 }
@@ -223,6 +231,15 @@ impl<'a> Inner<'a> {
             TaskSpec::Recipe(ir::RecipeMatch::Build(recipe_match))
         } else {
             TaskSpec::CheckExists(target.to_owned())
+        })
+    }
+
+    fn get_build_spec_relaxed(&self, target: &Absolute<Path>) -> Result<TaskSpec<'a>, Error> {
+        let recipe_match = self.workspace.manifest.match_build_recipe(target)?;
+        Ok(if let Some(recipe_match) = recipe_match {
+            TaskSpec::Recipe(ir::RecipeMatch::Build(recipe_match))
+        } else {
+            TaskSpec::CheckExistsRelaxed(target.to_owned())
         })
     }
 
@@ -463,7 +480,8 @@ impl<'a> Inner<'a> {
                         Error::InvalidPathInDepfile(dep.display().to_string(), err)
                     })?;
                     tracing::debug!("Discovered depfile dependency: {abstract_path}");
-                    explicit_dependency_specs.push(self.get_build_spec(abstract_path.as_deref())?);
+                    explicit_dependency_specs
+                        .push(self.get_build_spec_relaxed(abstract_path.as_deref())?);
                 }
             } else {
                 if is_implicit_depfile {
@@ -778,6 +796,13 @@ impl<'a> Inner<'a> {
                 }
             },
             TaskSpec::CheckExists(path) => self.check_exists(path.as_deref()).await,
+            TaskSpec::CheckExistsRelaxed(path) => match self.check_exists(path.as_deref()).await {
+                Err(Error::NoRuleToBuildTarget(_)) => Ok(BuildStatus::Complete(
+                    task_id.clone(),
+                    Outdatedness::outdated(Reason::Missing(path.into_inner())),
+                )),
+                otherwise => otherwise,
+            },
         }
     }
 }
