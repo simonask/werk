@@ -316,6 +316,15 @@ pub struct ParseError {
 }
 
 impl ParseError {
+    #[inline]
+    pub fn new(expected: Expected) -> Self {
+        Self {
+            stack: None,
+            expected,
+        }
+    }
+
+    #[inline]
     pub fn stack(&self) -> &[ErrContext] {
         if let Some(ref stack) = self.stack {
             &*stack
@@ -324,6 +333,7 @@ impl ParseError {
         }
     }
 
+    #[inline]
     pub(crate) fn push(&mut self, entry: ErrContext) {
         if let Some(ref mut stack) = self.stack {
             stack.push(entry);
@@ -334,17 +344,9 @@ impl ParseError {
 }
 
 impl From<Expected> for ParseError {
+    #[inline]
     fn from(expected: Expected) -> Self {
-        Self {
-            stack: None,
-            expected,
-        }
-    }
-}
-
-impl From<Expected> for winnow::error::ErrMode<ParseError> {
-    fn from(expected: Expected) -> Self {
-        winnow::error::ErrMode::Backtrack(ParseError::from(expected))
+        Self::new(expected)
     }
 }
 
