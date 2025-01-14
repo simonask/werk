@@ -233,6 +233,8 @@ pub enum EvalError {
     CommandNotFound(Span, String, which::Error),
     #[error("`which` expression resulted in a non-UTF-8 path: {}", .1.display())]
     NonUtf8Which(Span, std::path::PathBuf),
+    #[error("`read` failed because file is not valid UTF-8: {}", .1.display())]
+    NonUtf8Read(Span, std::path::PathBuf),
     #[error("{1}")]
     Glob(Span, Arc<globset::Error>),
     /// Shell command failed during evaluation. Note: This error is not reported
@@ -242,6 +244,8 @@ pub enum EvalError {
     Shell(Span, Arc<ShellError>),
     #[error("{1}")]
     Path(Span, werk_fs::PathError),
+    #[error("I/O error during evaluation: {1}")]
+    Io(Span, IoError),
     #[error("{1}")]
     ErrorExpression(Span, String),
     #[error("assertion failed: {} != {}", .1 .0, .1 .1)]
@@ -275,12 +279,49 @@ impl werk_parser::parser::Spanned for EvalError {
             | EvalError::UnexpectedExpressionType(span, _)
             | EvalError::CommandNotFound(span, _, _)
             | EvalError::NonUtf8Which(span, _)
+            | EvalError::NonUtf8Read(span, _)
             | EvalError::Glob(span, _)
             | EvalError::Shell(span, _)
             | EvalError::Path(span, _)
+            | EvalError::Io(span, _)
             | EvalError::ErrorExpression(span, _)
             | EvalError::AssertionFailed(span, _)
             | EvalError::AssertionMatchFailed(span, _) => *span,
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct IoError {
+    pub error: Arc<std::io::Error>,
+}
+
+impl From<std::io::Error> for IoError {
+    #[inline]
+    fn from(error: std::io::Error) -> Self {
+        Self {
+            error: Arc::new(error),
+        }
+    }
+}
+
+impl std::fmt::Debug for IoError {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&*self.error, f)
+    }
+}
+
+impl std::fmt::Display for IoError {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&*self.error, f)
+    }
+}
+
+impl PartialEq for IoError {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.error, &other.error) || self.error.kind() == other.error.kind()
     }
 }

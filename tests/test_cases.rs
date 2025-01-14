@@ -117,3 +117,4 @@ success_case!(discard);
 success_case!(filter);
 success_case!(write);
 success_case!(copy);
+success_case!(read);

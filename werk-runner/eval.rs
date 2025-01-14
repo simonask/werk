@@ -121,6 +121,7 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
     match expr {
         ast::Expr::StringExpr(expr) => Ok(eval_string_expr(scope, expr)?.map(Value::String).into()),
         ast::Expr::Shell(expr) => Ok(eval_shell(scope, &expr.param)?.map(Value::String).into()),
+        ast::Expr::Read(expr) => Ok(eval_read(scope, &expr.param)?.map(Value::String).into()),
         ast::Expr::Glob(expr) => Ok(eval_glob(scope, expr)?.map(Value::List).into()),
         ast::Expr::Which(expr) => {
             let Eval {
@@ -889,6 +890,7 @@ fn eval_shell_commands_into<S: Scope>(
             cmds.push(command.value);
             Ok(command.used)
         }
+        ast::Expr::Read(_) => return Err(EvalError::UnexpectedExpressionType(span, "read").into()),
         ast::Expr::Glob(_) => return Err(EvalError::UnexpectedExpressionType(span, "glob").into()),
         ast::Expr::Which(_) => {
             return Err(EvalError::UnexpectedExpressionType(span, "which").into())
@@ -1038,6 +1040,50 @@ pub fn eval_shell<P: Scope + ?Sized>(
     Ok(Eval {
         value: stdout.into_owned(),
         used: command.used,
+    })
+}
+
+pub fn eval_read<P: Scope + ?Sized>(
+    scope: &P,
+    expr: &ast::StringExpr<'_>,
+) -> Result<Eval<String>, EvalError> {
+    let path = eval_string_expr(scope, expr)?;
+
+    let path_err = |err| EvalError::Path(expr.span, err);
+
+    let path = werk_fs::Path::new(&path).map_err(path_err)?;
+    let path = path.absolutize(werk_fs::Path::ROOT).map_err(path_err)?;
+    let Some(fs_entry) = scope.workspace().get_project_file(&*path) else {
+        return Err(EvalError::Io(
+            expr.span,
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("file not found during `read`: {path}"),
+            )
+            .into(),
+        ));
+    };
+
+    let contents = scope
+        .io()
+        .read_file(fs_entry.path.as_deref())
+        .map_err(|err| EvalError::Io(expr.span, err.into()))?;
+
+    let string = match String::from_utf8(contents) {
+        Ok(string) => string,
+        Err(_) => {
+            return Err(EvalError::NonUtf8Read(
+                expr.span,
+                fs_entry.path.clone().into_inner(),
+            ))
+        }
+    };
+
+    let used = UsedVariable::WorkspaceFile(path.into_owned(), fs_entry.metadata.mtime);
+
+    Ok(Eval {
+        value: string,
+        used: Used::from_iter([used]),
     })
 }
 

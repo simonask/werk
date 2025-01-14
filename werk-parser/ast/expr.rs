@@ -13,6 +13,7 @@ pub enum Expr<'a> {
     Ident(Ident<'a>),
     StringExpr(StringExpr<'a>),
     Shell(ShellExpr<'a>),
+    Read(ReadExpr<'a>),
     Glob(GlobExpr<'a>),
     Which(WhichExpr<'a>),
     Env(EnvExpr<'a>),
@@ -36,6 +37,7 @@ impl Spanned for Expr<'_> {
             Expr::Ident(ident) => ident.span,
             Expr::StringExpr(string_expr) => string_expr.span,
             Expr::Shell(expr) => expr.span,
+            Expr::Read(expr) => expr.span,
             Expr::Glob(expr) => expr.span,
             Expr::Which(expr) => expr.span,
             Expr::Env(expr) => expr.span,
@@ -53,6 +55,7 @@ impl SemanticHash for Expr<'_> {
             Expr::Ident(ident) => ident.semantic_hash(state),
             Expr::StringExpr(s) => s.semantic_hash(state),
             Expr::Shell(s) => s.semantic_hash(state),
+            Expr::Read(s) => s.semantic_hash(state),
             Expr::Glob(s) => s.semantic_hash(state),
             Expr::Which(s) => s.semantic_hash(state),
             Expr::Env(s) => s.semantic_hash(state),
@@ -270,6 +273,7 @@ pub type GlobExpr<'a> = KwExpr<token::Glob, StringExpr<'a>>;
 pub type WhichExpr<'a> = KwExpr<token::Which, StringExpr<'a>>;
 pub type EnvExpr<'a> = KwExpr<token::Env, StringExpr<'a>>;
 pub type ShellExpr<'a> = KwExpr<token::Shell, StringExpr<'a>>;
+pub type ReadExpr<'a> = KwExpr<token::Read, StringExpr<'a>>;
 pub type InfoExpr<'a> = KwExpr<token::Info, StringExpr<'a>>;
 pub type WarnExpr<'a> = KwExpr<token::Warn, StringExpr<'a>>;
 pub type ErrorExpr<'a> = KwExpr<token::Error, StringExpr<'a>>;

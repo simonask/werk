@@ -142,6 +142,7 @@ pub struct OutdatednessTracker<'a> {
     outdatedness: Outdatedness,
     cache: Option<&'a TargetOutdatednessCache>,
     new_cache: TargetOutdatednessCache,
+    target_mtime: Option<std::time::SystemTime>,
 }
 
 impl<'a> OutdatednessTracker<'a> {
@@ -149,6 +150,7 @@ impl<'a> OutdatednessTracker<'a> {
         workspace: &'a Workspace,
         cache: Option<&'a TargetOutdatednessCache>,
         recipe: &ir::BuildRecipe,
+        target_mtime: Option<std::time::SystemTime>,
     ) -> Self {
         let mut outdatedness = Outdatedness::unchanged();
         let recipe_hash = workspace.register_used_recipe_hash(recipe);
@@ -169,6 +171,7 @@ impl<'a> OutdatednessTracker<'a> {
             outdatedness,
             cache,
             new_cache,
+            target_mtime,
         }
     }
 
@@ -210,6 +213,14 @@ impl<'a> OutdatednessTracker<'a> {
                         self.outdatedness.insert(Reason::Define(def.clone()));
                     }
                     self.new_cache.env.insert(def.clone(), hash);
+                }
+                UsedVariable::WorkspaceFile(path, mtime) => {
+                    if let Some(target_mtime) = self.target_mtime {
+                        if mtime > target_mtime {
+                            self.outdatedness
+                                .insert(Reason::Modified(path.into_inner(), mtime));
+                        }
+                    }
                 }
             }
         }

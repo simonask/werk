@@ -393,8 +393,18 @@ impl<'a> Inner<'a> {
         let cache = self
             .workspace
             .take_build_target_cache(&*recipe_match.target_file);
-        let mut outdatedness =
-            OutdatednessTracker::new(&self.workspace, cache.as_ref(), &recipe_match.recipe);
+        // Check the target's mtime.
+        let out_mtime = scope
+            .workspace()
+            .get_existing_output_file(&recipe_match.target_file)?
+            .map(|entry| entry.metadata.mtime);
+
+        let mut outdatedness = OutdatednessTracker::new(
+            &self.workspace,
+            cache.as_ref(),
+            &recipe_match.recipe,
+            out_mtime,
+        );
 
         // Evaluate recipe body (`out` is available and in scope).
         let evaluated =
@@ -407,12 +417,6 @@ impl<'a> Inner<'a> {
             .iter()
             .map(|s| self.get_build_or_command_spec(&s))
             .collect::<Result<Vec<_>, Error>>()?;
-
-        // Check the target's mtime.
-        let out_mtime = scope
-            .workspace()
-            .get_existing_output_file(&recipe_match.target_file)?
-            .map(|entry| entry.metadata.mtime);
 
         // Rebuild if the target does not exist.
         match out_mtime {

@@ -421,6 +421,7 @@ fn expression_head<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
         string_expr.map(ast::Expr::StringExpr),
         list_of(expression_chain).map(ast::Expr::List),
         kw_expr(string_expr).map(ast::Expr::Shell),
+        kw_expr(string_expr).map(ast::Expr::Read),
         kw_expr(string_expr).map(ast::Expr::Glob),
         kw_expr(string_expr).map(ast::Expr::Which),
         kw_expr(string_expr).map(ast::Expr::Env),

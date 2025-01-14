@@ -1,0 +1,3 @@
+let file-contents = read "foo" | assert-eq "bar"
+
+#!file foo=bar

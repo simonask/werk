@@ -42,6 +42,7 @@ pub enum UsedVariable {
     Which(String, Hash128),
     Env(String, Hash128),
     Define(String, Hash128),
+    WorkspaceFile(werk_fs::Absolute<werk_fs::PathBuf>, std::time::SystemTime),
 }
 
 impl FromIterator<UsedVariable> for Used {
