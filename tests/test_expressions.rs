@@ -241,6 +241,7 @@ fn fail_which() -> anyhow::Result<()> {
     let watcher = Arc::new(MockWatcher::default());
     let io = Arc::new(
         MockIo::default()
+            .with_program_removed("clang")
             .with_workspace_files([(
                 "main.c",
                 (

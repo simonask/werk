@@ -1079,6 +1079,7 @@ dependencies = [
  "futures",
  "macro_rules_attribute",
  "parking_lot",
+ "regex",
  "smol",
  "smol-macros",
  "toml_edit",

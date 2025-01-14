@@ -3,7 +3,7 @@ use std::{
     collections::{hash_map, HashMap},
     ffi::OsString,
     pin::Pin,
-    sync::atomic::AtomicU64,
+    sync::{atomic::AtomicU64, Arc},
     time::SystemTime,
 };
 
@@ -22,6 +22,56 @@ pub fn make_mtime(secs_since_epoch: u64) -> std::time::SystemTime {
 #[inline]
 pub fn default_mtime() -> std::time::SystemTime {
     make_mtime(0)
+}
+
+pub struct Test<'a> {
+    pub io: Arc<MockIo>,
+    pub watcher: Arc<MockWatcher>,
+    pub ast: werk_parser::Document<'a>,
+    pub settings: werk_runner::WorkspaceSettings,
+}
+
+impl<'a> Test<'a> {
+    pub fn new(werk_source: &'a str) -> Result<Self, werk_parser::Error> {
+        let ast = werk_parser::parse_werk(werk_source)?;
+        Ok(Self {
+            io: Arc::new(MockIo::default().with_default_workspace_dir()),
+            watcher: Arc::new(MockWatcher::default()),
+            ast,
+            settings: test_workspace_settings(),
+        })
+    }
+
+    pub fn new_toml(toml: &'a toml_edit::ImDocument<&'a str>) -> Result<Self, werk_parser::Error> {
+        let ast = werk_parser::parse_toml(std::path::Path::new("werk.toml"), toml.raw(), toml)
+            .map_err(|err| err.error)?;
+        Ok(Self {
+            io: Arc::new(MockIo::default().with_default_workspace_dir()),
+            watcher: Arc::new(MockWatcher::default()),
+            ast,
+            settings: test_workspace_settings(),
+        })
+    }
+
+    pub fn reload_toml(
+        &mut self,
+        toml: &'a toml_edit::ImDocument<&'a str>,
+    ) -> Result<(), werk_parser::Error> {
+        let ast = werk_parser::parse_toml(std::path::Path::new("werk.toml"), toml.raw(), toml)
+            .map_err(|err| err.error)?;
+        self.ast = ast;
+        Ok(())
+    }
+
+    pub fn create_workspace(&self) -> Result<werk_runner::Workspace<'_>, werk_runner::Error> {
+        werk_runner::Workspace::new(
+            &self.ast,
+            &*self.io,
+            &*self.watcher,
+            test_workspace_dir().to_path_buf(),
+            &test_workspace_settings(),
+        )
+    }
 }
 
 #[derive(Default)]
@@ -122,7 +172,6 @@ pub enum MockDirEntry {
     Dir(MockDir),
 }
 
-#[derive(Default)]
 pub struct MockIo {
     pub filesystem: Mutex<MockDir>,
     pub which: Mutex<HashMap<String, Absolute<std::path::PathBuf>>>,
@@ -135,6 +184,51 @@ pub struct MockIo {
     pub env: Mutex<HashMap<String, String>>,
     pub oplog: Mutex<Vec<MockIoOp>>,
     pub now: AtomicU64,
+}
+
+impl Default for MockIo {
+    fn default() -> Self {
+        MockIo {
+            filesystem: Mutex::new(HashMap::new()),
+            which: Mutex::new(HashMap::new()),
+            programs: Mutex::new(HashMap::new()),
+            env: Mutex::new(HashMap::new()),
+            oplog: Mutex::new(Vec::new()),
+            now: AtomicU64::new(0),
+        }
+        .with_default_workspace_dir()
+        .with_envs([("PROFILE", "debug")])
+        .with_program("clang", program_path("clang"), |_cmd, _fs| {
+            Ok(std::process::Output {
+                status: Default::default(),
+                stdout: Default::default(),
+                stderr: Default::default(),
+            })
+        })
+        .with_program("write", program_path("write"), |cmdline, fs| {
+            let contents = cmdline.arguments[0].as_str();
+            let file = output_file(cmdline.arguments[1].as_str());
+            tracing::trace!("write {}", file.display());
+            insert_fs(
+                fs,
+                &file,
+                (
+                    Metadata {
+                        mtime: make_mtime(1),
+                        is_file: true,
+                        is_symlink: false,
+                    },
+                    contents.as_bytes().into(),
+                ),
+            )
+            .unwrap();
+            Ok(std::process::Output {
+                status: Default::default(),
+                stdout: Default::default(),
+                stderr: Default::default(),
+            })
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -323,7 +417,7 @@ fn get_fs<'a>(fs: &'a MockDir, path: &Absolute<std::path::Path>) -> Option<&'a M
     get_fs_entry(fs, path)
 }
 
-fn read_fs<'a>(
+pub fn read_fs<'a>(
     fs: &'a MockDir,
     path: &Absolute<std::path::Path>,
 ) -> std::io::Result<(DirEntry, &'a [u8])> {
@@ -431,6 +525,18 @@ impl MockIo {
         let program = program.into();
         self.which.lock().insert(program.clone(), path.clone());
         self.programs.lock().insert(path, Box::new(fun));
+    }
+
+    pub fn remove_program(&self, program: &str) {
+        let Some(path) = self.which.lock().remove(program) else {
+            return;
+        };
+        self.programs.lock().remove(&path);
+    }
+
+    pub fn with_program_removed(self, program: &str) -> Self {
+        self.remove_program(program);
+        self
     }
 
     pub fn with_workspace_files<I, K>(self, iter: I) -> Self

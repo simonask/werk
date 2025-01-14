@@ -687,7 +687,11 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
                 };
 
                 match value {
-                    Value::List(_) => return Err(EvalError::UnexpectedList(expr.span).into()),
+                    Value::List(list) => {
+                        if let Some(first) = find_first_string(list) {
+                            s.push_str(first);
+                        }
+                    }
                     Value::String(value) => {
                         s.push_str(&value);
                     }
@@ -736,8 +740,11 @@ pub(crate) fn eval_run_exprs<S: Scope>(
             ast::RunExpr::Copy(expr) => {
                 let from = eval_string_expr(scope, &expr.src)?;
                 let to = eval_string_expr(scope, &expr.dest)?;
-                let from_path = werk_fs::Path::new(&from)
-                    .and_then(|path| scope.workspace().get_output_file_path(path))
+                let from_path = werk_fs::PathBuf::new(from.value)
+                    .and_then(|path| {
+                        path.absolutize(werk_fs::Path::ROOT)
+                            .map(|path| path.into_owned())
+                    })
                     .map_err(|err| EvalError::Path(expr.src.span, err))?;
                 let to_path = werk_fs::Path::new(&to)
                     .and_then(|path| scope.workspace().get_output_file_path(path))

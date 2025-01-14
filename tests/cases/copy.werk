@@ -1,0 +1,11 @@
+config default = "bar"
+
+build "bar" {
+    from "foo"
+    run {
+        copy "{in}" to "{out}"
+    }
+}
+
+#!file foo=hello
+#!assert-file bar=hello

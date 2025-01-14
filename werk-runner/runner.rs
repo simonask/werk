@@ -687,10 +687,21 @@ impl<'a> Inner<'a> {
                 RunCommand::Write(path_buf, vec) => {
                     self.workspace.io.write_file(path_buf.as_deref(), &vec)?
                 }
-                RunCommand::Copy(from, to) => self
-                    .workspace
-                    .io
-                    .copy_file(from.as_deref(), to.as_deref())?,
+                RunCommand::Copy(from, to) => {
+                    let Some(src_entry) = self
+                        .workspace
+                        .get_existing_project_or_output_file(from.as_deref())?
+                    else {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "`copy` source file not found in workspace or output directory",
+                        )
+                        .into());
+                    };
+                    self.workspace
+                        .io
+                        .copy_file(src_entry.path.as_deref(), to.as_deref())?
+                }
                 RunCommand::Delete(path) => self.workspace.io.delete_file(path.as_deref())?,
                 RunCommand::Info(message) => {
                     self.workspace.watcher.message(Some(task_id), &message);
@@ -811,7 +822,9 @@ impl<'a> Inner<'a> {
 pub(crate) enum RunCommand {
     Shell(ShellCommandLine),
     Write(Absolute<std::path::PathBuf>, Vec<u8>),
-    Copy(Absolute<std::path::PathBuf>, Absolute<std::path::PathBuf>),
+    // We don't know yet if the source file is in the workspace or output
+    // directory, so we will resolve the path when running it.
+    Copy(Absolute<werk_fs::PathBuf>, Absolute<std::path::PathBuf>),
     Info(String),
     Warn(String),
     Delete(Absolute<std::path::PathBuf>),
@@ -828,7 +841,7 @@ impl std::fmt::Display for RunCommand {
                 write!(f, "write {} ({} bytes)", path_buf.display(), vec.len())
             }
             RunCommand::Copy(from, to) => {
-                write!(f, "copy '{}' to '{}'", from.display(), to.display())
+                write!(f, "copy '{}' to '{}'", from, to.display())
             }
             RunCommand::Info(message) => {
                 write!(f, "info \"{}\"", message.escape_default())
