@@ -125,6 +125,7 @@ impl<'a> PatternBuilder<'a> {
         self.match_substrings = match_substrings;
     }
 
+    #[must_use]
     pub fn build(self) -> Pattern<'a> {
         let mut regex_pattern = String::from(if self.match_substrings { "" } else { "^" });
         let mut capture_count = 0;
@@ -189,6 +190,7 @@ impl<'a> Pattern<'a> {
         Ok(builder.build())
     }
 
+    #[must_use]
     pub fn match_whole_string(&self, string: &str) -> Option<PatternMatchData> {
         let m = self.regex.captures(string)?;
         let mut capture_groups = Vec::with_capacity(self.num_capture_groups);
@@ -225,21 +227,25 @@ impl std::fmt::Display for Pattern<'_> {
 impl PatternMatchData {
     /// True if the pattern did not contain a stem.
     #[inline]
+    #[must_use]
     pub fn is_verbatim(&self) -> bool {
         self.stem.is_none()
     }
 
     #[inline]
+    #[must_use]
     pub fn stem(&self) -> Option<&str> {
         self.stem.as_deref()
     }
 
     #[inline]
+    #[must_use]
     pub fn captures(&self) -> &[Box<str>] {
         &self.captures
     }
 
     #[inline]
+    #[must_use]
     pub fn capture_group(&self, group: usize) -> Option<&str> {
         self.captures.get(group).map(|s| &**s)
     }

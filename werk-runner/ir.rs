@@ -21,6 +21,7 @@ pub struct Manifest<'a> {
 
 impl<'a> Manifest<'a> {
     #[inline]
+    #[must_use]
     pub fn match_task_recipe(&self, name: &str) -> Option<&TaskRecipe<'a>> {
         self.task_recipes.get(name)
     }
@@ -51,7 +52,7 @@ impl<'a> Manifest<'a> {
                         }
                         (Some(_), None) => {
                             // Candidate is exact, do nothing.
-                            best_match = Some((candidate_recipe, candidate_pattern_match))
+                            best_match = Some((candidate_recipe, candidate_pattern_match));
                         }
                         (Some(best_stem), Some(candidate_stem))
                             if candidate_stem.len() < best_stem.len() =>

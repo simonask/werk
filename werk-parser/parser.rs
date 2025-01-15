@@ -36,7 +36,7 @@ pub fn parse_werk(source_code: &str) -> Result<crate::Document<'_>, crate::Error
 }
 
 fn root<'a>(input: &mut Input<'a>) -> PResult<ast::Root<'a>> {
-    let (_, statements, decor_trailing, _) =
+    let ((), statements, decor_trailing, _) =
         statements_delimited(empty, root_stmt, peek(eof)).parse_next(input)?;
     Ok(ast::Root {
         statements,

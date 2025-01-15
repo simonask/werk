@@ -20,6 +20,7 @@ impl<'a> Document<'a> {
         }
     }
 
+    #[must_use]
     pub fn get_whitespace(&self, whitespace: ast::Whitespace) -> &str {
         let range = whitespace.0.start.0 as usize..whitespace.0.end.0 as usize;
         if let Some(ref smuggled) = self.smuggled_whitespace {
@@ -69,30 +70,37 @@ impl<'a> Document<'a> {
             })
     }
 
+    #[must_use]
     pub fn num_task_recipes(&self) -> usize {
         self.task_recipes().count()
     }
 
+    #[must_use]
     pub fn num_build_recipes(&self) -> usize {
         self.build_recipes().count()
     }
 
+    #[must_use]
     pub fn num_globals(&self) -> usize {
         self.globals().count()
     }
 
+    #[must_use]
     pub fn num_config_stmts(&self) -> usize {
         self.config_stmts().count()
     }
 
+    #[must_use]
     pub fn find_config(&self, name: &str) -> Option<&ast::ConfigStmt<'_>> {
         self.config_stmts().find(|stmt| stmt.ident == name)
     }
 
+    #[must_use]
     pub fn find_global(&self, name: &str) -> Option<&ast::LetStmt<'_>> {
         self.globals().find(|stmt| stmt.ident == name)
     }
 
+    #[must_use]
     pub fn find_task_recipe(&self, name: &str) -> Option<&ast::CommandRecipe<'_>> {
         self.task_recipes().find(|stmt| stmt.name == name)
     }

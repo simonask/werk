@@ -58,6 +58,7 @@ impl Error {
 
     /// True when, even though an error occurred, the `.werk-cache` file should
     /// still be written.
+    #[must_use]
     pub fn should_still_write_werk_cache(&self) -> bool {
         match self {
             Error::Io(_)
@@ -180,7 +181,7 @@ impl std::fmt::Display for ShellError {
                     write!(f, "\nstderr:\n{}", String::from_utf8_lossy(&output.stderr))?;
                 }
             }
-            Err(ref err) => writeln!(f, "\nerror: {}", err)?,
+            Err(ref err) => writeln!(f, "\nerror: {err}")?,
         }
 
         Ok(())

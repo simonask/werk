@@ -96,7 +96,7 @@ impl TryFrom<ignore::DirEntry> for DirEntry {
         assert!(path.is_absolute());
         let path = Absolute::new_unchecked(path);
 
-        Ok(DirEntry { metadata, path })
+        Ok(DirEntry { path, metadata })
     }
 }
 
@@ -111,7 +111,7 @@ impl TryFrom<std::fs::DirEntry> for DirEntry {
         assert!(path.is_absolute());
         let path = Absolute::new_unchecked(path);
 
-        Ok(DirEntry { metadata, path })
+        Ok(DirEntry { path, metadata })
     }
 }
 
@@ -124,6 +124,7 @@ pub struct Metadata {
 
 impl Metadata {
     #[inline]
+    #[must_use]
     pub fn is_dir(&self) -> bool {
         !self.is_file
     }
@@ -146,6 +147,7 @@ pub struct RealSystem(());
 
 impl RealSystem {
     #[inline]
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }

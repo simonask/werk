@@ -58,6 +58,7 @@ impl BuildStatus {
     /// Given an output file modification time, return the outdatedness of the
     /// target. If the target is up-to-date, the outdatedness will be empty. If
     /// an output mtime is not available, returns empty outdatedness.
+    #[must_use]
     pub fn into_outdated_reason(self, output_mtime: Option<SystemTime>) -> Option<Reason> {
         match self {
             BuildStatus::Complete(task_id, outdatedness) => {
@@ -101,16 +102,19 @@ impl TaskId {
     }
 
     #[inline]
+    #[must_use]
     pub fn is_command(&self) -> bool {
         !self.0.starts_with('/')
     }
 
     #[inline]
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     #[inline]
+    #[must_use]
     pub fn as_path(&self) -> Option<&Absolute<werk_fs::Path>> {
         if self.0.starts_with('/') {
             Some(Absolute::new_ref_unchecked(werk_fs::Path::new_unchecked(
@@ -122,6 +126,7 @@ impl TaskId {
     }
 
     #[inline]
+    #[must_use]
     pub fn short_name(&self) -> &str {
         if self.is_command() {
             &self.0
@@ -415,14 +420,11 @@ impl<'a> Inner<'a> {
             .collect::<Result<Vec<_>, Error>>()?;
 
         // Rebuild if the target does not exist.
-        match out_mtime {
-            Some(mtime) => {
-                tracing::debug!("Output exists, mtime: {mtime:?}");
-            }
-            None => {
-                tracing::debug!("Output file missing, target is outdated");
-                outdatedness.target_does_not_exist(recipe_match.target_file.to_path_buf());
-            }
+        if let Some(mtime) = out_mtime {
+            tracing::debug!("Output exists, mtime: {mtime:?}");
+        } else {
+            tracing::debug!("Output file missing, target is outdated");
+            outdatedness.target_does_not_exist(recipe_match.target_file.to_path_buf());
         }
 
         let mut check_implicit_depfile_was_generated = None;
@@ -529,7 +531,7 @@ impl<'a> Inner<'a> {
             tracing::trace!("Reasons: {:?}", outdated);
             self.execute_recipe_commands(task_id, evaluated.commands, true)
                 .await
-                .map(|_| BuildStatus::Complete(task_id.clone(), outdated))
+                .map(|()| BuildStatus::Complete(task_id.clone(), outdated))
         } else {
             tracing::debug!("Up to date");
             Ok(BuildStatus::Complete(task_id.clone(), outdated))
@@ -586,7 +588,7 @@ impl<'a> Inner<'a> {
         let result = self
             .execute_recipe_commands(task_id, evaluated.commands, false)
             .await
-            .map(|_| BuildStatus::Complete(task_id.clone(), outdated));
+            .map(|()| BuildStatus::Complete(task_id.clone(), outdated));
 
         self.workspace.watcher.did_build(task_id, &result);
         result
@@ -682,7 +684,7 @@ impl<'a> Inner<'a> {
                     }
                 }
                 RunCommand::Write(path_buf, vec) => {
-                    self.workspace.io.write_file(path_buf.as_deref(), &vec)?
+                    self.workspace.io.write_file(path_buf.as_deref(), &vec)?;
                 }
                 RunCommand::Copy(from, to) => {
                     let Some(src_entry) = self
@@ -697,7 +699,7 @@ impl<'a> Inner<'a> {
                     };
                     self.workspace
                         .io
-                        .copy_file(src_entry.path.as_deref(), to.as_deref())?
+                        .copy_file(src_entry.path.as_deref(), to.as_deref())?;
                 }
                 RunCommand::Delete(path) => self.workspace.io.delete_file(path.as_deref())?,
                 RunCommand::Info(message) => {
@@ -869,8 +871,8 @@ impl std::fmt::Display for RunCommand {
                 write!(f, "delete '{}'", path.display())
             }
             RunCommand::SetCapture(value) => write!(f, "set_capture = {value}"),
-            RunCommand::SetEnv(key, value) => write!(f, "env {} = {}", key, value),
-            RunCommand::RemoveEnv(key) => write!(f, "env-remove {}", key),
+            RunCommand::SetEnv(key, value) => write!(f, "env {key} = {value}"),
+            RunCommand::RemoveEnv(key) => write!(f, "env-remove {key}"),
         }
     }
 }
@@ -949,7 +951,7 @@ impl std::fmt::Display for OwnedDependencyChain {
             if i > 0 {
                 write!(f, " -> ")?;
             }
-            write!(f, "{}", task_id)?;
+            write!(f, "{task_id}")?;
         }
         Ok(())
     }

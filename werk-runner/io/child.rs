@@ -176,9 +176,7 @@ impl Stream for ChildLinesStream {
                 if let Some(status) = this.status.take() {
                     Poll::Ready(Some(status.map(ChildCaptureOutput::Exit)))
                 } else {
-                    if this.status_fut.is_none() {
-                        panic!("child process polled after Exit");
-                    }
+                    assert!(this.status_fut.is_some(), "child process polled after Exit");
                     Poll::Pending
                 }
             }
@@ -223,7 +221,7 @@ impl<R: AsyncBufRead> Stream for ByteLines<R> {
     }
 }
 
-/// Adapted from: https://docs.rs/futures-util/0.3.31/src/futures_util/io/read_line.rs.html#32
+/// Adapted from: <https://docs.rs/futures-util/0.3.31/src/futures_util/io/read_line.rs.html#32>
 fn read_byte_line_internal<R: AsyncBufRead + ?Sized>(
     reader: Pin<&mut R>,
     cx: &mut Context<'_>,
@@ -237,7 +235,7 @@ fn read_byte_line_internal<R: AsyncBufRead + ?Sized>(
     Poll::Ready(ret)
 }
 
-/// https://docs.rs/futures-util/0.3.31/src/futures_util/io/read_until.rs.html#27
+/// <https://docs.rs/futures-util/0.3.31/src/futures_util/io/read_until.rs.html#27>
 fn read_until_internal<R: AsyncBufRead + ?Sized>(
     mut reader: Pin<&mut R>,
     cx: &mut Context<'_>,

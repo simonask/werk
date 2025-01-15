@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn windows_paths_inline() {
-        let input = r#"E:\my-project\test.c: dep1 e:\my-project\test.h"#;
+        let input = r"E:\my-project\test.c: dep1 e:\my-project\test.h";
         let (target, deps) = parse_depfile.parse(input).unwrap();
         assert_eq!(target, "E:\\my-project\\test.c");
         assert_eq!(deps, vec!["dep1", "e:\\my-project\\test.h"]);
@@ -248,8 +248,8 @@ mod tests {
 
     #[test]
     fn windows_paths_newlines() {
-        let input = r#"E:\my-project\test.c: dep1 \
-            e:\my-project\test.h"#;
+        let input = r"E:\my-project\test.c: dep1 \
+            e:\my-project\test.h";
         let (target, deps) = parse_depfile.parse(input).unwrap();
         assert_eq!(target, "E:\\my-project\\test.c");
         assert_eq!(deps, vec!["dep1", "e:\\my-project\\test.h"]);
@@ -265,8 +265,8 @@ mod tests {
 
     #[test]
     fn windows_paths_with_spaces() {
-        let input = r#"E:\my project\test.c: dep1 \
-            e:\my\ project\test.h"#;
+        let input = r"E:\my project\test.c: dep1 \
+            e:\my\ project\test.h";
         let (target, deps) = parse_depfile.parse(input).unwrap();
         assert_eq!(target, "E:\\my project\\test.c");
         assert_eq!(deps, vec!["dep1", "e:\\my project\\test.h"]);
@@ -274,9 +274,9 @@ mod tests {
 
     #[test]
     fn windows_paths_example_c() {
-        let input = r#"E:\werk\examples\c\main.c: E:\werk\examples\c\main.c \
+        let input = r"E:\werk\examples\c\main.c: E:\werk\examples\c\main.c \
   E:\werk\examples\c\foo.h
-  "#;
+  ";
         let (target, deps) = parse_depfile.parse(input).unwrap();
         assert_eq!(target, "E:\\werk\\examples\\c\\main.c");
         assert_eq!(
@@ -290,9 +290,9 @@ mod tests {
 
     #[test]
     fn windows_paths_canonical() {
-        let input = r#"E:\werk\examples\c\main.c: \\?\E:\werk\examples\c\main.c \
+        let input = r"E:\werk\examples\c\main.c: \\?\E:\werk\examples\c\main.c \
   E:\werk\examples\c\foo.h
-  "#;
+  ";
         let (target, deps) = parse_depfile.parse(input).unwrap();
         assert_eq!(target, "E:\\werk\\examples\\c\\main.c");
         assert_eq!(
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn unix_paths_inline() {
-        let input = r#"/my-project/test.c: dep1 /my-project/test.h"#;
+        let input = r"/my-project/test.c: dep1 /my-project/test.h";
         let (target, deps) = parse_depfile.parse(input).unwrap();
         assert_eq!(target, "/my-project/test.c");
         assert_eq!(deps, vec!["dep1", "/my-project/test.h"]);
@@ -314,8 +314,8 @@ mod tests {
 
     #[test]
     fn unix_paths_newlines() {
-        let input = r#"/my-project/test.c: dep1 \
-            /my-project/test.h"#;
+        let input = r"/my-project/test.c: dep1 \
+            /my-project/test.h";
         let (target, deps) = parse_depfile.parse(input).unwrap();
         assert_eq!(target, "/my-project/test.c");
         assert_eq!(deps, vec!["dep1", "/my-project/test.h"]);
@@ -323,8 +323,8 @@ mod tests {
 
     #[test]
     fn unix_paths_with_spaces() {
-        let input = r#"/my project/test.c: dep1 \
-            /my\ project/test.h"#;
+        let input = r"/my project/test.c: dep1 \
+            /my\ project/test.h";
         let (target, deps) = parse_depfile.parse(input).unwrap();
         assert_eq!(target, "/my project/test.c");
         assert_eq!(deps, vec!["dep1", "/my project/test.h"]);
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn relative_paths_inline() {
-        let input = r#"E:\my-project\test.c: dep1 e:\my-project\..\test.h"#;
+        let input = r"E:\my-project\test.c: dep1 e:\my-project\..\test.h";
         let (target, deps) = parse_depfile.parse(input).unwrap();
         assert_eq!(target, "E:\\my-project\\test.c");
         assert_eq!(deps, vec!["dep1", "e:\\my-project\\..\\test.h"]);
@@ -340,7 +340,7 @@ mod tests {
 
     #[test]
     fn windows_paths_slang_flavor() {
-        let input = r#"E\:\\my-project\\shader.spv: E\:\\my-project\\shader.slang"#;
+        let input = r"E\:\\my-project\\shader.spv: E\:\\my-project\\shader.slang";
         let (target, deps) = parse_depfile.parse(input).unwrap();
         assert_eq!(deps, vec!["E:\\my-project\\shader.slang"]);
         assert_eq!(target, "E:\\my-project\\shader.spv");

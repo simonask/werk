@@ -50,6 +50,7 @@ impl Value {
         try_collect_strings_recursive(self, &mut f)
     }
 
+    #[must_use]
     pub fn collect_strings(self) -> Vec<String> {
         let mut strings = Vec::new();
         self.collect_strings_into(&mut strings);
@@ -207,6 +208,7 @@ impl Value {
         recursive_modify(self, &mut f);
     }
 
+    #[must_use]
     pub fn display_friendly(&self, max_width: usize) -> DisplayFriendly {
         DisplayFriendly(self, max_width)
     }
@@ -261,7 +263,7 @@ impl std::fmt::Display for Value {
                     if i != 0 {
                         f.write_str(", ")?;
                     }
-                    write!(f, "{}", item)?;
+                    write!(f, "{item}")?;
                 }
                 f.write_str("]")
             }
@@ -282,11 +284,11 @@ impl std::fmt::Display for DisplayFriendly<'_> {
 
             if escaped_len + 2 <= max_width {
                 // The whole string fits.
-                format!("\"{}\"", escaped)
+                format!("\"{escaped}\"")
             } else if max_width >= 8 {
                 // If we can write at least 3 chars from the string, write 8 chars.
                 let prefix = escaped.chars().take(3).collect::<String>();
-                format!("\"{}...\"", prefix)
+                format!("\"{prefix}...\"")
             } else {
                 String::from("\"...\"")
             }

@@ -89,6 +89,7 @@ impl ShellCommandLine {
 }
 
 impl ShellCommandLine {
+    #[must_use]
     pub fn display(&self) -> impl std::fmt::Display + '_ {
         self
     }
@@ -100,9 +101,9 @@ impl std::fmt::Display for ShellCommandLine {
         for arg in &self.arguments {
             // TODO: Don't escape Unicode sequences, just newlines, control chars, and quotes.
             if arg.contains(char::is_whitespace) {
-                write!(f, " \"{}\"", arg)?;
+                write!(f, " \"{arg}\"")?;
             } else {
-                write!(f, " {}", arg)?;
+                write!(f, " {arg}")?;
             }
         }
         Ok(())
@@ -169,7 +170,7 @@ impl ShellCommandLineBuilder {
             } else if ch == '"' {
                 self.in_quotes = !self.in_quotes;
             } else if ch.is_whitespace() && !self.in_quotes {
-                if !self.parts.last().is_some_and(|s| s.is_empty()) {
+                if !self.parts.last().is_some_and(std::string::String::is_empty) {
                     self.parts.push(String::new());
                 }
             } else {
@@ -269,6 +270,7 @@ pub enum ChildEnv<'a> {
 }
 
 impl<'a> ChildEnv<'a> {
+    #[must_use]
     pub fn vars(&self) -> &'a [(&'a OsStr, &'a OsStr)] {
         match self {
             ChildEnv::Clear(vars) => vars,

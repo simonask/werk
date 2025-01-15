@@ -38,3 +38,6 @@ path = "test_outdatedness.rs"
 [[test]]
 name = "test_cases"
 path = "test_cases.rs"
+
+[lints]
+workspace = true

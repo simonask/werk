@@ -12,7 +12,7 @@ impl<T: SemanticHash> SemanticHash for [T] {
         // unstable.
         state.write_usize(self.len());
 
-        for item in self.iter() {
+        for item in self {
             item.semantic_hash(state);
         }
     }

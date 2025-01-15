@@ -60,7 +60,7 @@ impl<T> Eval<T> {
     where
         T: std::ops::Deref,
     {
-        self.value.deref()
+        &self.value
     }
 }
 
@@ -80,6 +80,7 @@ impl<T: Default> Default for Eval<T> {
 }
 
 impl<T> Eval<&T> {
+    #[must_use]
     pub fn cloned(&self) -> Eval<T>
     where
         T: Clone,
@@ -465,7 +466,7 @@ fn eval_filter(
             }
             Value::String(ref s) => {
                 if pattern.match_whole_string(s).is_some() {
-                    result.push(value)
+                    result.push(value);
                 }
             }
         }
@@ -496,7 +497,7 @@ fn eval_discard(
             }
             Value::String(ref s) => {
                 if pattern.match_whole_string(s).is_none() {
-                    result.push(value)
+                    result.push(value);
                 }
             }
         }
@@ -575,7 +576,7 @@ pub async fn eval_collect_strings<P: Scope>(
     expr: &ast::Expr<'_>,
 ) -> Result<Eval<Vec<String>>, EvalError> {
     let eval = eval(scope, expr)?;
-    Ok(eval.map(|value| value.collect_strings()))
+    Ok(eval.map(super::value::Value::collect_strings))
 }
 
 pub fn eval_pattern_builder<'a, P: Scope + ?Sized>(
@@ -737,7 +738,7 @@ pub(crate) fn eval_run_exprs<S: Scope>(
                 let from_path = werk_fs::PathBuf::new(from.value)
                     .and_then(|path| {
                         path.absolutize(werk_fs::Path::ROOT)
-                            .map(|path| path.into_owned())
+                            .map(std::borrow::Cow::into_owned)
                     })
                     .map_err(|err| EvalError::Path(expr.src.span, err))?;
                 let to_path = werk_fs::Path::new(&to)
@@ -965,16 +966,16 @@ fn eval_string_interpolation_ops(
     for op in ops {
         match op {
             ast::InterpolationOp::ReplaceExtension(from, to) => {
-                recursive_replace_extension(value, from, to)
+                recursive_replace_extension(value, from, to);
             }
             ast::InterpolationOp::PrependEach(prefix) => recursive_prepend_each(value, prefix),
             ast::InterpolationOp::AppendEach(suffix) => recursive_append_each(value, suffix),
             ast::InterpolationOp::RegexReplace(r) => {
-                recursive_regex_replace(value, &r.regex, &r.replacer)
+                recursive_regex_replace(value, &r.regex, &r.replacer);
             }
             ast::InterpolationOp::ResolveOsPath => {
                 if allow_os_paths {
-                    recursive_resolve_path(span, value, werk_fs::Path::ROOT, workspace)?
+                    recursive_resolve_path(span, value, werk_fs::Path::ROOT, workspace)?;
                 } else {
                     return Err(EvalError::JoinInPattern(span));
                 }

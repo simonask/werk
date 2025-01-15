@@ -75,8 +75,8 @@ impl rustc_stable_hash::FromStableHash for Hash128 {
     type Hash = rustc_stable_hash::SipHasher128Hash;
 
     fn from(hash: Self::Hash) -> Self {
-        let hi = (hash.0[0] as u128) << 64;
-        let lo = hash.0[1] as u128;
+        let hi = u128::from(hash.0[0]) << 64;
+        let lo = u128::from(hash.0[1]);
         Hash128(hi | lo)
     }
 }

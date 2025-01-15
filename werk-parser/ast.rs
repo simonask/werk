@@ -28,11 +28,13 @@ pub const fn ws_ignore() -> Whitespace {
     Whitespace(Span::ignore())
 }
 
+#[must_use]
 pub fn kw_ignore<K: token::Keyword>() -> K {
     K::ignore()
 }
 
 #[inline]
+#[must_use]
 pub fn token_ignore<const CHAR: char>() -> token::Token<CHAR> {
     token::Token::ignore()
 }
@@ -45,6 +47,7 @@ pub struct Root<'a> {
 }
 
 impl Root<'_> {
+    #[must_use]
     pub fn find_global(&self, name: &str) -> Option<&LetStmt> {
         self.statements.iter().find_map(|stmt| match stmt {
             BodyStmt {
@@ -55,6 +58,7 @@ impl Root<'_> {
         })
     }
 
+    #[must_use]
     pub fn find_command(&self, name: &str) -> Option<&CommandRecipe> {
         self.statements.iter().find_map(|stmt| match stmt {
             BodyStmt {

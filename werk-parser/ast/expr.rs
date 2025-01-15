@@ -169,6 +169,7 @@ pub enum MatchBody<'a> {
 
 impl<'a> MatchBody<'a> {
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         match self {
             MatchBody::Single(_) => 1,
@@ -177,6 +178,7 @@ impl<'a> MatchBody<'a> {
     }
 
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         match self {
             MatchBody::Single(_) => false,
@@ -184,6 +186,7 @@ impl<'a> MatchBody<'a> {
         }
     }
 
+    #[must_use]
     pub fn iter<'b>(&'b self) -> MatchBodyIter<'a, 'b> {
         match self {
             MatchBody::Single(match_arm) => MatchBodyIter::Single(Some(match_arm)),

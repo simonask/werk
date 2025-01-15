@@ -27,7 +27,7 @@ use crate::{Absolute, Absolutize, IsAbsolute};
 ///   `LPT0`-`LPT9`. These are reserved even true when they have an extension,
 ///   and Windows also considers some superscript digits as equivalent to their
 ///   normal representations, e.g. `COM¹` is also reserved. Read more:
-///   https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file
+///   <https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file>
 /// - Paths cannot end with a separator.
 /// - Path components cannot begin or end with any whitespace character. It
 ///   follows from the previous rule that full paths also cannot begin or end
@@ -94,10 +94,11 @@ impl Path {
     pub const PARENT: &'static Self = Self::new_unchecked("..");
 
     #[inline(always)]
+    #[must_use]
     pub const fn new_unchecked(path: &str) -> &Self {
         unsafe {
             // SAFETY: #[repr(transparent)]
-            &*(path as *const str as *const Self)
+            &*(std::ptr::from_ref::<str>(path) as *const Self)
         }
     }
 
@@ -143,11 +144,13 @@ impl Path {
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.path.len()
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         // Paths are never empty.
         false
@@ -159,21 +162,25 @@ impl Path {
     }
 
     #[inline]
+    #[must_use]
     pub fn is_root(&self) -> bool {
         self == Self::ROOT
     }
 
     #[inline]
+    #[must_use]
     pub fn is_absolute(&self) -> bool {
         self.path.starts_with(Self::SEPARATOR)
     }
 
     #[inline]
+    #[must_use]
     pub fn is_relative(&self) -> bool {
         !self.is_absolute()
     }
 
     #[inline]
+    #[must_use]
     pub fn parent(&self) -> Option<&Path> {
         if self.is_root() {
             return None;
@@ -184,6 +191,7 @@ impl Path {
         Some(Self::new_unchecked(parent))
     }
 
+    #[must_use]
     pub fn is_parent_of(&self, other: &Path) -> bool {
         if self.is_absolute() != other.is_absolute() {
             return false;
@@ -210,11 +218,13 @@ impl Path {
     }
 
     #[inline]
+    #[must_use]
     pub fn ancestors(&self) -> Ancestors {
         Ancestors { path: Some(self) }
     }
 
     #[inline]
+    #[must_use]
     pub fn to_path_buf(&self) -> PathBuf {
         PathBuf {
             path: self.path.to_owned(),
@@ -222,6 +232,7 @@ impl Path {
     }
 
     #[inline]
+    #[must_use]
     pub fn into_path_buf(self: Box<Self>) -> PathBuf {
         unsafe {
             // SAFETY: #[repr(transparent)]
@@ -244,6 +255,7 @@ impl Path {
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.path
     }
@@ -255,6 +267,7 @@ impl Path {
     /// accessing files. The use cases for this function is when reasoning about
     /// the path in some abstract way, e.g. globbing.
     #[inline(always)]
+    #[must_use]
     pub fn as_os_path(&self) -> &std::path::Path {
         std::path::Path::new(&self.path)
     }
@@ -430,11 +443,13 @@ impl Path {
     }
 
     #[inline]
+    #[must_use]
     pub fn components(&self) -> Components {
         Components { path: Some(self) }
     }
 
     #[inline]
+    #[must_use]
     pub fn into_boxed_str(self: Box<Self>) -> Box<str> {
         unsafe {
             // SAFETY: #[repr(transparent)]
@@ -443,6 +458,7 @@ impl Path {
     }
 
     #[inline]
+    #[must_use]
     pub fn from_boxed_str_unchecked(s: Box<str>) -> Box<Self> {
         unsafe {
             // SAFETY: #[repr(transparent)]
@@ -483,7 +499,7 @@ impl Clone for Box<Path> {
     fn clone(&self) -> Self {
         let s: &Box<str> = unsafe {
             // SAFETY: #[repr(transparent)]
-            &*(self as *const Box<Path> as *const Box<str>)
+            &*std::ptr::from_ref::<Box<Path>>(self).cast::<Box<str>>()
         };
         Path::from_boxed_str_unchecked(s.clone())
     }
@@ -519,6 +535,7 @@ pub enum Component<'a> {
 
 impl Component<'_> {
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         match self {
             Component::Root => 1,
@@ -529,6 +546,7 @@ impl Component<'_> {
     }
 
     #[inline(always)]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         // Path components are never empty.
         false
@@ -609,6 +627,7 @@ impl PathBuf {
     }
 
     #[inline]
+    #[must_use]
     pub fn new_unchecked(path: String) -> Self {
         PathBuf { path }
     }
@@ -658,6 +677,7 @@ impl PathBuf {
         }
     }
 
+    #[must_use]
     pub fn into_boxed_path(self) -> Box<Path> {
         let boxed_str = self.path.into_boxed_str();
         unsafe {

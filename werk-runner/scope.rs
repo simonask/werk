@@ -76,6 +76,7 @@ pub enum LookupValue<'a> {
 
 impl LookupValue<'_> {
     #[inline]
+    #[must_use]
     pub fn used(&self) -> &Used {
         match self {
             LookupValue::Owned(value) => &value.used,
@@ -85,6 +86,7 @@ impl LookupValue<'_> {
         }
     }
 
+    #[must_use]
     pub fn into_value(self) -> Value {
         match self {
             LookupValue::Owned(eval) => eval.value,
@@ -94,6 +96,7 @@ impl LookupValue<'_> {
         }
     }
 
+    #[must_use]
     pub fn into_owned(self) -> Eval<Value> {
         match self {
             LookupValue::Owned(eval) => eval,
@@ -145,6 +148,7 @@ impl<'a> RootScope<'a> {
 
 impl<'a> TaskRecipeScope<'a> {
     #[inline]
+    #[must_use]
     pub fn new(root: &'a RootScope<'a>, task_id: &'a TaskId) -> Self {
         Self {
             parent: root,
@@ -157,12 +161,13 @@ impl<'a> TaskRecipeScope<'a> {
         if default_global_constants().contains_key(&name) {
             tracing::warn!("Shadowing built-in constant `{}`", name);
         }
-        self.vars.insert(name.to_owned(), value);
+        self.vars.insert(name, value);
     }
 }
 
 impl<'a> BuildRecipeScope<'a> {
     #[inline]
+    #[must_use]
     pub fn new(
         root: &'a RootScope<'a>,
         task_id: &'a TaskId,
@@ -182,7 +187,7 @@ impl<'a> BuildRecipeScope<'a> {
         if default_global_constants().contains_key(&name) {
             tracing::warn!("Shadowing built-in constant `{}`", name);
         }
-        self.vars.insert(name.to_owned(), value);
+        self.vars.insert(name, value);
     }
 
     pub fn push_input_file(&mut self, name: String) {

@@ -332,10 +332,10 @@ fn match_expr_empty() {
 
     assert_eq!(
         evaluate_global(
-            r#"
+            r"
     let input = [];
     let result = input | match { }
-"#,
+",
             "result"
         ),
         Value::List(vec![])

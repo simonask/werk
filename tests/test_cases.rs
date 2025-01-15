@@ -12,8 +12,8 @@ struct PragmaRegexes {
 impl Default for PragmaRegexes {
     fn default() -> Self {
         Self {
-            file: regex::Regex::new(r#"^#\!file (.*)=(.*)$"#).unwrap(),
-            assert_file: regex::Regex::new(r#"^#\!assert-file (.*)=(.*)$"#).unwrap(),
+            file: regex::Regex::new(r"^#\!file (.*)=(.*)$").unwrap(),
+            assert_file: regex::Regex::new(r"^#\!assert-file (.*)=(.*)$").unwrap(),
         }
     }
 }

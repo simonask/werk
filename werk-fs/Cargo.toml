@@ -10,3 +10,6 @@ path = "lib.rs"
 winnow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+
+[lints]
+workspace = true

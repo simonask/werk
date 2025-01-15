@@ -15,11 +15,13 @@ use werk_runner::{
 };
 
 #[inline]
+#[must_use]
 pub fn make_mtime(secs_since_epoch: u64) -> std::time::SystemTime {
     std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs_since_epoch)
 }
 
 #[inline]
+#[must_use]
 pub fn default_mtime() -> std::time::SystemTime {
     make_mtime(0)
 }
@@ -453,6 +455,7 @@ fn copy_fs(
     insert_fs(fs, to, (entry.metadata, data))
 }
 
+#[must_use]
 pub fn contains_file(fs: &MockDir, path: &std::path::Path) -> bool {
     let path2;
     let path = if !path.is_absolute() {
@@ -806,7 +809,7 @@ impl werk_runner::Io for MockIo {
         let mut results = Vec::new();
         let result = glob(path, workspace, &mut results, &settings.ignore_explicitly);
 
-        result.map(move |_| results)
+        result.map(move |()| results)
     }
 
     fn metadata(&self, path: &Absolute<std::path::Path>) -> Result<Metadata, Error> {
@@ -893,6 +896,7 @@ impl werk_runner::Io for MockIo {
     }
 }
 
+#[must_use]
 pub fn test_workspace_dir() -> &'static Absolute<std::path::Path> {
     if cfg!(windows) {
         Absolute::new_ref_unchecked(std::path::Path::new("c:\\workspace"))
@@ -901,18 +905,22 @@ pub fn test_workspace_dir() -> &'static Absolute<std::path::Path> {
     }
 }
 
+#[must_use]
 pub fn output_dir() -> Absolute<std::path::PathBuf> {
     Absolute::new_unchecked(test_workspace_dir().join("target"))
 }
 
+#[must_use]
 pub fn output_file(filename: &str) -> Absolute<std::path::PathBuf> {
     Absolute::new_unchecked(output_dir().join(filename))
 }
 
+#[must_use]
 pub fn workspace_file(filename: &str) -> Absolute<std::path::PathBuf> {
     Absolute::new_unchecked(test_workspace_dir().join(filename))
 }
 
+#[must_use]
 pub fn workspace_file_str(filename: &str) -> String {
     test_workspace_dir()
         .join(filename)
@@ -920,6 +928,7 @@ pub fn workspace_file_str(filename: &str) -> String {
         .into_owned()
 }
 
+#[must_use]
 pub fn test_workspace_settings(defines: &[(&str, &str)]) -> WorkspaceSettings {
     let mut settings = WorkspaceSettings::new(output_dir());
 
@@ -940,6 +949,7 @@ pub fn test_workspace_settings(defines: &[(&str, &str)]) -> WorkspaceSettings {
     settings
 }
 
+#[must_use]
 pub fn program_path(program: &str) -> Absolute<std::path::PathBuf> {
     if cfg!(windows) {
         Absolute::new_unchecked(std::path::Path::new("c:\\bin").join(program))

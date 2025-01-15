@@ -110,8 +110,7 @@ fn validate_reserved(component: &str) -> Result<(), PathError> {
 
     let stem = component
         .split_once('.')
-        .map(|(stem, _)| stem)
-        .unwrap_or(component);
+        .map_or(component, |(stem, _)| stem);
 
     let len = stem.len();
 
@@ -329,6 +328,6 @@ mod tests {
         );
         assert_eq!(validate_reserved("lpt\u{00B9}æ.txt"), Ok(()));
 
-        assert_eq!(validate_reserved("æø"), Ok(()))
+        assert_eq!(validate_reserved("æø"), Ok(()));
     }
 }

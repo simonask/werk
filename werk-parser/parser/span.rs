@@ -9,6 +9,7 @@ pub struct Span {
 }
 
 impl Span {
+    #[must_use]
     pub const fn ignore() -> Self {
         Self {
             start: Offset::ignore(),
@@ -16,6 +17,7 @@ impl Span {
         }
     }
 
+    #[must_use]
     pub fn from_offset_and_len(offset: Offset, len: usize) -> Self {
         if offset.is_ignored() {
             Self::ignore()
@@ -27,11 +29,13 @@ impl Span {
         }
     }
 
+    #[must_use]
     pub const fn is_ignored(&self) -> bool {
         self.start.is_ignored()
     }
 
     #[inline]
+    #[must_use]
     pub fn merge(self, other: Span) -> Span {
         let min = self.start.0.min(other.start.0);
         let max = self.end.0.max(other.end.0);
@@ -42,6 +46,7 @@ impl Span {
     }
 
     #[inline]
+    #[must_use]
     pub fn within(self, other: Span) -> Span {
         Span {
             start: Offset(self.start.0 + other.start.0),
@@ -49,6 +54,7 @@ impl Span {
         }
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.start == self.end
     }
@@ -98,10 +104,12 @@ impl PartialEq for Offset {
 }
 
 impl Offset {
+    #[must_use]
     pub const fn ignore() -> Self {
         Self(u32::MAX)
     }
 
+    #[must_use]
     pub const fn is_ignored(self) -> bool {
         self.0 == u32::MAX
     }

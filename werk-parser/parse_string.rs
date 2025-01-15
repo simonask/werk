@@ -321,7 +321,7 @@ fn interpolation_options<'a>(
             ops: Vec::new(),
         }),
         (None, Some(ops)) if ops.is_empty() => None,
-        (join, Some(ops)) => Some(ast::InterpolationOptions { join, ops }),
+        (join, Some(ops)) => Some(ast::InterpolationOptions { ops, join }),
     })
 }
 

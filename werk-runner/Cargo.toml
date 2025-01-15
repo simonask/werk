@@ -28,3 +28,6 @@ winnow.workspace = true
 smol.workspace = true
 pin-project-lite = "0.2.16"
 memchr = "2.7.4"
+
+[lints]
+workspace = true

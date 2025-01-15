@@ -42,6 +42,7 @@ impl Outdatedness {
         Self::from_iter(reasons)
     }
 
+    #[must_use]
     pub fn unchanged() -> Self {
         Self {
             reasons: BTreeSet::new(),
@@ -49,6 +50,7 @@ impl Outdatedness {
     }
 
     #[inline]
+    #[must_use]
     pub fn outdated(reason: Reason) -> Self {
         let mut reasons = BTreeSet::new();
         reasons.insert(reason);
@@ -56,11 +58,13 @@ impl Outdatedness {
     }
 
     #[inline]
+    #[must_use]
     pub fn is_unchanged(&self) -> bool {
         self.reasons.is_empty()
     }
 
     #[inline]
+    #[must_use]
     pub fn is_outdated(&self) -> bool {
         !self.reasons.is_empty()
     }
@@ -251,6 +255,7 @@ impl<'a> OutdatednessTracker<'a> {
         self.outdatedness.reasons.extend(reasons);
     }
 
+    #[must_use]
     pub fn finish(mut self) -> (Outdatedness, TargetOutdatednessCache) {
         // Any manual defines that were previously used, but were not used this
         // time, should also contribute to outdatedness.

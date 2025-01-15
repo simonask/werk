@@ -5,6 +5,7 @@ pub trait Keyword: Spanned {
     fn with_span(span: Span) -> Self;
 
     #[inline]
+    #[must_use]
     fn ignore() -> Self
     where
         Self: Sized,
@@ -17,10 +18,12 @@ pub trait Keyword: Spanned {
 pub struct Token<const CHAR: char>(pub Offset);
 impl<const CHAR: char> Token<CHAR> {
     #[inline]
+    #[must_use]
     pub const fn with_span(span: Span) -> Self {
         Self(span.start)
     }
 
+    #[must_use]
     pub const fn ignore() -> Self {
         Self(Offset::ignore())
     }

@@ -19,6 +19,7 @@ impl Used {
     };
 
     #[inline]
+    #[must_use]
     pub const fn none() -> Self {
         Self {
             vars: BTreeSet::new(),

@@ -17,6 +17,12 @@ serde = { version = "1.0.215", features = ["derive"] }
 smol = "2.0.2"
 toml_edit = "0.22.22"
 
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+missing_panics_doc = "allow"
+missing_errors_doc = "allow"
+inline_always = "allow"
+
 [profile.release]
 codegen-units = 1
 lto = true

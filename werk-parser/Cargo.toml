@@ -14,3 +14,6 @@ unicode-ident = "1.0.13"
 winnow.workspace = true
 regex.workspace = true
 annotate-snippets = "0.11.5"
+
+[lints]
+workspace = true

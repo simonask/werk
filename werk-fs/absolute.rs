@@ -125,6 +125,7 @@ impl<P: Sized> Absolute<P> {
 }
 
 impl<P: ?Sized> Absolute<P> {
+    #[must_use]
     pub fn into_boxed_str(self: Box<Self>) -> Box<str>
     where
         P: IntoBoxedStr,
@@ -146,7 +147,7 @@ impl<P: ?Sized> Absolute<P> {
     pub const fn new_ref_unchecked(path: &P) -> &Self {
         unsafe {
             // SAFETY: #[repr(transparent)]
-            &*(path as *const P as *const Absolute<P>)
+            &*(std::ptr::from_ref::<P>(path) as *const Absolute<P>)
         }
     }
 
@@ -190,14 +191,14 @@ impl<P: ?Sized> Absolute<P> {
     where
         P: Deref,
     {
-        Absolute::new_ref_unchecked(self.path.deref())
+        Absolute::new_ref_unchecked(&*self.path)
     }
 
     #[expect(clippy::borrowed_box)]
     fn as_inner_box(self: &Box<Self>) -> &Box<P> {
         unsafe {
             // SAFETY: #[repr(transparent)]
-            &*(self as *const Box<Self> as *const Box<P>)
+            &*std::ptr::from_ref::<Box<Self>>(self).cast::<Box<P>>()
         }
     }
 

@@ -58,6 +58,7 @@ impl From<toml_edit::TomlError> for Error {
 }
 
 impl Error {
+    #[must_use]
     pub fn with_location<'a>(
         self,
         file_name: &'a std::path::Path,
@@ -72,7 +73,7 @@ impl Error {
 
     pub fn span(&self) -> Span {
         match self {
-            Error::Toml(toml_error) => toml_error.span().map(Into::into).unwrap_or(Span::ignore()),
+            Error::Toml(toml_error) => toml_error.span().map_or(Span::ignore(), Into::into),
             Error::Werk(span, _) => *span,
             Error::InvalidKey(span)
             | Error::ExpectedTable(span)
@@ -260,6 +261,7 @@ impl std::fmt::Display for LocatedError<'_, Error> {
 impl std::error::Error for LocatedError<'_, Error> {}
 
 impl LocatedError<'_, Error> {
+    #[must_use]
     pub fn render(&self) -> String {
         self.to_string()
     }
@@ -324,6 +326,7 @@ pub struct ParseError {
 
 impl ParseError {
     #[inline]
+    #[must_use]
     pub fn new(expected: Expected) -> Self {
         Self {
             stack: None,
@@ -332,6 +335,7 @@ impl ParseError {
     }
 
     #[inline]
+    #[must_use]
     pub fn stack(&self) -> &[ErrContext] {
         if let Some(stack) = self.stack.as_deref() {
             stack
