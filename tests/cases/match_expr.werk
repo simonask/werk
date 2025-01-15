@@ -35,6 +35,13 @@ let result = input
     }
     | assert-eq "fallback"
 
+# implicit fallback
+let result = "foo.cpp"
+    | match {
+        "%" => "{}"
+    }
+    | assert-eq "foo.cpp"
+
 # fallback not hit
 let input = "foo.c"
 let result = input

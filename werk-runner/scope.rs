@@ -393,6 +393,7 @@ impl Scope for MatchScope<'_> {
                     group.to_owned(),
                 ))))
             }
+            Lookup::Implied => Some(LookupValue::EvalRef(self.implied_value)),
             _ => self.parent.get(lookup),
         }
     }
