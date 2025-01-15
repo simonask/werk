@@ -66,7 +66,7 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
     }
     std::mem::drop(fs);
 
-    let workspace = test.create_workspace()?;
+    let workspace = test.create_workspace(&[])?;
 
     // Invoke the runner if there is a default target.
     if let Some(ast::ConfigStmt {

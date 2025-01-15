@@ -83,6 +83,8 @@ pub enum PathError {
     InvalidUtf8(u8),
     #[error("cannot resolve a relative path to an OS path from a relative working directory: {0}")]
     ResolveRelative(PathBuf),
+    #[error("path is not absolute")]
+    NotAbsolute,
 }
 
 impl Path {

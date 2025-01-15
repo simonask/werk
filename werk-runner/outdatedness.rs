@@ -212,7 +212,7 @@ impl<'a> OutdatednessTracker<'a> {
                     {
                         self.outdatedness.insert(Reason::Define(def.clone()));
                     }
-                    self.new_cache.env.insert(def.clone(), hash);
+                    self.new_cache.define.insert(def.clone(), hash);
                 }
                 UsedVariable::WorkspaceFile(path, mtime) => {
                     if let Some(target_mtime) = self.target_mtime {

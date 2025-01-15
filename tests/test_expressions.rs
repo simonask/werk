@@ -185,39 +185,19 @@ fn parse_as_expected() -> anyhow::Result<()> {
 fn expressions() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
     let toml = toml_edit::ImDocument::parse(EXPRESSIONS_TOML)?;
-    let ast = werk_parser::parse_toml("input".as_ref(), &EXPRESSIONS_TOML, &toml)
-        .map_err(|err| err.to_string())
-        .map_err(anyhow::Error::msg)?;
-    let watcher = Arc::new(MockWatcher::default());
-    let io = Arc::new(
-        MockIo::default()
-            .with_program("clang", program_path("clang"), |_cmdline, _fs| {
-                Ok(std::process::Output {
-                    status: std::process::ExitStatus::default(),
-                    stdout: Vec::from(b"clang output"),
-                    stderr: vec![],
-                })
+    let test = Test::new_toml(&toml)?;
+    test.io
+        .set_program("clang", program_path("clang"), |_cmdline, _fs| {
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::default(),
+                stdout: Vec::from(b"clang output"),
+                stderr: vec![],
             })
-            .with_workspace_files([(
-                "main.c",
-                (
-                    Metadata {
-                        mtime: std::time::SystemTime::now(),
-                        is_file: true,
-                        is_symlink: false,
-                    },
-                    Vec::from(b"int main() { return 0; }\n"),
-                ),
-            )])
-            .with_envs([("PROFILE", "debug")]),
-    );
-    let workspace = werk_runner::Workspace::new(
-        &ast,
-        &*io,
-        &*watcher,
-        test_workspace_dir().to_path_buf(),
-        &test_workspace_settings(),
-    )?;
+        });
+    test.io
+        .set_workspace_file("main.c", b"int main() { return 0; }\n");
+    test.io.set_env("PROFILE", "debug");
+    let workspace = test.create_workspace(&[])?;
 
     let globals = &workspace.manifest.globals;
     assert_eq!(globals["source-files"].value.value, ["/main.c"]);
@@ -235,33 +215,9 @@ fn expressions() -> anyhow::Result<()> {
 #[test]
 fn fail_which() -> anyhow::Result<()> {
     let toml = toml_edit::ImDocument::parse(EXPRESSIONS_TOML)?;
-    let ast = werk_parser::parse_toml("input".as_ref(), &EXPRESSIONS_TOML, &toml)
-        .map_err(|err| err.to_string())
-        .map_err(anyhow::Error::msg)?;
-    let watcher = Arc::new(MockWatcher::default());
-    let io = Arc::new(
-        MockIo::default()
-            .with_program_removed("clang")
-            .with_workspace_files([(
-                "main.c",
-                (
-                    Metadata {
-                        mtime: std::time::SystemTime::now(),
-                        is_file: true,
-                        is_symlink: false,
-                    },
-                    Vec::from(b"int main() { return 0; }\n"),
-                ),
-            )])
-            .with_envs([("PROFILE", "debug")]),
-    );
-    let workspace = werk_runner::Workspace::new(
-        &ast,
-        &*io,
-        &*watcher,
-        test_workspace_dir().to_path_buf(),
-        &test_workspace_settings(),
-    );
+    let test = Test::new_toml(&toml)?;
+    test.io.remove_program("clang");
+    let workspace = test.create_workspace(&[]);
     let Err(err) = workspace else {
         panic!("expected error")
     };
@@ -283,39 +239,17 @@ fn fail_which() -> anyhow::Result<()> {
 #[test]
 fn fail_custom_err() -> anyhow::Result<()> {
     let toml = toml_edit::ImDocument::parse(EXPRESSIONS_TOML)?;
-    let ast = werk_parser::parse_toml("input".as_ref(), &EXPRESSIONS_TOML, &toml)
-        .map_err(|err| err.to_string())
-        .map_err(anyhow::Error::msg)?;
-    let watcher = Arc::new(MockWatcher::default());
-    let io = Arc::new(
-        MockIo::default()
-            .with_program("clang", program_path("clang"), |_cmdline, _fs| {
-                Ok(std::process::Output {
-                    status: std::process::ExitStatus::default(),
-                    stdout: Vec::from(b"clang output"),
-                    stderr: vec![],
-                })
+    let test = Test::new_toml(&toml)?;
+    test.io
+        .set_program("clang", program_path("clang"), |_cmdline, _fs| {
+            Ok(std::process::Output {
+                status: std::process::ExitStatus::default(),
+                stdout: Vec::from(b"clang output"),
+                stderr: vec![],
             })
-            .with_workspace_files([(
-                "main.c",
-                (
-                    Metadata {
-                        mtime: std::time::SystemTime::now(),
-                        is_file: true,
-                        is_symlink: false,
-                    },
-                    Vec::from(b"int main() { return 0; }\n"),
-                ),
-            )])
-            .with_envs([("PROFILE", "nonexistent profile")]),
-    );
-    let workspace = werk_runner::Workspace::new(
-        &ast,
-        &*io,
-        &*watcher,
-        test_workspace_dir().to_path_buf(),
-        &test_workspace_settings(),
-    );
+        });
+    test.io.set_env("PROFILE", "nonexistent profile");
+    let workspace = test.create_workspace(&[]);
     let Err(err) = workspace else {
         panic!("expected error")
     };
@@ -343,7 +277,7 @@ fn evaluate_global(source: &str, global_variable_name_to_check: &str) -> Value {
         &*io,
         &*watcher,
         test_workspace_dir().to_path_buf(),
-        &test_workspace_settings(),
+        &test_workspace_settings(&[]),
     )
     .unwrap();
     workspace

@@ -28,7 +28,6 @@ pub struct Test<'a> {
     pub io: Arc<MockIo>,
     pub watcher: Arc<MockWatcher>,
     pub ast: werk_parser::Document<'a>,
-    pub settings: werk_runner::WorkspaceSettings,
 }
 
 impl<'a> Test<'a> {
@@ -38,8 +37,12 @@ impl<'a> Test<'a> {
             io: Arc::new(MockIo::default().with_default_workspace_dir()),
             watcher: Arc::new(MockWatcher::default()),
             ast,
-            settings: test_workspace_settings(),
         })
+    }
+
+    pub fn reload(&mut self, werk_source: &'a str) -> Result<(), werk_parser::Error> {
+        self.ast = werk_parser::parse_werk(werk_source)?;
+        Ok(())
     }
 
     pub fn new_toml(toml: &'a toml_edit::ImDocument<&'a str>) -> Result<Self, werk_parser::Error> {
@@ -49,7 +52,6 @@ impl<'a> Test<'a> {
             io: Arc::new(MockIo::default().with_default_workspace_dir()),
             watcher: Arc::new(MockWatcher::default()),
             ast,
-            settings: test_workspace_settings(),
         })
     }
 
@@ -63,13 +65,16 @@ impl<'a> Test<'a> {
         Ok(())
     }
 
-    pub fn create_workspace(&self) -> Result<werk_runner::Workspace<'_>, werk_runner::Error> {
+    pub fn create_workspace(
+        &self,
+        defines: &[(&str, &str)],
+    ) -> Result<werk_runner::Workspace<'_>, werk_runner::Error> {
         werk_runner::Workspace::new(
             &self.ast,
             &*self.io,
             &*self.watcher,
             test_workspace_dir().to_path_buf(),
-            &test_workspace_settings(),
+            &test_workspace_settings(defines),
         )
     }
 }
@@ -645,6 +650,10 @@ impl MockIo {
             .iter()
             .any(|op| matches!(op, MockIoOp::ReadEnv(n) if n == name))
     }
+
+    pub fn contains_file(&self, path: impl AsRef<std::path::Path>) -> bool {
+        contains_file(&*self.filesystem.lock(), path.as_ref())
+    }
 }
 
 struct MockChild {
@@ -920,8 +929,11 @@ pub fn workspace_file_str(filename: &str) -> String {
         .into_owned()
 }
 
-pub fn test_workspace_settings() -> WorkspaceSettings {
+pub fn test_workspace_settings(defines: &[(&str, &str)]) -> WorkspaceSettings {
     let mut settings = WorkspaceSettings::new(output_dir());
+
+    // Normally this would be covered by `.gitignore`, but we don't have that,
+    // so just use a manual ignore pattern.
     let ignore_pattern = output_file("**");
     settings.ignore_explicitly(
         globset::GlobSet::builder()
@@ -929,6 +941,11 @@ pub fn test_workspace_settings() -> WorkspaceSettings {
             .build()
             .unwrap(),
     );
+
+    for (key, value) in defines {
+        settings.define(*key, *value);
+    }
+
     settings
 }
 

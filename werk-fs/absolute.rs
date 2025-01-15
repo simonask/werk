@@ -286,6 +286,23 @@ impl ToOwned for Absolute<crate::Path> {
     }
 }
 
+impl From<Absolute<crate::PathBuf>> for Box<Absolute<crate::Path>> {
+    #[inline]
+    fn from(value: Absolute<crate::PathBuf>) -> Self {
+        value.into_boxed_path()
+    }
+}
+
+impl TryFrom<&str> for Absolute<crate::PathBuf> {
+    type Error = crate::PathError;
+
+    #[inline]
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        crate::PathBuf::try_from(value)
+            .and_then(|path| Absolute::try_new(path).map_err(|_| crate::PathError::NotAbsolute))
+    }
+}
+
 impl AsRef<std::path::Path> for Absolute<std::path::PathBuf> {
     #[inline]
     fn as_ref(&self) -> &std::path::Path {
