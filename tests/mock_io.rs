@@ -177,15 +177,12 @@ pub enum MockDirEntry {
     Dir(MockDir),
 }
 
+pub type Program = Box<dyn FnMut(&ShellCommandLine, &mut MockDir) -> ProgramResult + Send>;
+
 pub struct MockIo {
     pub filesystem: Mutex<MockDir>,
     pub which: Mutex<HashMap<String, Absolute<std::path::PathBuf>>>,
-    pub programs: Mutex<
-        HashMap<
-            Absolute<std::path::PathBuf>,
-            Box<dyn FnMut(&ShellCommandLine, &mut MockDir) -> ProgramResult + Send>,
-        >,
-    >,
+    pub programs: Mutex<HashMap<Absolute<std::path::PathBuf>, Program>>,
     pub env: Mutex<HashMap<String, String>>,
     pub oplog: Mutex<Vec<MockIoOp>>,
     pub now: AtomicU64,
@@ -477,12 +474,7 @@ impl MockIo {
 
     pub fn with_programs<I>(self, iter: I) -> Self
     where
-        I: IntoIterator<
-            Item = (
-                String,
-                Box<dyn FnMut(&ShellCommandLine, &mut MockDir) -> ProgramResult + Send>,
-            ),
-        >,
+        I: IntoIterator<Item = (String, Program)>,
     {
         let mut programs = self.programs.lock();
         for (program, fun) in iter {
@@ -659,8 +651,7 @@ impl MockIo {
 struct MockChild {
     stdout: Option<Pin<Box<futures::io::Cursor<Vec<u8>>>>>,
     stderr: Option<Pin<Box<futures::io::Cursor<Vec<u8>>>>>,
-    status:
-        Option<Pin<Box<futures::future::Ready<Result<std::process::ExitStatus, std::io::Error>>>>>,
+    status: Option<Pin<Box<futures::future::Ready<std::io::Result<std::process::ExitStatus>>>>>,
 }
 
 impl werk_runner::Child for MockChild {

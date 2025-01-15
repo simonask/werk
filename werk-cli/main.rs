@@ -137,7 +137,7 @@ fn main() -> Result<(), Error> {
         Some(Some(ref directive)) => tracing_subscriber::fmt::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::new(directive))
             .init(),
-        Some(None) => tracing_subscriber::fmt::fmt()
+        Some(_) => tracing_subscriber::fmt::fmt()
             .with_env_filter("werk=info,werk_runner=info")
             .init(),
         _ => (),

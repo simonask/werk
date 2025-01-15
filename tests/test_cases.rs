@@ -37,33 +37,33 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
         .lines();
     let regexes = regexes();
     let mut check_files = Vec::new();
-    let mut fs = test.io.filesystem.lock();
-    for line in trailing_whitespace {
-        if let Some(captures) = regexes.file.captures(line) {
-            let filename = captures.get(1).unwrap().as_str();
-            let content = captures.get(2).unwrap().as_str();
-            let path = workspace_file(filename);
-            println!("INSERTING FILE {} with contents {content}", path.display());
-            insert_fs(
-                &mut fs,
-                &path,
-                (
-                    Metadata {
-                        mtime: default_mtime(),
-                        is_file: true,
-                        is_symlink: false,
-                    },
-                    content.as_bytes().to_owned(),
-                ),
-            )
-            .unwrap();
-        } else if let Some(captures) = regexes.assert_file.captures(line) {
-            let filename = captures.get(1).unwrap().as_str();
-            let content = captures.get(2).unwrap().as_str();
-            check_files.push((filename, content.as_bytes()));
+    {
+        let mut fs = test.io.filesystem.lock();
+        for line in trailing_whitespace {
+            if let Some(captures) = regexes.file.captures(line) {
+                let filename = captures.get(1).unwrap().as_str();
+                let content = captures.get(2).unwrap().as_str();
+                let path = workspace_file(filename);
+                insert_fs(
+                    &mut fs,
+                    &path,
+                    (
+                        Metadata {
+                            mtime: default_mtime(),
+                            is_file: true,
+                            is_symlink: false,
+                        },
+                        content.as_bytes().to_owned(),
+                    ),
+                )
+                .unwrap();
+            } else if let Some(captures) = regexes.assert_file.captures(line) {
+                let filename = captures.get(1).unwrap().as_str();
+                let content = captures.get(2).unwrap().as_str();
+                check_files.push((filename, content.as_bytes()));
+            }
         }
     }
-    std::mem::drop(fs);
 
     let workspace = test.create_workspace(&[])?;
 
