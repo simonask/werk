@@ -1,5 +1,4 @@
 use std::{
-    future::Future,
     path::{Path, PathBuf},
     time::SystemTime,
 };

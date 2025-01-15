@@ -877,6 +877,19 @@ fn parse_command_recipe<'a>(
         });
     }
 
+    if let Some(capture) = capture {
+        stmts.push(ast::BodyStmt {
+            ws_pre: ws_ignore(),
+            statement: ast::TaskRecipeStmt::SetCapture(ast::KwExpr {
+                span,
+                token: kw_ignore(),
+                ws_1: ws_ignore(),
+                param: ast::ConfigBool(Span::ignore(), capture),
+            }),
+            ws_trailing: None,
+        });
+    }
+
     stmts.extend(command.into_iter().map(|value| ast::BodyStmt {
         ws_pre: ws_ignore(),
         statement: ast::TaskRecipeStmt::Run(ast::RunStmt {

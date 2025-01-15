@@ -1,7 +1,6 @@
 use std::sync::OnceLock;
 
 use tests::mock_io::*;
-use toml_edit::de;
 use werk_parser::ast;
 use werk_runner::{Metadata, Runner};
 

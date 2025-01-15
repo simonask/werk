@@ -1,35 +1,5 @@
 use super::PathError;
 
-pub fn validate_ext(extension: &str) -> Result<(), PathError> {
-    let mut chars = extension.chars();
-    let Some(mut current) = chars.next() else {
-        return Ok(());
-    };
-    if current.is_whitespace() {
-        return Err(PathError::StartsWithWhitespace);
-    }
-
-    loop {
-        validate_char(current)?;
-        if current == '/' {
-            return Err(PathError::SeparatorInExtension);
-        }
-
-        let next = chars.next();
-        if let Some(next) = next {
-            current = next;
-        } else {
-            if current.is_whitespace() {
-                return Err(PathError::EndsWithWhitespace);
-            } else if current == '.' {
-                return Err(PathError::EndsWithDot);
-            }
-
-            return Ok(());
-        }
-    }
-}
-
 pub fn validate(path: &str) -> Result<(), PathError> {
     if path.is_empty() {
         return Err(PathError::Empty);

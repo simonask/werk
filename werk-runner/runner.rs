@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin, sync::Arc, time::SystemTime};
+use std::{future::Future, sync::Arc, time::SystemTime};
 
 use futures::{channel::oneshot, StreamExt};
 use indexmap::{map::Entry, IndexMap};
@@ -716,11 +716,11 @@ impl<'a> Inner<'a> {
                 RunCommand::SetCapture(value) => {
                     capture = value;
                 }
-                RunCommand::SetEnv(key, value) => {
-                    todo!()
+                RunCommand::SetEnv(_key, _value) => {
+                    unimplemented!("set-env not implemented yet")
                 }
-                RunCommand::RemoveEnv(key) => {
-                    todo!()
+                RunCommand::RemoveEnv(_key) => {
+                    unimplemented!("remove-env not implemented yet")
                 }
             }
         }
@@ -728,35 +728,23 @@ impl<'a> Inner<'a> {
         Ok(())
     }
 
-    fn build_dependencies(
+    async fn build_dependencies(
         self: &Arc<Self>,
         mut dependencies: Vec<TaskSpec<'a>>,
         dependent: DepChainEntry<'_>,
         output_mtime: Option<SystemTime>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Reason>, Error>> + Send + 'a>> {
-        if dependencies.len() == 1 {
-            // Boxing because of recursion.
-            let dependency = dependencies.pop().unwrap();
-            let parent = dependent.collect();
-            let this = self.clone();
-            return Box::pin(async move {
-                this.run_task(dependency, DepChain::Owned(&parent))
-                    .await
-                    .map(|status| {
-                        status
-                            .into_outdated_reason(output_mtime)
-                            .into_iter()
-                            .collect()
-                    })
-            });
-        } else if !dependencies.is_empty() {
-            let parent = dependent.collect();
-            let this = self.clone();
-
-            return Box::pin(async move {
+    ) -> Result<Vec<Reason>, Error> {
+        // Can't use raw `async fn` because of https://github.com/rust-lang/rust/issues/134101.
+        fn build_multiple<'a>(
+            this: Arc<Inner<'a>>,
+            dependencies: Vec<TaskSpec<'a>>,
+            dependent: OwnedDependencyChain,
+            output_mtime: Option<SystemTime>,
+        ) -> impl Future<Output = Result<Vec<Reason>, Error>> + Send + 'a {
+            async move {
                 let mut tasks = Vec::with_capacity(dependencies.len());
                 for dep in dependencies {
-                    let parent = parent.clone();
+                    let parent = dependent.clone();
                     let this2 = this.clone();
                     let task = this
                         .executor
@@ -784,9 +772,38 @@ impl<'a> Inner<'a> {
                 } else {
                     Ok(reasons)
                 }
-            });
+            }
+        }
+
+        if dependencies.len() == 1 {
+            let dependency = dependencies.pop().unwrap();
+            let this = self.clone();
+            // Boxing because of recursion.
+            Box::pin(async move {
+                this.run_task(dependency, DepChain::Ref(&dependent))
+                    .await
+                    .map(|status| {
+                        status
+                            .into_outdated_reason(output_mtime)
+                            .into_iter()
+                            .collect()
+                    })
+            })
+            .await
+        } else if !dependencies.is_empty() {
+            let parent = dependent.collect();
+            let this = self.clone();
+
+            // Boxing for recursion.
+            Box::pin(build_multiple(
+                this.clone(),
+                dependencies,
+                parent,
+                output_mtime,
+            ))
+            .await
         } else {
-            return Box::pin(futures::future::ready(Ok(vec![])));
+            Ok(vec![])
         }
     }
 
@@ -823,6 +840,7 @@ impl<'a> Inner<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[expect(dead_code)]
 pub(crate) enum RunCommand {
     Shell(ShellCommandLine),
     Write(Absolute<std::path::PathBuf>, Vec<u8>),

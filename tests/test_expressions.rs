@@ -6,7 +6,7 @@ use werk_parser::{
     parser::Span,
     TomlParseError,
 };
-use werk_runner::{Metadata, Value, WhichError};
+use werk_runner::{Value, WhichError};
 
 use tests::mock_io::*;
 
@@ -195,7 +195,8 @@ fn expressions() -> anyhow::Result<()> {
             })
         });
     test.io
-        .set_workspace_file("main.c", b"int main() { return 0; }\n");
+        .set_workspace_file("main.c", b"int main() { return 0; }\n")
+        .unwrap();
     test.io.set_env("PROFILE", "debug");
     let workspace = test.create_workspace(&[])?;
 
