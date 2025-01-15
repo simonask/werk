@@ -39,9 +39,13 @@ impl<T> Eval<T> {
     }
 
     pub fn using_var(value: T, used: UsedVariable) -> Self {
+        Self::using_vars(value, [used])
+    }
+
+    pub fn using_vars(value: T, used: impl IntoIterator<Item = UsedVariable>) -> Self {
         Self {
             value,
-            used: Used::from_iter(Some(used)),
+            used: Used::from_iter(used),
         }
     }
 

@@ -42,6 +42,9 @@ pub enum UsedVariable {
     Which(String, Hash128),
     Env(String, Hash128),
     Define(String, Hash128),
+    /// Used a global variable. The hash is the hash of the expression (not the
+    /// value itself).
+    Global(String, Hash128),
     WorkspaceFile(werk_fs::Absolute<werk_fs::PathBuf>, std::time::SystemTime),
 }
 

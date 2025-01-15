@@ -22,7 +22,9 @@ pub enum Reason {
     Env(String),
     /// The resolved path of a binary executable changed between runs.
     Which(String),
-    /// Recipe changed.
+    /// The constant value of a global variable changed between runs.
+    GlobalChanged(String),
+    /// Recipe changed between runs.
     RecipeChanged,
     /// Manual define changed.
     Define(String),
@@ -126,6 +128,7 @@ impl std::fmt::Display for Reason {
             Reason::Env(env) => write!(f, "environment variable `{env}` changed"),
             Reason::Which(program) => write!(f, "resolved path of `{program}` changed"),
             Reason::RecipeChanged => f.write_str("recipe changed"),
+            Reason::GlobalChanged(variable) => write!(f, "global variable `{variable}` changed"),
             Reason::Define(define) => write!(f, "variable `{define}` was manually overridden"),
             Reason::Rebuilt(task_id) => {
                 if task_id.is_command() {
@@ -165,6 +168,7 @@ impl<'a> OutdatednessTracker<'a> {
             which: Default::default(),
             env: Default::default(),
             define: Default::default(),
+            global: Default::default(),
         };
 
         Self {
@@ -213,6 +217,15 @@ impl<'a> OutdatednessTracker<'a> {
                         self.outdatedness.insert(Reason::Define(def.clone()));
                     }
                     self.new_cache.define.insert(def.clone(), hash);
+                }
+                UsedVariable::Global(var, hash) => {
+                    if self
+                        .cache
+                        .is_some_and(|cache| cache.is_global_outdated(&var, hash))
+                    {
+                        self.outdatedness.insert(Reason::GlobalChanged(var.clone()));
+                    }
+                    self.new_cache.global.insert(var.clone(), hash);
                 }
                 UsedVariable::WorkspaceFile(path, mtime) => {
                     if let Some(target_mtime) = self.target_mtime {

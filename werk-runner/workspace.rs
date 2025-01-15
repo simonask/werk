@@ -208,6 +208,7 @@ impl<'a> Workspace<'a> {
                     continue;
                 }
                 ast::RootStmt::Let(ref let_stmt) => {
+                    let hash = compute_stable_semantic_hash(&let_stmt.value);
                     if let Some(global_override) = self.defines.get(let_stmt.ident.ident) {
                         tracing::trace!(
                             "Overriding global variable `{}` with `{}`",
@@ -217,19 +218,25 @@ impl<'a> Workspace<'a> {
                         self.manifest.globals.insert(
                             let_stmt.ident.ident.to_owned(),
                             GlobalVar {
-                                value: Eval::using_var(
+                                value: Eval::using_vars(
                                     global_override.clone().into(),
-                                    UsedVariable::Define(
-                                        let_stmt.ident.ident.to_owned(),
-                                        compute_stable_hash(global_override),
-                                    ),
+                                    [
+                                        UsedVariable::Global(let_stmt.ident.ident.to_owned(), hash),
+                                        UsedVariable::Define(
+                                            let_stmt.ident.ident.to_owned(),
+                                            compute_stable_hash(global_override),
+                                        ),
+                                    ],
                                 ),
                                 comment: doc_comment,
                             },
                         );
                     } else {
                         let scope = RootScope::new(self);
-                        let value = eval::eval(&scope, &let_stmt.value)?;
+                        let mut value = eval::eval(&scope, &let_stmt.value)?;
+                        value
+                            .used
+                            .insert(UsedVariable::Global(let_stmt.ident.ident.to_owned(), hash));
                         tracing::trace!("(global) let `{}` = {:?}", let_stmt.ident, value);
                         self.manifest.globals.insert(
                             let_stmt.ident.ident.to_owned(),

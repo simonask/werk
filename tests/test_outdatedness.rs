@@ -43,6 +43,27 @@ build "glob-dep" {
 }
 "#;
 
+static WERK_GLOBAL: &str = r#"
+let arg = "a"
+
+build "output" {
+    run {
+        write arg to "{out}"
+    }
+}
+"#;
+
+static WERK_GLOBAL_CHANGED: &str = r#"
+let args = ["b"]
+let arg = "{args*}"
+
+build "output" {
+    run {
+        write arg to "{out}"
+    }
+}
+"#;
+
 #[apply(smol_macros::test)]
 async fn test_outdated_env() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
@@ -408,6 +429,44 @@ async fn test_outdated_define() -> anyhow::Result<()> {
         BuildStatus::Complete(
             TaskId::build(Absolute::try_from("/env-dep").unwrap()),
             Outdatedness::unchanged()
+        )
+    );
+
+    Ok(())
+}
+
+#[apply(smol_macros::test)]
+async fn test_outdated_global_constant() -> anyhow::Result<()> {
+    _ = tracing_subscriber::fmt::try_init();
+
+    let mut test = Test::new(WERK_GLOBAL)?;
+    let workspace = test.create_workspace(&[])?;
+    let runner = werk_runner::Runner::new(&workspace);
+    let status = runner.build_file(Path::new("output")?).await?;
+
+    assert_eq!(
+        status,
+        BuildStatus::Complete(
+            TaskId::build(Absolute::try_from("/output").unwrap()),
+            Outdatedness::new([Reason::Missing(PathBuf::try_from("/output")?),])
+        )
+    );
+    workspace.finalize().await?;
+    std::mem::drop(runner);
+
+    test.reload(WERK_GLOBAL_CHANGED)?;
+    let workspace = test.create_workspace(&[])?;
+    let runner = werk_runner::Runner::new(&workspace);
+    let status = runner.build_file(Path::new("output")?).await?;
+
+    assert_eq!(
+        status,
+        BuildStatus::Complete(
+            TaskId::build(Absolute::try_from("/output").unwrap()),
+            Outdatedness::new([
+                Reason::GlobalChanged(String::from("arg")),
+                Reason::GlobalChanged(String::from("args"))
+            ])
         )
     );
 

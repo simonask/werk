@@ -21,6 +21,9 @@ pub struct TargetOutdatednessCache {
     /// Hash of environment variables.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, Hash128>,
+    /// Hash of the definitions (AST expressions) of global variables used.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub global: BTreeMap<String, Hash128>,
     /// Hash of `define` variables.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub define: BTreeMap<String, Hash128>,
@@ -57,6 +60,13 @@ impl TargetOutdatednessCache {
     pub fn is_define_outdated(&self, define: &str, new_hash: Hash128) -> bool {
         self.define
             .get(define)
+            .map_or(true, |old_hash| *old_hash != new_hash)
+    }
+
+    #[inline]
+    pub fn is_global_outdated(&self, var: &str, new_hash: Hash128) -> bool {
+        self.global
+            .get(var)
             .map_or(true, |old_hash| *old_hash != new_hash)
     }
 }
