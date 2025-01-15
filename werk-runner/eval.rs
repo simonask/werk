@@ -56,15 +56,17 @@ impl<T> Eval<T> {
         }
     }
 
-    pub fn as_ref(&self) -> &T {
-        &self.value
-    }
-
     pub fn as_deref(&self) -> &T::Target
     where
         T: std::ops::Deref,
     {
         self.value.deref()
+    }
+}
+
+impl<T> AsRef<T> for Eval<T> {
+    fn as_ref(&self) -> &T {
+        &self.value
     }
 }
 
@@ -123,10 +125,10 @@ impl<T> std::ops::DerefMut for Eval<T> {
 
 pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, EvalError> {
     match expr {
-        ast::Expr::StringExpr(expr) => Ok(eval_string_expr(scope, expr)?.map(Value::String).into()),
-        ast::Expr::Shell(expr) => Ok(eval_shell(scope, &expr.param)?.map(Value::String).into()),
-        ast::Expr::Read(expr) => Ok(eval_read(scope, &expr.param)?.map(Value::String).into()),
-        ast::Expr::Glob(expr) => Ok(eval_glob(scope, expr)?.map(Value::List).into()),
+        ast::Expr::StringExpr(expr) => Ok(eval_string_expr(scope, expr)?.map(Value::String)),
+        ast::Expr::Shell(expr) => Ok(eval_shell(scope, &expr.param)?.map(Value::String)),
+        ast::Expr::Read(expr) => Ok(eval_read(scope, &expr.param)?.map(Value::String)),
+        ast::Expr::Glob(expr) => Ok(eval_glob(scope, expr)?.map(Value::List)),
         ast::Expr::Which(expr) => {
             let Eval {
                 value: string,
@@ -156,8 +158,7 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             Ok(Eval {
                 value: Value::String(which),
                 used,
-            }
-            .into())
+            })
         }
         ast::Expr::Env(expr) => {
             let Eval {
@@ -169,8 +170,7 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             Ok(Eval {
                 value: Value::String(env),
                 used,
-            }
-            .into())
+            })
         }
         ast::Expr::List(list_expr) => {
             let mut items = Vec::with_capacity(list_expr.items.len());
@@ -183,15 +183,14 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             Ok(Eval {
                 value: Value::List(items),
                 used,
-            }
-            .into())
+            })
         }
         ast::Expr::Ident(ident) => scope
-            .get(Lookup::Ident(&ident.ident))
+            .get(Lookup::Ident(ident.ident))
             .ok_or_else(|| EvalError::NoSuchIdentifier(ident.span, ident.ident.to_owned()))
             .map(LookupValue::into_owned),
         ast::Expr::Chain(chain) => {
-            let mut value = eval(scope, &*chain.head)?;
+            let mut value = eval(scope, &chain.head)?;
             for entry in &chain.tail {
                 value = eval_op(scope, &entry.expr, value)?;
             }
@@ -457,16 +456,11 @@ fn eval_filter(
     let pattern = eval_pattern(scope, &expr.param)?;
     let used = param.used | pattern.used;
 
-    fn eval_filter_recursive(
-        scope: &dyn Scope,
-        pattern: &Pattern,
-        value: Value,
-        result: &mut Vec<Value>,
-    ) {
+    fn eval_filter_recursive(pattern: &Pattern, value: Value, result: &mut Vec<Value>) {
         match value {
             Value::List(vec) => {
                 for item in vec {
-                    eval_filter_recursive(scope, pattern, item, result);
+                    eval_filter_recursive(pattern, item, result);
                 }
             }
             Value::String(ref s) => {
@@ -478,7 +472,7 @@ fn eval_filter(
     }
 
     let mut result = Vec::new();
-    eval_filter_recursive(scope, &pattern.value, param.value, &mut result);
+    eval_filter_recursive(&pattern.value, param.value, &mut result);
     Ok(Eval {
         value: Value::List(result),
         used,
@@ -493,20 +487,15 @@ fn eval_discard(
     let pattern = eval_pattern(scope, &expr.param)?;
     let used = param.used | pattern.used;
 
-    fn eval_discard_recursive(
-        scope: &dyn Scope,
-        pattern: &Pattern,
-        value: Value,
-        result: &mut Vec<Value>,
-    ) {
+    fn eval_discard_recursive(pattern: &Pattern, value: Value, result: &mut Vec<Value>) {
         match value {
             Value::List(vec) => {
                 for item in vec {
-                    eval_discard_recursive(scope, pattern, item, result);
+                    eval_discard_recursive(pattern, item, result);
                 }
             }
             Value::String(ref s) => {
-                if !pattern.match_whole_string(s).is_some() {
+                if pattern.match_whole_string(s).is_none() {
                     result.push(value)
                 }
             }
@@ -514,7 +503,7 @@ fn eval_discard(
     }
 
     let mut result = Vec::new();
-    eval_discard_recursive(scope, &pattern.value, param.value, &mut result);
+    eval_discard_recursive(&pattern.value, param.value, &mut result);
     Ok(Eval {
         value: Value::List(result),
         used,
@@ -604,7 +593,7 @@ pub fn eval_pattern_builder<'a, P: Scope + ?Sized>(
             ast::PatternFragment::OneOf(one_of) => pattern_builder.push_one_of(one_of.clone()),
             ast::PatternFragment::Interpolation(interp) => {
                 if let ast::InterpolationStem::PatternCapture = interp.stem {
-                    return Err(EvalError::PatternStemInterpolationInPattern(expr.span).into());
+                    return Err(EvalError::PatternStemInterpolationInPattern(expr.span));
                 }
 
                 let value = eval_string_interpolation_stem(scope, expr.span, &interp.stem)?;
@@ -613,7 +602,7 @@ pub fn eval_pattern_builder<'a, P: Scope + ?Sized>(
                 let mut value_owned;
                 let value = if let Some(ref options) = interp.options {
                     if options.join.is_some() {
-                        return Err(EvalError::JoinInPattern(expr.span).into());
+                        return Err(EvalError::JoinInPattern(expr.span));
                     }
 
                     value_owned = value.into_value();
@@ -634,10 +623,10 @@ pub fn eval_pattern_builder<'a, P: Scope + ?Sized>(
                 // be outdated.
                 match value {
                     Value::String(string) => {
-                        pattern_builder.push_str(&string);
+                        pattern_builder.push_str(string);
                     }
                     Value::List(_) => {
-                        return Err(EvalError::ListInPattern(expr.span).into());
+                        return Err(EvalError::ListInPattern(expr.span));
                     }
                 }
             }
@@ -698,7 +687,7 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
                         }
                     }
                     Value::String(value) => {
-                        s.push_str(&value);
+                        s.push_str(value);
                     }
                 }
             }
@@ -769,13 +758,13 @@ pub(crate) fn eval_run_exprs<S: Scope>(
             ast::RunExpr::Info(expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;
                 *used |= message.used;
-                commands.push(RunCommand::Info(message.value.into()));
+                commands.push(RunCommand::Info(message.value));
             }
             ast::RunExpr::Warn(expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;
                 *used |= message.used;
                 // TODO: Specific warn command.
-                commands.push(RunCommand::Info(message.value.into()));
+                commands.push(RunCommand::Info(message.value));
             }
             ast::RunExpr::List(exprs) => {
                 for expr in &exprs.items {
@@ -848,14 +837,14 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
                         }
                         // When no join operator is present take the first element of the list.
                         None => {
-                            let Some(s) = find_first_string(&list) else {
+                            let Some(s) = find_first_string(list) else {
                                 return Err(EvalError::EmptyList(expr.span));
                             };
                             builder.push_arg(s);
                         }
                     },
                     Value::String(s) => {
-                        builder.push_str(&s);
+                        builder.push_str(s);
                     }
                 }
             }
@@ -894,12 +883,10 @@ fn eval_shell_commands_into<S: Scope>(
             cmds.push(command.value);
             Ok(command.used)
         }
-        ast::Expr::Read(_) => return Err(EvalError::UnexpectedExpressionType(span, "read").into()),
-        ast::Expr::Glob(_) => return Err(EvalError::UnexpectedExpressionType(span, "glob").into()),
-        ast::Expr::Which(_) => {
-            return Err(EvalError::UnexpectedExpressionType(span, "which").into())
-        }
-        ast::Expr::Env(_) => return Err(EvalError::UnexpectedExpressionType(span, "env").into()),
+        ast::Expr::Read(_) => Err(EvalError::UnexpectedExpressionType(span, "read").into()),
+        ast::Expr::Glob(_) => Err(EvalError::UnexpectedExpressionType(span, "glob").into()),
+        ast::Expr::Which(_) => Err(EvalError::UnexpectedExpressionType(span, "which").into()),
+        ast::Expr::Env(_) => Err(EvalError::UnexpectedExpressionType(span, "env").into()),
         ast::Expr::List(list) => {
             let mut used = Used::none();
             for item in &list.items {
@@ -907,20 +894,16 @@ fn eval_shell_commands_into<S: Scope>(
             }
             Ok(used)
         }
-        ast::Expr::Ident(_) => {
-            return Err(EvalError::UnexpectedExpressionType(
-                span,
-                "identifiers cannot be used when building commands",
-            )
-            .into())
-        }
-        ast::Expr::Chain(_) => {
-            return Err(EvalError::UnexpectedExpressionType(
-                span,
-                "chain expressions cannot be used to build commands",
-            )
-            .into())
-        }
+        ast::Expr::Ident(_) => Err(EvalError::UnexpectedExpressionType(
+            span,
+            "identifiers cannot be used when building commands",
+        )
+        .into()),
+        ast::Expr::Chain(_) => Err(EvalError::UnexpectedExpressionType(
+            span,
+            "chain expressions cannot be used to build commands",
+        )
+        .into()),
         ast::Expr::Error(expr) => {
             let message = eval_string_expr(scope, &expr.param)?;
             Err(EvalError::ErrorExpression(expr.span, message.value).into())
@@ -1040,7 +1023,7 @@ pub fn eval_shell<P: Scope + ?Sized>(
         ));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout.trim_ascii());
+    let stdout = String::from_utf8_lossy(output.stdout.trim_ascii());
     Ok(Eval {
         value: stdout.into_owned(),
         used: command.used,
@@ -1057,7 +1040,7 @@ pub fn eval_read<P: Scope + ?Sized>(
 
     let path = werk_fs::Path::new(&path).map_err(path_err)?;
     let path = path.absolutize(werk_fs::Path::ROOT).map_err(path_err)?;
-    let Some(fs_entry) = scope.workspace().get_project_file(&*path) else {
+    let Some(fs_entry) = scope.workspace().get_project_file(&path) else {
         return Err(EvalError::Io(
             expr.span,
             std::io::Error::new(
@@ -1252,7 +1235,7 @@ fn eval_assert_eq(
     param: Eval<Value>,
 ) -> Result<Eval<Value>, EvalError> {
     let scope = SubexprScope::new(scope, &param);
-    let rhs = eval(&scope, &*expr.param)?;
+    let rhs = eval(&scope, &expr.param)?;
     let used = param.used | rhs.used;
     if param.value != rhs.value {
         return Err(EvalError::AssertionFailed(
@@ -1272,7 +1255,7 @@ fn eval_assert_match(
     param: Eval<Value>,
 ) -> Result<Eval<Value>, EvalError> {
     let scope = SubexprScope::new(scope, &param);
-    let pattern = eval_pattern(&scope, &*expr.param)?;
+    let pattern = eval_pattern(&scope, &expr.param)?;
     let used = param.used | pattern.used;
 
     fn get_mismatch<'a>(pattern: &Pattern, value: &'a Value) -> Option<&'a String> {
@@ -1342,7 +1325,7 @@ fn recursive_resolve_path(
     workspace: &Workspace,
 ) -> Result<(), EvalError> {
     value.try_recursive_modify(|string| {
-        let path = werk_fs::Path::new(&string)?;
+        let path = werk_fs::Path::new(string)?;
         let path = path.absolutize(working_dir)?;
         let path = workspace.resolve_path(&path)?;
         match path.to_str() {

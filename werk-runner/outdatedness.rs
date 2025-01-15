@@ -255,9 +255,9 @@ impl<'a> OutdatednessTracker<'a> {
         // Any manual defines that were previously used, but were not used this
         // time, should also contribute to outdatedness.
         if let Some(cache) = self.cache {
-            for (def, _) in &cache.define {
-                if !self.new_cache.define.contains_key(def) {
-                    self.outdatedness.insert(Reason::Define(def.clone()));
+            for key in cache.define.keys() {
+                if !self.new_cache.define.contains_key(key) {
+                    self.outdatedness.insert(Reason::Define(key.clone()));
                 }
             }
         }

@@ -155,7 +155,7 @@ pub struct ListItem<E> {
     pub ws_trailing: Option<(Whitespace, token::Comma)>,
 }
 
-impl<'a, E: SemanticHash> SemanticHash for ListItem<E> {
+impl<E: SemanticHash> SemanticHash for ListItem<E> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.item.semantic_hash(state);
     }
@@ -173,6 +173,14 @@ impl<'a> MatchBody<'a> {
         match self {
             MatchBody::Single(_) => 1,
             MatchBody::Braced(body) => body.statements.len(),
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        match self {
+            MatchBody::Single(_) => false,
+            MatchBody::Braced(body) => body.statements.is_empty(),
         }
     }
 
@@ -209,7 +217,7 @@ impl SemanticHash for MatchBody<'_> {
                 // Hash the single arm as a slice such that a body `{ ... }`
                 // with a single arm is not different from an unbraced single
                 // match arm.
-                (&[match_arm]).semantic_hash(state);
+                [match_arm].semantic_hash(state);
             }
             MatchBody::Braced(body) => body.statements.as_slice().semantic_hash(state),
         }

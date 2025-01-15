@@ -28,7 +28,7 @@ pub type Input<'a> = winnow::stream::Located<&'a str>;
 pub type PError = crate::error::ParseError;
 pub type PResult<T> = winnow::PResult<T, PError>;
 
-pub fn parse_werk<'a>(source_code: &'a str) -> Result<crate::Document<'a>, crate::Error> {
+pub fn parse_werk(source_code: &str) -> Result<crate::Document<'_>, crate::Error> {
     let root = root
         .parse(Input::new(source_code))
         .map_err(|err| crate::Error::Werk(span(err.offset()..err.offset()), err.into_inner()))?;
@@ -85,11 +85,8 @@ where
         let mut last_decor = whitespace_parsed.parse_next(input)?;
 
         loop {
-            match terminal.parse_next(input) {
-                Ok(close) => {
-                    return Ok((open, accum, last_decor.into_whitespace(), close));
-                }
-                Err(_) => (),
+            if let Ok(close) = terminal.parse_next(input) {
+                return Ok((open, accum, last_decor.into_whitespace(), close));
             }
 
             if !has_separator {
@@ -683,17 +680,14 @@ where
         let mut end_of_last_item = input.checkpoint();
 
         loop {
-            match token.parse_next(input) {
-                Ok(token_close) => {
-                    return Ok(ast::ListExpr {
-                        span: token_open.span().merge(token_close.span()),
-                        token_open,
-                        items: accum,
-                        ws_trailing: last_decor,
-                        token_close,
-                    });
-                }
-                Err(_) => (),
+            if let Ok(token_close) = token.parse_next(input) {
+                return Ok(ast::ListExpr {
+                    span: token_open.span().merge(token_close.span()),
+                    token_open,
+                    items: accum,
+                    ws_trailing: last_decor,
+                    token_close,
+                });
             }
 
             if !has_separator {
@@ -745,8 +739,8 @@ fn identifier<'a>(input: &mut Input<'a>) -> PResult<ast::Ident<'a>> {
         }
 
         (
-            take_while(1, |ch| is_identifier_start(ch)),
-            take_while(0.., |ch| is_identifier_continue(ch)),
+            take_while(1, is_identifier_start),
+            take_while(0.., is_identifier_continue),
         )
             .context(Expected::Expected(&"identifier"))
             .take()
@@ -778,7 +772,7 @@ fn token<const CHAR: char>(input: &mut Input) -> PResult<ast::token::Token<CHAR>
 }
 
 fn escaped_string<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
-    fn escaped_string_char<'a>(input: &mut Input<'a>) -> PResult<()> {
+    fn escaped_string_char(input: &mut Input<'_>) -> PResult<()> {
         alt((none_of(['\\', '\"']).value(()), ('\\', any).value(()))).parse_next(input)
     }
 
@@ -890,10 +884,10 @@ pub(crate) trait TokenParserExt<'a, I, O, E>: winnow::Parser<I, O, E> {
     }
 }
 
-impl<'a, I, O, E, T> TokenParserExt<'a, I, O, E> for T where T: winnow::Parser<I, O, E> {}
+impl<I, O, E, T> TokenParserExt<'_, I, O, E> for T where T: winnow::Parser<I, O, E> {}
 
 pub(crate) struct SpannedTokenParser<P, I, O, E>(P, PhantomData<(I, O, E)>);
-impl<'a, I, P, O, E> winnow::Parser<I, (O, Span), E> for SpannedTokenParser<P, I, O, E>
+impl<I, P, O, E> winnow::Parser<I, (O, Span), E> for SpannedTokenParser<P, I, O, E>
 where
     P: winnow::Parser<I, O, E>,
     I: winnow::stream::Location,
@@ -908,7 +902,7 @@ where
 }
 
 pub(crate) struct TokenSpanParser<P, I, O, E>(P, std::marker::PhantomData<(I, O, E)>);
-impl<'a, I, P, O, E> winnow::Parser<I, Span, E> for TokenSpanParser<P, I, O, E>
+impl<I, P, O, E> winnow::Parser<I, Span, E> for TokenSpanParser<P, I, O, E>
 where
     P: winnow::Parser<I, O, E>,
     I: winnow::stream::Location,

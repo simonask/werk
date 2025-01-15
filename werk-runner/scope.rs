@@ -356,7 +356,7 @@ impl Scope for SubexprScope<'_> {
     #[inline]
     fn get<'b>(&'b self, lookup: Lookup<'_>) -> Option<LookupValue<'b>> {
         match lookup {
-            Lookup::Implied => Some(LookupValue::EvalRef(&self.implied_value)),
+            Lookup::Implied => Some(LookupValue::EvalRef(self.implied_value)),
             _ => self.parent.get(lookup),
         }
     }

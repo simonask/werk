@@ -83,30 +83,30 @@ const fn validate_char(ch: char) -> Result<(), PathError> {
     // Must be a printable char.
     match ch {
         // C0 control characters
-        '\0'..='\x1F' | '\x7F' => return Err(PathError::IllegalChar(ch)),
+        '\0'..='\x1F' | '\x7F' => Err(PathError::IllegalChar(ch)),
         // C1 control characters
-        '\u{80}'..='\u{9F}' => return Err(PathError::IllegalChar(ch)),
+        '\u{80}'..='\u{9F}' => Err(PathError::IllegalChar(ch)),
         // Specially disallowed
-        '\\' | ':' => return Err(PathError::IllegalChar(ch)),
+        '\\' | ':' => Err(PathError::IllegalChar(ch)),
         _ => Ok(()),
     }
 }
 
 /// Validate whether a path component is a reserved Windows filename (ignoring its extension, if any).
 fn validate_reserved(component: &str) -> Result<(), PathError> {
-    const CON: &'static str = "CON";
-    const PRN: &'static str = "PRN";
-    const AUX: &'static str = "AUX";
-    const NUL: &'static str = "NUL";
-    const COM: &'static str = "COM";
-    const LPT: &'static str = "LPT";
+    const CON: &str = "CON";
+    const PRN: &str = "PRN";
+    const AUX: &str = "AUX";
+    const NUL: &str = "NUL";
+    const COM: &str = "COM";
+    const LPT: &str = "LPT";
 
-    const CON_BYTES: &'static [u8; 3] = b"CON";
-    const PRN_BYTES: &'static [u8; 3] = b"PRN";
-    const AUX_BYTES: &'static [u8; 3] = b"AUX";
-    const NUL_BYTES: &'static [u8; 3] = b"NUL";
-    const COM_BYTES: &'static [u8; 3] = b"COM";
-    const LPT_BYTES: &'static [u8; 3] = b"LPT";
+    const CON_BYTES: &[u8; 3] = b"CON";
+    const PRN_BYTES: &[u8; 3] = b"PRN";
+    const AUX_BYTES: &[u8; 3] = b"AUX";
+    const NUL_BYTES: &[u8; 3] = b"NUL";
+    const COM_BYTES: &[u8; 3] = b"COM";
+    const LPT_BYTES: &[u8; 3] = b"LPT";
 
     let stem = component
         .split_once('.')
@@ -116,7 +116,7 @@ fn validate_reserved(component: &str) -> Result<(), PathError> {
     let len = stem.len();
 
     // Fast exit for trivially good paths.
-    if len < 3 || len > 5 {
+    if !(3..=5).contains(&len) {
         return Ok(());
     }
     let stem_bytes = stem.as_bytes();
@@ -140,16 +140,13 @@ fn validate_reserved(component: &str) -> Result<(), PathError> {
 
 const fn is_superscript_digit(s: &str) -> bool {
     let b = s.as_bytes();
-    match b {
-        [0xc2, 0xb9 | 0xb2 | 0xb3] => true,
-        _ => false,
-    }
+    matches!(b, [0xc2, 0xb9 | 0xb2 | 0xb3])
 }
 
 const fn is_ascii_digit(s: &str) -> bool {
     s.len() == 1 && {
         let b = s.as_bytes()[0];
-        matches!(b, b'0'..=b'9')
+        b.is_ascii_digit()
     }
 }
 

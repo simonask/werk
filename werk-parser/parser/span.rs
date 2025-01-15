@@ -2,7 +2,7 @@ use std::hash::Hash;
 
 use crate::SemanticHash;
 
-#[derive(Clone, Copy, Default, Hash)]
+#[derive(Clone, Copy, Default)]
 pub struct Span {
     pub start: Offset,
     pub end: Offset,
@@ -76,7 +76,7 @@ impl std::fmt::Debug for Span {
     }
 }
 
-#[derive(Clone, Copy, Default, Hash)]
+#[derive(Clone, Copy, Default)]
 pub struct Offset(pub u32);
 
 impl std::fmt::Debug for Offset {

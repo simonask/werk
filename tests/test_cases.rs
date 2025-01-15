@@ -45,7 +45,7 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
             let path = workspace_file(filename);
             println!("INSERTING FILE {} with contents {content}", path.display());
             insert_fs(
-                &mut *fs,
+                &mut fs,
                 &path,
                 (
                     Metadata {

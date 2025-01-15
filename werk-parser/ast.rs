@@ -44,7 +44,7 @@ pub struct Root<'a> {
     pub ws_trailing: Whitespace,
 }
 
-impl<'a> Root<'a> {
+impl Root<'_> {
     pub fn find_global(&self, name: &str) -> Option<&LetStmt> {
         self.statements.iter().find_map(|stmt| match stmt {
             BodyStmt {
@@ -122,7 +122,7 @@ impl std::fmt::Debug for Ident<'_> {
 impl std::fmt::Display for Ident<'_> {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.ident)
+        f.write_str(self.ident)
     }
 }
 
@@ -370,7 +370,7 @@ pub struct CopyExpr<'a> {
     pub dest: StringExpr<'a>,
 }
 
-impl<'a> SemanticHash for CopyExpr<'a> {
+impl SemanticHash for CopyExpr<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.src.semantic_hash(state);
         self.dest.semantic_hash(state);
@@ -389,7 +389,7 @@ pub struct WriteExpr<'a> {
     pub path: Expr<'a>,
 }
 
-impl<'a> SemanticHash for WriteExpr<'a> {
+impl SemanticHash for WriteExpr<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.path.semantic_hash(state);
         self.value.semantic_hash(state);

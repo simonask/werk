@@ -126,7 +126,7 @@ impl<'a> Workspace<'a> {
         project_root: Absolute<std::path::PathBuf>,
         settings: &WorkspaceSettings,
     ) -> Result<Self, Error> {
-        let werk_cache = read_workspace_cache(&*io, settings.output_directory.as_deref());
+        let werk_cache = read_workspace_cache(io, settings.output_directory.as_deref());
 
         let mut workspace_files =
             IndexMap::with_capacity_and_hasher(1024, ahash::RandomState::default());
@@ -281,7 +281,7 @@ impl<'a> Workspace<'a> {
         }
 
         // Warn about defines set on the command-line that have no effect.
-        for (key, _) in &self.defines {
+        for key in self.defines.keys() {
             if !self.manifest.globals.contains_key(key) {
                 self.watcher.warning(None, &format!("Unused define: {key}"));
             }
@@ -292,13 +292,13 @@ impl<'a> Workspace<'a> {
 
     #[inline]
     pub fn io(&self) -> &dyn Io {
-        &*self.io
+        self.io
     }
 
     /// Write outdatedness cache (`which` and `glob`)  to "<out-dir>/.werk-cache".
     pub async fn finalize(&self) -> std::io::Result<()> {
         let cache = self.werk_cache.lock();
-        write_workspace_cache(&*self.io, self.output_directory.as_deref(), &*cache)
+        write_workspace_cache(self.io, self.output_directory.as_deref(), &cache)
     }
 
     #[inline]

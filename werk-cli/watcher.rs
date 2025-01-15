@@ -156,9 +156,9 @@ impl AutoStreamKind {
             ColorChoice::Always => {
                 if let Some(false) = anstyle_query::windows::enable_ansi_colors() {
                     tracing::warn!("Failed to enable virtual terminal processing");
-                    return AutoStreamKind::Strip;
+                    AutoStreamKind::Strip
                 } else {
-                    return AutoStreamKind::Ansi;
+                    AutoStreamKind::Ansi
                 }
             }
             ColorChoice::Never => AutoStreamKind::Strip,
@@ -227,7 +227,7 @@ pub struct StdioLock<'a> {
     settings: &'a OutputSettings,
 }
 
-impl<'a> StdioLock<'a> {
+impl StdioLock<'_> {
     pub fn start_advanced_rendering(&mut self) {
         if self.stdout.advanced_rendering() {
             queue!(
@@ -293,14 +293,13 @@ impl<'a> StdioLock<'a> {
 
             // Write the name of the last task in the map.
             let mut width_written = 20;
-            let mut tasks_written = 0;
             let max_width = 100;
 
             for (index, (id, _)) in inner.current_tasks.iter().enumerate() {
                 if width_written > max_width {
                     let num_remaining = inner.current_tasks.len() - (index + 1);
                     if num_remaining > 0 {
-                        if tasks_written > 0 {
+                        if index > 0 {
                             _ = write!(buffer, " + {} more", num_remaining);
                         } else {
                             _ = write!(buffer, "{} recipes", num_remaining);
@@ -316,13 +315,12 @@ impl<'a> StdioLock<'a> {
 
                 let short_name = id.short_name();
                 buffer.push_str(short_name);
-                tasks_written += 1;
                 // Note: Overaccounts for Unicode characters. Probably fine for now.
                 width_written += short_name.len();
             }
 
             _ = queue!(&mut self.stdout, MoveToColumn(0));
-            _ = self.stdout.write_all(buffer.as_bytes()).unwrap();
+            self.stdout.write_all(buffer.as_bytes()).unwrap();
             _ = queue!(&mut self.stdout, Clear(ClearType::UntilNewLine));
             _ = self.stdout.flush();
         }

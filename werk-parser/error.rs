@@ -13,7 +13,7 @@ use crate::{
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    Toml(#[from] toml_edit::TomlError),
+    Toml(Box<toml_edit::TomlError>),
     #[error("{1}")]
     Werk(Span, ParseError),
     #[error("invalid key")]
@@ -48,6 +48,13 @@ pub enum Error {
     InvalidPatternExpr(Span, TomlParseError),
     #[error("unknown config key")]
     UnknownConfigKey(Span),
+}
+
+impl From<toml_edit::TomlError> for Error {
+    #[inline]
+    fn from(value: toml_edit::TomlError) -> Self {
+        Self::Toml(Box::new(value))
+    }
 }
 
 impl Error {
@@ -94,7 +101,7 @@ pub struct LocatedError<'a, E> {
     pub error: E,
 }
 
-impl<'a> std::fmt::Display for LocatedError<'a, Error> {
+impl std::fmt::Display for LocatedError<'_, Error> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use annotate_snippets::{Level, Snippet};
 
@@ -112,17 +119,17 @@ impl<'a> std::fmt::Display for LocatedError<'a, Error> {
                 if let Some(span) = toml_error.span() {
                     error_string = toml_error.to_string();
                     Level::Error.title("error parsing TOML").snippet(
-                        make_snippet().annotation(Level::Error.span(span).label(&*error_string)),
+                        make_snippet().annotation(Level::Error.span(span).label(&error_string)),
                     )
                 } else {
                     error_string = format!("error parsing TOML: {toml_error}");
-                    Level::Error.title(&*error_string)
+                    Level::Error.title(&error_string)
                 }
             }
             Error::Werk(span, ref werk_error) => {
                 error_string = werk_error.to_string();
                 Level::Error.title("error parsing werk file").snippet(
-                    make_snippet().annotation(Level::Error.span(span.into()).label(&*error_string)),
+                    make_snippet().annotation(Level::Error.span(span.into()).label(&error_string)),
                 )
             }
             Error::InvalidKey(span) => Level::Error.title("invalid key").snippet(
@@ -160,7 +167,7 @@ impl<'a> std::fmt::Display for LocatedError<'a, Error> {
             ),
             Error::ExpectedKey(span, expected) => {
                 error_string = format!("expected key `{expected}` in table expression");
-                Level::Error.title(&*error_string).snippet(
+                Level::Error.title(&error_string).snippet(
                     make_snippet().annotation(
                         Level::Error
                             .span(span.into())
@@ -173,7 +180,7 @@ impl<'a> std::fmt::Display for LocatedError<'a, Error> {
                     "expression table must contain a root expression: {}",
                     ExprType::all_strs().join(", ")
                 );
-                Level::Error.title(&*error_string).snippet(
+                Level::Error.title(&error_string).snippet(
                     make_snippet().annotation(
                         Level::Error
                             .span(span.into())
@@ -223,19 +230,19 @@ impl<'a> std::fmt::Display for LocatedError<'a, Error> {
             Error::InvalidIdent(span, ref err) => {
                 error_string = err.to_string();
                 Level::Error.title("invalid identifier").snippet(
-                    make_snippet().annotation(Level::Error.span(span.into()).label(&*error_string)),
+                    make_snippet().annotation(Level::Error.span(span.into()).label(&error_string)),
                 )
             }
             Error::InvalidStringExpr(span, ref err) => {
                 error_string = err.to_string();
                 Level::Error.title("invalid string expression").snippet(
-                    make_snippet().annotation(Level::Error.span(span.into()).label(&*error_string)),
+                    make_snippet().annotation(Level::Error.span(span.into()).label(&error_string)),
                 )
             }
             Error::InvalidPatternExpr(span, ref err) => {
                 error_string = err.to_string();
                 Level::Error.title("invalid pattern expression").snippet(
-                    make_snippet().annotation(Level::Error.span(span.into()).label(&*error_string)),
+                    make_snippet().annotation(Level::Error.span(span.into()).label(&error_string)),
                 )
             }
             Error::UnknownConfigKey(span) => Level::Error.title("unknown config key").snippet(
@@ -250,15 +257,15 @@ impl<'a> std::fmt::Display for LocatedError<'a, Error> {
     }
 }
 
-impl<'a> std::error::Error for LocatedError<'a, Error> {}
+impl std::error::Error for LocatedError<'_, Error> {}
 
-impl<'a> LocatedError<'a, Error> {
+impl LocatedError<'_, Error> {
     pub fn render(&self) -> String {
         self.to_string()
     }
 }
 
-impl<'a, E> std::ops::Deref for LocatedError<'a, E> {
+impl<E> std::ops::Deref for LocatedError<'_, E> {
     type Target = E;
 
     fn deref(&self) -> &Self::Target {
@@ -326,8 +333,8 @@ impl ParseError {
 
     #[inline]
     pub fn stack(&self) -> &[ErrContext] {
-        if let Some(ref stack) = self.stack {
-            &*stack
+        if let Some(stack) = self.stack.as_deref() {
+            stack
         } else {
             &[]
         }

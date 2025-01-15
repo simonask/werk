@@ -99,11 +99,11 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     assert!(test.io.did_write_file(".werk-cache"));
 
     assert!(contains_file(
-        &*test.io.filesystem.lock(),
+        &test.io.filesystem.lock(),
         &output_file(".werk-cache")
     ));
     assert!(contains_file(
-        &*test.io.filesystem.lock(),
+        &test.io.filesystem.lock(),
         &output_file("env-dep")
     ));
 
@@ -164,7 +164,7 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     assert!(test.io.did_write_file(".werk-cache"));
 
     assert!(contains_file(
-        &*test.io.filesystem.lock(),
+        &test.io.filesystem.lock(),
         &output_file(".werk-cache")
     ));
 
@@ -243,7 +243,7 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     assert!(test.io.did_write_file(".werk-cache"));
 
     assert!(contains_file(
-        &*test.io.filesystem.lock(),
+        &test.io.filesystem.lock(),
         &output_file(".werk-cache"),
     ));
 
@@ -391,11 +391,11 @@ async fn test_outdated_define() -> anyhow::Result<()> {
     workspace.finalize().await.unwrap();
     assert!(test.io.did_write_file(".werk-cache"));
     assert!(contains_file(
-        &*test.io.filesystem.lock(),
+        &test.io.filesystem.lock(),
         &output_file(".werk-cache")
     ));
     assert!(contains_file(
-        &*test.io.filesystem.lock(),
+        &test.io.filesystem.lock(),
         &output_file("env-dep")
     ));
 

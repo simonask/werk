@@ -141,12 +141,13 @@ impl TryFrom<std::fs::Metadata> for Metadata {
     }
 }
 
+#[derive(Default)]
 pub struct RealSystem(());
 
 impl RealSystem {
     #[inline]
     pub fn new() -> Self {
-        Self(())
+        Self::default()
     }
 }
 
@@ -243,7 +244,7 @@ impl Io for RealSystem {
         struct Builder<'s>(&'s Mutex<Result<Vec<DirEntry>, Error>>);
         impl<'s> ignore::ParallelVisitorBuilder<'s> for Builder<'s> {
             fn build(&mut self) -> Box<dyn ignore::ParallelVisitor + 's> {
-                Box::new(Visitor(Ok(Vec::new()), &self.0))
+                Box::new(Visitor(Ok(Vec::new()), self.0))
             }
         }
 
@@ -251,7 +252,7 @@ impl Io for RealSystem {
             Result<Vec<DirEntry>, Error>,
             &'s Mutex<Result<Vec<DirEntry>, Error>>,
         );
-        impl<'s> ignore::ParallelVisitor for Visitor<'s> {
+        impl ignore::ParallelVisitor for Visitor<'_> {
             fn visit(&mut self, entry: Result<ignore::DirEntry, ignore::Error>) -> WalkState {
                 let Ok(ref mut entries) = self.0 else {
                     // Already errored.
@@ -270,7 +271,7 @@ impl Io for RealSystem {
                 }
             }
         }
-        impl<'s> Drop for Visitor<'s> {
+        impl Drop for Visitor<'_> {
             fn drop(&mut self) {
                 let mut results = self.1.lock();
                 let Ok(ref mut entries) = &mut *results else {
@@ -313,7 +314,7 @@ impl Io for RealSystem {
     fn create_parent_dirs(&self, path: &Absolute<Path>) -> Result<(), std::io::Error> {
         let parent = path.parent().unwrap();
         let did_exist = parent.is_dir();
-        std::fs::create_dir_all(&parent)?;
+        std::fs::create_dir_all(parent)?;
         if !did_exist {
             tracing::info!("Created directory: {}", parent.display());
         }

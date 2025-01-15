@@ -282,13 +282,13 @@ impl std::fmt::Display for RunExprType {
     }
 }
 
-fn find_main_expr_type<'a, T: toml_edit::TableLike + ?Sized>(
+fn find_main_expr_type<T: toml_edit::TableLike + ?Sized>(
     span: Span,
-    table: &'a T,
-) -> Result<(SpannedValue<ExprType>, &'a toml_edit::Item), Error> {
+    table: &T,
+) -> Result<(SpannedValue<ExprType>, &toml_edit::Item), Error> {
     let mut found = None;
     let mut iter = table.iter();
-    while let Some((key, item)) = iter.next() {
+    for (key, item) in iter.by_ref() {
         if let Some(ty) = ExprType::from_str(key) {
             let key_span = table.key(key).and_then(|key| key.span());
             found = Some((SpannedValue::new(key_span, ty), item));
@@ -300,8 +300,8 @@ fn find_main_expr_type<'a, T: toml_edit::TableLike + ?Sized>(
         return Err(Error::ExpectedMainExpression(span));
     };
 
-    while let Some((tail, _)) = iter.next() {
-        if let Some(duplicate) = ExprType::from_str(&tail) {
+    for (tail, _) in iter {
+        if let Some(duplicate) = ExprType::from_str(tail) {
             let key_span = table.key(tail).and_then(|key| key.span());
             return Err(Error::AmbiguousMainExpression(
                 found.0,
@@ -313,13 +313,13 @@ fn find_main_expr_type<'a, T: toml_edit::TableLike + ?Sized>(
     Ok(found)
 }
 
-fn find_main_run_expr_type<'a, T: toml_edit::TableLike + ?Sized>(
+fn find_main_run_expr_type<T: toml_edit::TableLike + ?Sized>(
     span: Span,
-    table: &'a T,
-) -> Result<(SpannedValue<RunExprType>, &'a toml_edit::Item), Error> {
+    table: &T,
+) -> Result<(SpannedValue<RunExprType>, &toml_edit::Item), Error> {
     let mut found = None;
     let mut iter = table.iter();
-    while let Some((key, item)) = iter.next() {
+    for (key, item) in iter.by_ref() {
         if let Some(ty) = RunExprType::from_str(key) {
             let key_span = table.key(key).and_then(|key| key.span());
             found = Some((SpannedValue::new(key_span, ty), item));
@@ -331,8 +331,8 @@ fn find_main_run_expr_type<'a, T: toml_edit::TableLike + ?Sized>(
         return Err(Error::ExpectedMainExpression(span));
     };
 
-    while let Some((tail, _)) = iter.next() {
-        if let Some(duplicate) = RunExprType::from_str(&tail) {
+    for (tail, _) in iter {
+        if let Some(duplicate) = RunExprType::from_str(tail) {
             let key_span = table.key(tail).and_then(|key| key.span());
             return Err(Error::AmbiguousRunExpression(
                 found.0,
@@ -633,7 +633,7 @@ fn parse_item_expr(toml: &toml_edit::Item) -> Result<ast::Expr, Error> {
     }
 }
 
-fn get_item_decor<'a>(toml: &'a toml_edit::Item) -> &'a str {
+fn get_item_decor(toml: &toml_edit::Item) -> &str {
     let prefix = match toml {
         toml_edit::Item::None | toml_edit::Item::ArrayOfTables(_) => {
             return "";
@@ -645,15 +645,13 @@ fn get_item_decor<'a>(toml: &'a toml_edit::Item) -> &'a str {
     prefix.and_then(|decor| decor.as_str()).unwrap_or_default()
 }
 
-fn parse_commented_item_expr<'a>(
-    toml: &'a toml_edit::Item,
-) -> Result<(&'a str, ast::Expr<'a>), Error> {
+fn parse_commented_item_expr(toml: &toml_edit::Item) -> Result<(&str, ast::Expr<'_>), Error> {
     let pre = get_item_decor(toml);
     let expr = parse_item_expr(toml)?;
     Ok((pre, expr))
 }
 
-fn parse_item_run_expr<'a>(toml: &'a toml_edit::Item) -> Result<Vec<ast::RunExpr<'a>>, Error> {
+fn parse_item_run_expr(toml: &toml_edit::Item) -> Result<Vec<ast::RunExpr<'_>>, Error> {
     let mut vec = Vec::new();
     parse_item_run_exprs_into(toml, &mut vec)?;
     Ok(vec)
@@ -664,7 +662,7 @@ fn parse_item_run_exprs_into<'a>(
     exprs: &mut Vec<ast::RunExpr<'a>>,
 ) -> Result<(), Error> {
     match toml {
-        toml_edit::Item::None => return Ok(()),
+        toml_edit::Item::None => Ok(()),
         toml_edit::Item::Value(value) => parse_value_run_exprs_into(value, exprs),
         toml_edit::Item::Table(table) => {
             exprs.push(parse_table_run_expr(
@@ -718,10 +716,10 @@ fn parse_value_run_exprs_into<'a>(
     }
 }
 
-fn parse_table_run_expr<'a, T: toml_edit::TableLike>(
+fn parse_table_run_expr<T: toml_edit::TableLike>(
     span: Span,
-    table: &'a T,
-) -> Result<ast::RunExpr<'a>, Error> {
+    table: &T,
+) -> Result<ast::RunExpr<'_>, Error> {
     let (run_expr_ty, item) = find_main_run_expr_type(span, table)?;
     match run_expr_ty.value {
         RunExprType::Shell => {
@@ -783,7 +781,7 @@ fn parse_table_run_expr<'a, T: toml_edit::TableLike>(
     }
 }
 
-fn parse_item_string_expr<'a>(toml: &'a toml_edit::Item) -> Result<ast::StringExpr<'a>, Error> {
+fn parse_item_string_expr(toml: &toml_edit::Item) -> Result<ast::StringExpr<'_>, Error> {
     let span = toml.span().into();
     match toml {
         toml_edit::Item::Value(toml_edit::Value::String(s)) => parse_string_expr(span, s.value()),
@@ -791,7 +789,7 @@ fn parse_item_string_expr<'a>(toml: &'a toml_edit::Item) -> Result<ast::StringEx
     }
 }
 
-fn parse_item_pattern_expr<'a>(toml: &'a toml_edit::Item) -> Result<ast::PatternExpr<'a>, Error> {
+fn parse_item_pattern_expr(toml: &toml_edit::Item) -> Result<ast::PatternExpr<'_>, Error> {
     let span = toml.span().unwrap_or_default().into();
     match toml {
         toml_edit::Item::Value(toml_edit::Value::String(s)) => parse_pattern_expr(span, s.value()),

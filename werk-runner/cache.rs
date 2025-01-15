@@ -39,21 +39,21 @@ impl TargetOutdatednessCache {
     pub fn is_glob_outdated(&self, glob: &str, new_hash: Hash128) -> bool {
         self.glob
             .get(glob)
-            .map_or(false, |old_hash| *old_hash != new_hash)
+            .is_some_and(|old_hash| *old_hash != new_hash)
     }
 
     #[inline]
     pub fn is_which_outdated(&self, which: &str, new_hash: Hash128) -> bool {
         self.which
             .get(which)
-            .map_or(false, |old_hash| *old_hash != new_hash)
+            .is_some_and(|old_hash| *old_hash != new_hash)
     }
 
     #[inline]
     pub fn is_env_outdated(&self, env: &str, new_hash: Hash128) -> bool {
         self.env
             .get(env)
-            .map_or(false, |old_hash| *old_hash != new_hash)
+            .is_some_and(|old_hash| *old_hash != new_hash)
     }
 
     #[inline]

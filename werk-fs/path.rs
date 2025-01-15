@@ -112,7 +112,7 @@ impl Path {
                 Self::validate(s)?;
                 Ok(Self::new_unchecked(s))
             }
-            Err(err) => return Err(PathError::InvalidUtf8(path[err.valid_up_to()])),
+            Err(err) => Err(PathError::InvalidUtf8(path[err.valid_up_to()])),
         }
     }
 
@@ -145,6 +145,12 @@ impl Path {
     #[inline(always)]
     pub fn len(&self) -> usize {
         self.path.len()
+    }
+
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        // Paths are never empty.
+        false
     }
 
     #[inline]
@@ -473,6 +479,7 @@ impl Absolutize for Path {
 
 impl Clone for Box<Path> {
     #[inline(always)]
+    #[expect(clippy::borrowed_box)]
     fn clone(&self) -> Self {
         let s: &Box<str> = unsafe {
             // SAFETY: #[repr(transparent)]
@@ -510,7 +517,8 @@ pub enum Component<'a> {
     Component(&'a Path),
 }
 
-impl<'a> Component<'a> {
+impl Component<'_> {
+    #[inline]
     pub fn len(&self) -> usize {
         match self {
             Component::Root => 1,
@@ -519,9 +527,15 @@ impl<'a> Component<'a> {
             Component::Component(path) => path.len(),
         }
     }
+
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        // Path components are never empty.
+        false
+    }
 }
 
-impl<'a> AsRef<str> for Component<'a> {
+impl AsRef<str> for Component<'_> {
     #[inline(always)]
     fn as_ref(&self) -> &str {
         match self {
@@ -542,9 +556,7 @@ impl<'a> Iterator for Components<'a> {
     type Item = Component<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let Some(path) = self.path else {
-            return None;
-        };
+        let path = self.path?;
         match path.path.split_once(Path::SEPARATOR) {
             None => {
                 self.path = None;
@@ -626,10 +638,8 @@ impl PathBuf {
         let path = path.as_path()?;
         if path.is_absolute() {
             self.path.clear();
-        } else {
-            if self != Path::ROOT {
-                self.path.push(Path::SEPARATOR);
-            }
+        } else if self != Path::ROOT {
+            self.path.push(Path::SEPARATOR);
         }
         self.path.push_str(&path.path);
         Ok(self)
@@ -742,11 +752,11 @@ impl AsPath for String {
 impl AsPath for &str {
     #[inline(always)]
     fn as_path(&self) -> Result<&Path, PathError> {
-        Path::new(*self)
+        Path::new(self)
     }
 }
 
-impl<'a> AsPath for Component<'a> {
+impl AsPath for Component<'_> {
     #[inline]
     fn as_path(&self) -> Result<&Path, PathError> {
         Ok(match self {

@@ -235,11 +235,11 @@ impl ShellCommandLineBuilder {
         workspace: &Workspace,
     ) -> Result<(ShellCommandLine, Option<UsedVariable>), EvalError> {
         if self.in_quotes {
-            Err(EvalError::UnterminatedQuote(span).into())
+            Err(EvalError::UnterminatedQuote(span))
         } else {
             let mut parts = self.parts.drain(..);
             let Some(program) = parts.next() else {
-                return Err(EvalError::EmptyCommand(span).into());
+                return Err(EvalError::EmptyCommand(span));
             };
 
             let (program_path, hash) = workspace
@@ -277,7 +277,7 @@ impl<'a> ChildEnv<'a> {
     }
 }
 
-impl<'a> Default for ChildEnv<'a> {
+impl Default for ChildEnv<'_> {
     fn default() -> Self {
         ChildEnv::Inherit(&[])
     }

@@ -5,6 +5,12 @@ use werk_runner::{Child, DirEntry, Error, ShellCommandLine};
 
 pub struct DryRun(werk_runner::RealSystem);
 
+impl Default for DryRun {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DryRun {
     pub fn new() -> Self {
         Self(werk_runner::RealSystem::new())
@@ -12,6 +18,7 @@ impl DryRun {
 }
 
 #[derive(Default)]
+#[expect(clippy::box_collection, clippy::redundant_allocation)]
 struct DryRunChild {
     stdin: Option<Pin<Box<Vec<u8>>>>,
     stdout: Option<Pin<Box<&'static [u8]>>>,

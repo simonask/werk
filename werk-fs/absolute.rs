@@ -164,7 +164,7 @@ impl<P: ?Sized> Absolute<P> {
         Absolute::new_unchecked(self.path.to_owned())
     }
 
-    pub fn borrow<T: ?Sized>(&self) -> &Absolute<T>
+    pub fn borrowed<T: ?Sized>(&self) -> &Absolute<T>
     where
         P: Borrow<T>,
     {
@@ -193,6 +193,7 @@ impl<P: ?Sized> Absolute<P> {
         Absolute::new_ref_unchecked(self.path.deref())
     }
 
+    #[expect(clippy::borrowed_box)]
     fn as_inner_box(self: &Box<Self>) -> &Box<P> {
         unsafe {
             // SAFETY: #[repr(transparent)]
@@ -203,16 +204,14 @@ impl<P: ?Sized> Absolute<P> {
     fn into_inner_box(self: Box<Self>) -> Box<P> {
         unsafe {
             // SAFETY: #[repr(transparent)]
-            let raw = Box::from_raw(Box::into_raw(self) as *mut Absolute<P>);
-            Box::from_raw(Box::into_raw(raw) as *mut P)
+            Box::from_raw(Box::into_raw(self) as *mut P)
         }
     }
 
     fn from_inner_box_unchecked(this: Box<P>) -> Box<Self> {
         unsafe {
             // SAFETY: #[repr(transparent)]
-            let raw = Box::from_raw(Box::into_raw(this) as *mut P);
-            Box::from_raw(Box::into_raw(raw) as *mut Absolute<P>)
+            Box::from_raw(Box::into_raw(this) as *mut Absolute<P>)
         }
     }
 }

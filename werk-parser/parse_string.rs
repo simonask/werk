@@ -35,7 +35,7 @@ pub fn parse_ident(input: &str) -> Result<&str, TomlParseError> {
         return Err(TomlParseError::InvalidIdentifier(first));
     }
 
-    while let Some(ch) = chars.next() {
+    for ch in chars {
         if !is_identifier_continue(ch) {
             return Err(TomlParseError::InvalidIdentifier(ch));
         }
@@ -58,8 +58,8 @@ pub fn parse_pattern_expr(input: &str) -> Result<ast::PatternExpr, TomlParseErro
 
 fn ident<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
     (
-        take_while(1, |ch| is_identifier_start(ch)),
-        take_while(0.., |ch| is_identifier_continue(ch)),
+        take_while(1, is_identifier_start),
+        take_while(0.., is_identifier_continue),
     )
         .take()
         .parse_next(input)
@@ -348,8 +348,7 @@ fn interpolation_op<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationOp<'
         interpolation_op_replace_ext.map(|(from, to)| {
             ast::InterpolationOp::ReplaceExtension(Cow::from(from), Cow::from(to))
         }),
-        interpolation_op_regex_replace
-            .map(|regex_interpolation| ast::InterpolationOp::RegexReplace(regex_interpolation)),
+        interpolation_op_regex_replace.map(ast::InterpolationOp::RegexReplace),
     ))
     .parse_next(input)
 }
@@ -378,7 +377,7 @@ fn interpolation_op_regex_replace<'a>(
 fn regex_replace_pattern(input: &mut Input) -> PResult<regex::Regex> {
     let regex_pattern = take_till(1.., ['/']).parse_next(input)?;
 
-    regex::Regex::new(&regex_pattern).map_err(|err| {
+    regex::Regex::new(regex_pattern).map_err(|err| {
         winnow::error::ErrMode::Backtrack(ParseError {
             stack: None,
             expected: Expected::ValidRegex(Arc::new(err)),

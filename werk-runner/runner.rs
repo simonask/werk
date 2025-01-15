@@ -68,9 +68,7 @@ impl BuildStatus {
                 }
             }
             BuildStatus::Exists(path_buf, system_time) => {
-                let Some(output_mtime) = output_mtime else {
-                    return None;
-                };
+                let output_mtime = output_mtime?;
 
                 if output_mtime <= system_time {
                     Some(Reason::Modified(path_buf, system_time))
@@ -126,7 +124,7 @@ impl TaskId {
     #[inline]
     pub fn short_name(&self) -> &str {
         if self.is_command() {
-            &*self.0
+            &self.0
         } else {
             let Some((_prefix, filename)) = self.0.rsplit_once('/') else {
                 // The string starts with a slash.
@@ -161,7 +159,7 @@ enum DepfileSpec<'a> {
     ImplicitlyGenerated(Absolute<werk_fs::PathBuf>),
 }
 
-impl<'a> TaskSpec<'a> {
+impl TaskSpec<'_> {
     pub fn to_task_id(&self) -> TaskId {
         match self {
             TaskSpec::Recipe(ir::RecipeMatch::Build(build_recipe_match)) => {
@@ -247,7 +245,7 @@ impl<'a> Inner<'a> {
         let Some(recipe_match) = self.workspace.manifest.match_build_recipe(target)? else {
             return Ok(DepfileSpec::ImplicitlyGenerated(target.to_owned()));
         };
-        Ok(DepfileSpec::Recipe(recipe_match.into()))
+        Ok(DepfileSpec::Recipe(recipe_match))
     }
 
     fn get_command_spec(&self, target: &str) -> Result<TaskSpec<'a>, Error> {
@@ -266,7 +264,7 @@ impl<'a> Inner<'a> {
             let path = path
                 .absolutize(werk_fs::Path::ROOT)
                 .map_err(|err| Error::InvalidTargetPath(path.to_string(), err))?;
-            if let Some(build_recipe_match) = self.workspace.manifest.match_build_recipe(&*path)? {
+            if let Some(build_recipe_match) = self.workspace.manifest.match_build_recipe(&path)? {
                 if let Some(task_recipe) = task_recipe_match {
                     return Err(AmbiguousPatternError {
                         pattern1: task_recipe.name.to_owned(),
@@ -277,10 +275,8 @@ impl<'a> Inner<'a> {
                 }
 
                 return Ok(TaskSpec::Recipe(ir::RecipeMatch::Build(build_recipe_match)));
-            } else {
-                if task_recipe_match.is_none() {
-                    return Ok(TaskSpec::CheckExists(path.into_owned()));
-                }
+            } else if task_recipe_match.is_none() {
+                return Ok(TaskSpec::CheckExists(path.into_owned()));
             }
         }
 
@@ -392,7 +388,7 @@ impl<'a> Inner<'a> {
 
         let cache = self
             .workspace
-            .take_build_target_cache(&*recipe_match.target_file);
+            .take_build_target_cache(&recipe_match.target_file);
         // Check the target's mtime.
         let out_mtime = scope
             .workspace()
@@ -400,22 +396,22 @@ impl<'a> Inner<'a> {
             .map(|entry| entry.metadata.mtime);
 
         let mut outdatedness = OutdatednessTracker::new(
-            &self.workspace,
+            self.workspace,
             cache.as_ref(),
-            &recipe_match.recipe,
+            recipe_match.recipe,
             out_mtime,
         );
 
         // Evaluate recipe body (`out` is available and in scope).
         let evaluated =
-            eval::eval_build_recipe_statements(&mut scope, &recipe_match.recipe.body).await?;
+            eval::eval_build_recipe_statements(&mut scope, recipe_match.recipe.body).await?;
         outdatedness.did_use(evaluated.used);
         let evaluated = evaluated.value;
 
         let mut explicit_dependency_specs = evaluated
             .explicit_dependencies
             .iter()
-            .map(|s| self.get_build_or_command_spec(&s))
+            .map(|s| self.get_build_or_command_spec(s))
             .collect::<Result<Vec<_>, Error>>()?;
 
         // Rebuild if the target does not exist.
@@ -487,26 +483,23 @@ impl<'a> Inner<'a> {
                     explicit_dependency_specs
                         .push(self.get_build_spec_relaxed(abstract_path.as_deref())?);
                 }
+            } else if is_implicit_depfile {
+                // The implicit depfile was not generated yet, in this run
+                // or a previous run. Add that as a reason to rebuild the
+                // main recipe. Note that this causes the main recipe to
+                // always be outdated if it fails to generate the depfile!
+                outdatedness.add_reason(Reason::Missing(depfile_path.into_owned().into_inner()));
             } else {
-                if is_implicit_depfile {
-                    // The implicit depfile was not generated yet, in this run
-                    // or a previous run. Add that as a reason to rebuild the
-                    // main recipe. Note that this causes the main recipe to
-                    // always be outdated if it fails to generate the depfile!
-                    outdatedness
-                        .add_reason(Reason::Missing(depfile_path.into_owned().into_inner()));
+                // If the depfile is generated by a rule, it is an error if that
+                // rule did not generate the depfile. If it is implicit, it's
+                // fine if it doesn't exist yet.
+                if self.workspace.io.is_dry_run() {
+                    self.workspace.watcher.warning(
+                        Some(task_id),
+                        "Depfile does not exist, and was not generated, because this is a dry run",
+                    );
                 } else {
-                    // If the depfile is generated by a rule, it is an error if that
-                    // rule did not generate the depfile. If it is implicit, it's
-                    // fine if it doesn't exist yet.
-                    if self.workspace.io.is_dry_run() {
-                        self.workspace.watcher.warning(
-                            Some(task_id),
-                            "Depfile does not exist, and was not generated, because this is a dry run",
-                        );
-                    } else {
-                        return Err(Error::DepfileNotFound(depfile_path.to_path_buf()));
-                    }
+                    return Err(Error::DepfileNotFound(depfile_path.to_path_buf()));
                 }
             }
         }
@@ -574,11 +567,11 @@ impl<'a> Inner<'a> {
 
         // Evaluate dependencies (`out` is not available in commands).
 
-        let evaluated = eval::eval_task_recipe_statements(&mut scope, &recipe.body).await?;
+        let evaluated = eval::eval_task_recipe_statements(&mut scope, recipe.body).await?;
         let dependency_specs = evaluated
             .build
             .iter()
-            .map(|s| self.get_build_or_command_spec(&s))
+            .map(|s| self.get_build_or_command_spec(s))
             .collect::<Result<Vec<_>, _>>()?;
 
         // Note: We don't care about the status of dependencies.
@@ -735,6 +728,7 @@ impl<'a> Inner<'a> {
         output_mtime: Option<SystemTime>,
     ) -> Result<Vec<Reason>, Error> {
         // Can't use raw `async fn` because of https://github.com/rust-lang/rust/issues/134101.
+        #[expect(clippy::manual_async_fn)]
         fn build_multiple<'a>(
             this: Arc<Inner<'a>>,
             dependencies: Vec<TaskSpec<'a>>,
@@ -922,7 +916,7 @@ impl<'a> DepChain<'a> {
     }
 }
 
-impl<'a> DepChainEntry<'a> {
+impl DepChainEntry<'_> {
     fn collect(&self) -> OwnedDependencyChain {
         OwnedDependencyChain {
             vec: self.collect_vec(),

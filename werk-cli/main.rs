@@ -149,7 +149,7 @@ fn main() -> Result<(), Error> {
 async fn try_main(args: Args) -> Result<(), Error> {
     let werkfile = if let Some(file) = args.file {
         let file = Absolute::new_unchecked(std::path::absolute(file)?);
-        if file.extension().as_deref() == Some("toml".as_ref()) {
+        if file.extension() == Some("toml".as_ref()) {
             Werkfile::Toml(file)
         } else {
             Werkfile::Werk(file)
@@ -197,10 +197,10 @@ async fn try_main(args: Args) -> Result<(), Error> {
 
     let toml_document;
     let ast = match werkfile {
-        Werkfile::Werk(_) => werk_parser::parse_werk(&*source_code).map_err(display_parse_error)?,
+        Werkfile::Werk(_) => werk_parser::parse_werk(&source_code).map_err(display_parse_error)?,
         Werkfile::Toml(_) => {
             toml_document = toml_edit::ImDocument::parse(&*source_code)
-                .map_err(werk_parser::Error::Toml)
+                .map_err(Into::into)
                 .map_err(display_parse_error)?;
             werk_parser::parse_toml_document(&toml_document).map_err(display_parse_error)?
         }
@@ -233,18 +233,17 @@ async fn try_main(args: Args) -> Result<(), Error> {
     }
     settings.force_color = watcher.enable_color();
 
-    let io: Arc<dyn werk_runner::Io>;
-    if args.dry_run || args.list {
-        io = Arc::new(dry_run::DryRun::new());
+    let io: Arc<dyn werk_runner::Io> = if args.dry_run || args.list {
+        Arc::new(dry_run::DryRun::new())
     } else {
-        io = Arc::new(werk_runner::RealSystem::new());
-    }
+        Arc::new(werk_runner::RealSystem::new())
+    };
 
     let workspace = Workspace::new(&ast, &*io, &*watcher, workspace_dir.to_owned(), &settings)
         .map_err(display_error)?;
 
     if args.list {
-        print_list(&workspace.manifest, &*watcher);
+        print_list(&workspace.manifest, &watcher);
         return Ok(());
     }
 

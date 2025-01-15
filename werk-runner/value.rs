@@ -123,7 +123,7 @@ impl Value {
                     Ok(())
                 }
                 Value::String(s) => {
-                    let value = std::mem::replace(s, String::new());
+                    let value = std::mem::take(s);
                     *s = f(value)?;
                     Ok(())
                 }

@@ -337,10 +337,10 @@ pub fn insert_fs(
                         vacant_entry.insert(MockDirEntry::File(metadata, vec));
                         Ok(())
                     } else {
-                        return Err(std::io::Error::new(
+                        Err(std::io::Error::new(
                             std::io::ErrorKind::NotFound,
                             "parent directory not found",
-                        ));
+                        ))
                     }
                 }
             }
@@ -434,7 +434,7 @@ pub fn read_fs<'a>(
         Ok((
             DirEntry {
                 path: path.to_path_buf(),
-                metadata: metadata.clone(),
+                metadata: *metadata,
             },
             data,
         ))
@@ -470,7 +470,7 @@ pub fn contains_file(fs: &MockDir, path: &std::path::Path) -> bool {
 impl MockIo {
     pub fn with_default_workspace_dir(self) -> Self {
         let mut fs = self.filesystem.lock();
-        create_dirs(&mut *fs, test_workspace_dir()).unwrap();
+        create_dirs(&mut fs, test_workspace_dir()).unwrap();
         std::mem::drop(fs);
         self
     }
@@ -554,8 +554,8 @@ impl MockIo {
             let path = path.into();
             let path = workspace_file(&path);
             tracing::trace!("inserting workspace file: {}", path.display());
-            create_parent_dirs(&mut *filesystem, path.as_deref()).unwrap();
-            insert_fs(&mut *filesystem, &path, (metadata, data)).unwrap();
+            create_parent_dirs(&mut filesystem, path.as_deref()).unwrap();
+            insert_fs(&mut filesystem, &path, (metadata, data)).unwrap();
         }
         std::mem::drop(filesystem);
         self
@@ -568,9 +568,9 @@ impl MockIo {
     ) -> std::io::Result<()> {
         let mut fs = self.filesystem.lock();
         let path = workspace_file(path);
-        create_parent_dirs(&mut *fs, path.as_deref()).unwrap();
+        create_parent_dirs(&mut fs, path.as_deref()).unwrap();
         insert_fs(
-            &mut *fs,
+            &mut fs,
             path.as_ref(),
             (
                 Metadata {
@@ -585,7 +585,7 @@ impl MockIo {
 
     pub fn delete_file(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
         let mut fs = self.filesystem.lock();
-        remove_fs(&mut *fs, path.as_ref())
+        remove_fs(&mut fs, path.as_ref())
     }
 
     pub fn clear_oplog(&self) {
@@ -652,7 +652,7 @@ impl MockIo {
     }
 
     pub fn contains_file(&self, path: impl AsRef<std::path::Path>) -> bool {
-        contains_file(&*self.filesystem.lock(), path.as_ref())
+        contains_file(&self.filesystem.lock(), path.as_ref())
     }
 }
 
@@ -731,7 +731,7 @@ impl werk_runner::Io for MockIo {
             status,
             stdout,
             stderr,
-        } = program(command_line, &mut *fs)?;
+        } = program(command_line, &mut fs)?;
 
         Ok(Box::new(MockChild {
             stdout: Some(Box::pin(futures::io::Cursor::new(stdout))),
@@ -757,7 +757,7 @@ impl werk_runner::Io for MockIo {
             ));
         };
         let mut fs = self.filesystem.lock();
-        program(command_line, &mut *fs)
+        program(command_line, &mut fs)
     }
 
     fn which(&self, command: &str) -> Result<Absolute<std::path::PathBuf>, WhichError> {
@@ -781,7 +781,7 @@ impl werk_runner::Io for MockIo {
         let fs = self.filesystem.lock();
 
         let MockDirEntry::Dir(workspace) =
-            get_fs(&*fs, path).expect("workspace path does not exist")
+            get_fs(&fs, path).expect("workspace path does not exist")
         else {
             panic!("workspace path is a file");
         };
@@ -799,7 +799,7 @@ impl werk_runner::Io for MockIo {
                         if !ignore_explicitly.is_match(&*entry_path) {
                             results.push(DirEntry {
                                 path: entry_path,
-                                metadata: metadata.clone(),
+                                metadata: *metadata,
                             });
                         }
                     }
@@ -820,7 +820,7 @@ impl werk_runner::Io for MockIo {
 
     fn metadata(&self, path: &Absolute<std::path::Path>) -> Result<Metadata, Error> {
         let fs = self.filesystem.lock();
-        read_fs(&*fs, path)
+        read_fs(&fs, path)
             .map(|(entry, _)| entry.metadata)
             .map_err(Into::into)
     }
@@ -828,7 +828,7 @@ impl werk_runner::Io for MockIo {
     fn read_file(&self, path: &Absolute<std::path::Path>) -> Result<Vec<u8>, std::io::Error> {
         self.oplog.lock().push(MockIoOp::ReadFile(path.to_owned()));
         let fs = self.filesystem.lock();
-        let (entry, data) = read_fs(&*fs, path)?;
+        let (entry, data) = read_fs(&fs, path)?;
         if !entry.metadata.is_file {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::IsADirectory,
@@ -849,7 +849,7 @@ impl werk_runner::Io for MockIo {
 
         let mut fs = self.filesystem.lock();
         insert_fs(
-            &mut *fs,
+            &mut fs,
             &path,
             (
                 Metadata {
@@ -872,7 +872,7 @@ impl werk_runner::Io for MockIo {
             .push(MockIoOp::CopyFile(from.to_path_buf(), to.to_path_buf()));
 
         let mut fs = self.filesystem.lock();
-        copy_fs(&mut *fs, from, to)
+        copy_fs(&mut fs, from, to)
     }
 
     fn delete_file(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
@@ -880,7 +880,7 @@ impl werk_runner::Io for MockIo {
         self.oplog.lock().push(MockIoOp::DeleteFile(path.clone()));
 
         let mut fs = self.filesystem.lock();
-        remove_fs(&mut *fs, &path)
+        remove_fs(&mut fs, &path)
     }
 
     fn create_parent_dirs(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
@@ -889,7 +889,7 @@ impl werk_runner::Io for MockIo {
             .push(MockIoOp::CreateParentDirs(path.to_path_buf()));
 
         let mut fs = self.filesystem.lock();
-        create_parent_dirs(&mut *fs, path)
+        create_parent_dirs(&mut fs, path)
     }
 
     fn read_env(&self, name: &str) -> Option<String> {

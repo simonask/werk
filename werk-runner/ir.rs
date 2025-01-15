@@ -30,11 +30,10 @@ impl<'a> Manifest<'a> {
         path: &Absolute<werk_fs::Path>,
     ) -> Result<Option<BuildRecipeMatch<'b>>, crate::Error> {
         let matches = self.build_recipes.iter().filter_map(|recipe| {
-            if let Some(match_data) = recipe.pattern.match_whole_path(&path) {
-                Some((recipe, match_data))
-            } else {
-                None
-            }
+            recipe
+                .pattern
+                .match_whole_path(path)
+                .map(|match_data| (recipe, match_data))
         });
 
         let mut best_match = None;
@@ -45,7 +44,7 @@ impl<'a> Manifest<'a> {
                     // No match yet, pick this candidate.
                     best_match = Some((candidate_recipe, candidate_pattern_match));
                 }
-                Some((ref best_recipe, ref best_data)) => {
+                Some((best_recipe, ref best_data)) => {
                     match (best_data.stem(), candidate_pattern_match.stem()) {
                         (None, Some(_)) => {
                             // Best match is exact, do nothing.

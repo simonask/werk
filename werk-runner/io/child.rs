@@ -73,6 +73,7 @@ pub enum ChildCaptureOutput {
 ///
 /// If both stdout and stderr are simultaneously available, both are emitted
 /// simultaneously.
+#[expect(clippy::type_complexity)]
 pub struct ChildLinesStream {
     stdout: Option<ByteLines<BufReader<Pin<Box<dyn AsyncRead + Send>>>>>,
     stderr: Option<ByteLines<BufReader<Pin<Box<dyn AsyncRead + Send>>>>>,

@@ -13,7 +13,7 @@ pub trait Keyword: Spanned {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Token<const CHAR: char>(pub Offset);
 impl<const CHAR: char> Token<CHAR> {
     #[inline]
@@ -39,7 +39,7 @@ impl<const CHAR: char> Spanned for Token<CHAR> {
 macro_rules! def_keyword {
     ($t:ident, $s:literal) => {
         #[doc = concat!("`", $s, "`")]
-        #[derive(Clone, Copy, Debug, Default, PartialEq, Hash)]
+        #[derive(Clone, Copy, Debug, Default, PartialEq)]
         pub struct $t(pub Offset);
         impl Keyword for $t {
             const TOKEN: &'static str = $s;
