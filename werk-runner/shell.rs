@@ -273,8 +273,7 @@ impl<'a> ChildEnv<'a> {
     #[must_use]
     pub fn vars(&self) -> &'a [(&'a OsStr, &'a OsStr)] {
         match self {
-            ChildEnv::Clear(vars) => vars,
-            ChildEnv::Inherit(vars) => vars,
+            ChildEnv::Clear(vars) | ChildEnv::Inherit(vars) => vars,
         }
     }
 }

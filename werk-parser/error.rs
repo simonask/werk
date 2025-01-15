@@ -74,8 +74,8 @@ impl Error {
     pub fn span(&self) -> Span {
         match self {
             Error::Toml(toml_error) => toml_error.span().map_or(Span::ignore(), Into::into),
-            Error::Werk(span, _) => *span,
-            Error::InvalidKey(span)
+            Error::Werk(span, _)
+            | Error::InvalidKey(span)
             | Error::ExpectedTable(span)
             | Error::ExpectedString(span)
             | Error::ExpectedBool(span)
@@ -103,6 +103,7 @@ pub struct LocatedError<'a, E> {
 }
 
 impl std::fmt::Display for LocatedError<'_, Error> {
+    #[allow(clippy::too_many_lines)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         use annotate_snippets::{Level, Snippet};
 

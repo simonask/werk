@@ -53,6 +53,7 @@ macro_rules! def_keyword {
         }
         impl crate::parser::Spanned for $t {
             #[inline]
+            #[allow(clippy::cast_possible_truncation)]
             fn span(&self) -> Span {
                 Span {
                     start: self.0,

@@ -113,7 +113,7 @@ pub enum InterpolationStem<'a> {
     /// `{%}` - output is string.
     PatternCapture,
     /// `{1}` - output is string.
-    CaptureGroup(usize),
+    CaptureGroup(u32),
     /// `{ident}` - output is string.
     Ident(Cow<'a, str>),
 }
@@ -122,8 +122,7 @@ impl SemanticHash for InterpolationStem<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
-            InterpolationStem::Implied => (),
-            InterpolationStem::PatternCapture => (),
+            InterpolationStem::PatternCapture | InterpolationStem::Implied => (),
             InterpolationStem::CaptureGroup(i) => i.hash(state),
             InterpolationStem::Ident(s) => s.hash(state),
         }

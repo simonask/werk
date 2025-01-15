@@ -219,7 +219,7 @@ impl PartialEq<str> for Value {
     fn eq(&self, other: &str) -> bool {
         match self {
             Value::String(s) => s == other,
-            _ => false,
+            Value::List(_) => false,
         }
     }
 }
@@ -239,7 +239,7 @@ where
     fn eq(&self, other: &[T]) -> bool {
         match self {
             Value::List(v) => v.iter().zip(other.iter()).all(|(a, b)| a == b),
-            _ => false,
+            Value::String(_) => false,
         }
     }
 }
@@ -276,8 +276,6 @@ impl std::fmt::Display for Value {
 pub struct DisplayFriendly<'a>(&'a Value, usize);
 impl std::fmt::Display for DisplayFriendly<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let DisplayFriendly(value, max_width) = self;
-
         fn string_with_ellipsis(s: &str, max_width: usize) -> String {
             let escaped = s.escape_default().to_string();
             let escaped_len = escaped.chars().count();
@@ -311,10 +309,9 @@ impl std::fmt::Display for DisplayFriendly<'_> {
                 if item_len > rem_width {
                     s.push_str("...");
                     break;
-                } else {
-                    s.push_str(&item_string);
-                    rem_width = rem_width.saturating_sub(item_len);
                 }
+                s.push_str(&item_string);
+                rem_width = rem_width.saturating_sub(item_len);
             }
             s.push(']');
             s
@@ -327,6 +324,7 @@ impl std::fmt::Display for DisplayFriendly<'_> {
             }
         }
 
+        let DisplayFriendly(value, max_width) = self;
         f.write_str(&value_with_ellipsis(value, *max_width))
     }
 }

@@ -19,8 +19,9 @@ pub use string::*;
 #[must_use]
 pub struct Whitespace(pub Span);
 
-pub fn ws(span: impl Into<Span>) -> Whitespace {
-    Whitespace(span.into())
+#[inline]
+pub fn ws(span: std::ops::Range<u32>) -> Whitespace {
+    Whitespace(crate::parser::span(span))
 }
 
 #[inline]

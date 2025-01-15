@@ -98,8 +98,8 @@ pub(crate) fn push_string_fragment<'a>(expr: &mut ast::StringExpr<'a>, frag: Str
             expr.fragments
                 .push(ast::StringFragment::Interpolation(string_interpolation));
         }
-        StringFragment::PatternStem => panic!("pattern in string expr"),
-        StringFragment::OneOf(_) => panic!("pattern in string expr"),
+        StringFragment::PatternStem => panic!("pattern stem in string expr must be escaped"),
+        StringFragment::OneOf(_) => panic!("captue group in string expr must be escaped"),
     }
 }
 
@@ -399,7 +399,7 @@ fn file_extension<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::span;
+    use crate::parser::Span;
 
     use super::*;
 
@@ -407,7 +407,7 @@ mod tests {
     fn test_string_expr() {
         let input = "hello %world% {name} <1:.ext1=.ext2>";
         let expected = ast::StringExpr {
-            span: span(0..input.len()),
+            span: Span::from(0..input.len()),
             fragments: vec![
                 ast::StringFragment::Literal("hello %world% ".into()),
                 ast::StringFragment::Interpolation(ast::Interpolation {
@@ -436,7 +436,7 @@ mod tests {
     fn test_string_escape() {
         let input = "*.\\{c,cpp\\}";
         let expected = ast::StringExpr {
-            span: span(0..input.len()),
+            span: Span::from(0..input.len()),
             fragments: vec![ast::StringFragment::Literal("*.{c,cpp}".into())],
         };
         let result = string_expr_inside_quotes.parse(Input::new(input)).unwrap();

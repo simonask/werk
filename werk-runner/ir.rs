@@ -13,6 +13,7 @@ type Result<T, E = EvalError> = std::result::Result<T, E>;
 /// - Recipe patterns are fully evaluated.
 /// - Doc comments for all global items are gathered.
 /// - Recipe bodies are *not* evaluated, and refer directly into the AST.
+#[derive(Default)]
 pub struct Manifest<'a> {
     pub globals: GlobalVariables,
     pub task_recipes: IndexMap<&'a str, TaskRecipe<'a>>,
@@ -103,9 +104,9 @@ impl<'a> Manifest<'a> {
                             path: name.to_owned(),
                         }
                         .into());
-                    } else {
-                        return Ok(Some(RecipeMatch::Build(build_recipe_match)));
                     }
+
+                    return Ok(Some(RecipeMatch::Build(build_recipe_match)));
                 }
             }
         }
@@ -182,14 +183,18 @@ impl Config {
                         ast::ConfigValue::String(ast::ConfigString(_, ref value)) => {
                             value.to_string()
                         }
-                        _ => return Err(EvalError::ExpectedConfigString(config_stmt.span)),
+                        ast::ConfigValue::Bool(_) => {
+                            return Err(EvalError::ExpectedConfigString(config_stmt.span))
+                        }
                     };
                     config.output_directory = Some(value);
                 }
                 "print-commands" => {
                     let value = match config_stmt.value {
                         ast::ConfigValue::Bool(ast::ConfigBool(_, ref value)) => *value,
-                        _ => return Err(EvalError::ExpectedConfigBool(config_stmt.span)),
+                        ast::ConfigValue::String(_) => {
+                            return Err(EvalError::ExpectedConfigBool(config_stmt.span))
+                        }
                     };
                     config.print_commands = Some(value);
                 }
@@ -198,7 +203,9 @@ impl Config {
                         ast::ConfigValue::String(ast::ConfigString(_, ref value)) => {
                             value.to_string()
                         }
-                        _ => return Err(EvalError::ExpectedConfigString(config_stmt.span)),
+                        ast::ConfigValue::Bool(_) => {
+                            return Err(EvalError::ExpectedConfigString(config_stmt.span))
+                        }
                     };
                     config.default_target = Some(value);
                 }

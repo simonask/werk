@@ -22,6 +22,7 @@ pedantic = { level = "warn", priority = -1 }
 missing_panics_doc = "allow"
 missing_errors_doc = "allow"
 inline_always = "allow"
+similar_names = "allow"
 
 [profile.release]
 codegen-units = 1

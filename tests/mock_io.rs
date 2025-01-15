@@ -204,9 +204,9 @@ impl Default for MockIo {
         .with_envs([("PROFILE", "debug")])
         .with_program("clang", program_path("clang"), |_cmd, _fs| {
             Ok(std::process::Output {
-                status: Default::default(),
-                stdout: Default::default(),
-                stderr: Default::default(),
+                status: std::process::ExitStatus::default(),
+                stdout: vec![],
+                stderr: vec![],
             })
         })
         .with_program("write", program_path("write"), |cmdline, fs| {
@@ -227,9 +227,9 @@ impl Default for MockIo {
             )
             .unwrap();
             Ok(std::process::Output {
-                status: Default::default(),
-                stdout: Default::default(),
-                stderr: Default::default(),
+                status: std::process::ExitStatus::default(),
+                stdout: vec![],
+                stderr: vec![],
             })
         })
     }
@@ -458,16 +458,17 @@ fn copy_fs(
 #[must_use]
 pub fn contains_file(fs: &MockDir, path: &std::path::Path) -> bool {
     let path2;
-    let path = if !path.is_absolute() {
+    let path = if path.is_absolute() {
+        path
+    } else {
         path2 = std::path::PathBuf::from("/").join(path);
         &path2
-    } else {
-        path
     };
     read_fs(fs, Absolute::new_ref_unchecked(path)).is_ok()
 }
 
 impl MockIo {
+    #[must_use]
     pub fn with_default_workspace_dir(self) -> Self {
         let mut fs = self.filesystem.lock();
         create_dirs(&mut fs, test_workspace_dir()).unwrap();
@@ -475,6 +476,7 @@ impl MockIo {
         self
     }
 
+    #[must_use]
     pub fn with_programs<I>(self, iter: I) -> Self
     where
         I: IntoIterator<Item = (String, Program)>,
@@ -490,6 +492,7 @@ impl MockIo {
         self
     }
 
+    #[must_use]
     pub fn with_program(
         self,
         program: impl Into<String>,
@@ -500,6 +503,7 @@ impl MockIo {
         self
     }
 
+    #[must_use]
     pub fn with_envs<I, K, V>(self, iter: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -534,11 +538,13 @@ impl MockIo {
         self.programs.lock().remove(&path);
     }
 
+    #[must_use]
     pub fn with_program_removed(self, program: &str) -> Self {
         self.remove_program(program);
         self
     }
 
+    #[must_use]
     pub fn with_workspace_files<I, K>(self, iter: I) -> Self
     where
         I: IntoIterator<Item = (K, (Metadata, Vec<u8>))>,
@@ -771,15 +777,6 @@ impl werk_runner::Io for MockIo {
         path: &Absolute<std::path::Path>,
         settings: &GlobSettings,
     ) -> Result<Vec<DirEntry>, Error> {
-        tracing::trace!("glob workspace: {}", path.display());
-        let fs = self.filesystem.lock();
-
-        let MockDirEntry::Dir(workspace) =
-            get_fs(&fs, path).expect("workspace path does not exist")
-        else {
-            panic!("workspace path is a file");
-        };
-
         fn glob(
             path: &std::path::Path,
             dir: &MockDir,
@@ -805,6 +802,15 @@ impl werk_runner::Io for MockIo {
 
             Ok(())
         }
+
+        tracing::trace!("glob workspace: {}", path.display());
+        let fs = self.filesystem.lock();
+
+        let MockDirEntry::Dir(workspace) =
+            get_fs(&fs, path).expect("workspace path does not exist")
+        else {
+            panic!("workspace path is a file");
+        };
 
         let mut results = Vec::new();
         let result = glob(path, workspace, &mut results, &settings.ignore_explicitly);

@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     ops::{BitOr, BitOrAssign},
 };
 
@@ -168,11 +168,11 @@ impl<'a> OutdatednessTracker<'a> {
         }
         let new_cache = TargetOutdatednessCache {
             recipe_hash,
-            glob: Default::default(),
-            which: Default::default(),
-            env: Default::default(),
-            define: Default::default(),
-            global: Default::default(),
+            glob: BTreeMap::default(),
+            which: BTreeMap::default(),
+            env: BTreeMap::default(),
+            define: BTreeMap::default(),
+            global: BTreeMap::default(),
         };
 
         Self {

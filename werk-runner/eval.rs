@@ -212,13 +212,13 @@ pub fn eval_op(
     match expr {
         ast::ExprOp::Match(match_expr) => eval_match_expr(scope, match_expr, param).map(Into::into),
         ast::ExprOp::Map(expr) => eval_map(scope, expr, param),
-        ast::ExprOp::Flatten(_) => eval_flatten(scope, param),
+        ast::ExprOp::Flatten(_) => Ok(eval_flatten(scope, param)),
         ast::ExprOp::Filter(expr) => eval_filter(scope, expr, param),
         ast::ExprOp::FilterMatch(expr) => eval_filter_match(scope, expr, param),
         ast::ExprOp::Discard(expr) => eval_discard(scope, expr, param),
         ast::ExprOp::Join(expr) => eval_join(scope, expr, param),
         ast::ExprOp::Split(expr) => eval_split(scope, expr, param),
-        ast::ExprOp::Lines(_) => eval_split_lines(scope, param),
+        ast::ExprOp::Lines(_) => Ok(eval_split_lines(scope, param)),
         ast::ExprOp::Info(expr) => {
             let scope = SubexprScope::new(scope, &param);
             let message = eval_string_expr(&scope, &expr.param)?;
@@ -245,16 +245,6 @@ pub fn eval_match_expr(
     expr: &ast::MatchExpr<'_>,
     param: Eval<Value>,
 ) -> Result<Eval<Value>, EvalError> {
-    let mut used = param.used;
-
-    // Evaluate patterns.
-    let mut patterns = Vec::with_capacity(expr.param.len());
-    for stmt in expr.param.iter() {
-        let pattern = eval_pattern(scope, &stmt.pattern)?;
-        used |= pattern.used;
-        patterns.push((pattern.value, &stmt.expr));
-    }
-
     // Apply the match recursively to the input.
     fn apply_match_recursively(
         scope: &dyn Scope,
@@ -303,6 +293,16 @@ pub fn eval_match_expr(
         Ok(Value::String(input_string))
     }
 
+    let mut used = param.used;
+
+    // Evaluate patterns.
+    let mut patterns = Vec::with_capacity(expr.param.len());
+    for stmt in &expr.param {
+        let pattern = eval_pattern(scope, &stmt.pattern)?;
+        used |= pattern.used;
+        patterns.push((pattern.value, &stmt.expr));
+    }
+
     let value = apply_match_recursively(scope, &patterns, param.value, &mut used)?;
 
     Ok(Eval { value, used })
@@ -313,16 +313,6 @@ pub fn eval_filter_match(
     expr: &ast::FilterMatchExpr<'_>,
     param: Eval<Value>,
 ) -> Result<Eval<Value>, EvalError> {
-    let mut used = param.used;
-
-    // Evaluate patterns.
-    let mut patterns = Vec::with_capacity(expr.param.len());
-    for stmt in expr.param.iter() {
-        let pattern = eval_pattern(scope, &stmt.pattern)?;
-        used |= pattern.used;
-        patterns.push((pattern.value, &stmt.expr));
-    }
-
     // Apply the match recursively to the input.
     fn apply_filter_match_recursively(
         scope: &dyn Scope,
@@ -369,6 +359,16 @@ pub fn eval_filter_match(
         Ok(())
     }
 
+    let mut used = param.used;
+
+    // Evaluate patterns.
+    let mut patterns = Vec::with_capacity(expr.param.len());
+    for stmt in &expr.param {
+        let pattern = eval_pattern(scope, &stmt.pattern)?;
+        used |= pattern.used;
+        patterns.push((pattern.value, &stmt.expr));
+    }
+
     let mut result = Vec::new();
     apply_filter_match_recursively(scope, &patterns, param.value, &mut used, &mut result)?;
 
@@ -396,8 +396,6 @@ fn eval_map(
     expr: &ast::MapExpr<'_>,
     param: Eval<Value>,
 ) -> Result<Eval<Value>, EvalError> {
-    let mut used = param.used;
-
     fn apply_map_recursively(
         scope: &dyn Scope,
         value: Value,
@@ -423,13 +421,12 @@ fn eval_map(
         }
     }
 
+    let mut used = param.used;
     let value = apply_map_recursively(scope, param.value, &expr.param, &mut used)?;
     Ok(Eval { value, used })
 }
 
-fn eval_flatten(_scope: &dyn Scope, param: Eval<Value>) -> Result<Eval<Value>, EvalError> {
-    let used = param.used;
-
+fn eval_flatten(_scope: &dyn Scope, param: Eval<Value>) -> Eval<Value> {
     fn apply_flatten_recursive(value: Value, flattened: &mut Vec<Value>) {
         match value {
             Value::List(vec) => {
@@ -441,12 +438,13 @@ fn eval_flatten(_scope: &dyn Scope, param: Eval<Value>) -> Result<Eval<Value>, E
         }
     }
 
+    let used = param.used;
     let mut flat = Vec::new();
     apply_flatten_recursive(param.value, &mut flat);
-    Ok(Eval {
+    Eval {
         value: Value::List(flat),
         used,
-    })
+    }
 }
 
 fn eval_filter(
@@ -454,9 +452,6 @@ fn eval_filter(
     expr: &ast::FilterExpr,
     param: Eval<Value>,
 ) -> Result<Eval<Value>, EvalError> {
-    let pattern = eval_pattern(scope, &expr.param)?;
-    let used = param.used | pattern.used;
-
     fn eval_filter_recursive(pattern: &Pattern, value: Value, result: &mut Vec<Value>) {
         match value {
             Value::List(vec) => {
@@ -472,6 +467,8 @@ fn eval_filter(
         }
     }
 
+    let pattern = eval_pattern(scope, &expr.param)?;
+    let used = param.used | pattern.used;
     let mut result = Vec::new();
     eval_filter_recursive(&pattern.value, param.value, &mut result);
     Ok(Eval {
@@ -485,9 +482,6 @@ fn eval_discard(
     expr: &ast::DiscardExpr,
     param: Eval<Value>,
 ) -> Result<Eval<Value>, EvalError> {
-    let pattern = eval_pattern(scope, &expr.param)?;
-    let used = param.used | pattern.used;
-
     fn eval_discard_recursive(pattern: &Pattern, value: Value, result: &mut Vec<Value>) {
         match value {
             Value::List(vec) => {
@@ -503,6 +497,8 @@ fn eval_discard(
         }
     }
 
+    let pattern = eval_pattern(scope, &expr.param)?;
+    let used = param.used | pattern.used;
     let mut result = Vec::new();
     eval_discard_recursive(&pattern.value, param.value, &mut result);
     Ok(Eval {
@@ -516,12 +512,6 @@ fn eval_split(
     expr: &ast::SplitExpr,
     param: Eval<Value>,
 ) -> Result<Eval<Value>, EvalError> {
-    let pattern_builder = eval_pattern_builder(scope, &expr.param)?;
-    let used = param.used | pattern_builder.used;
-    let mut pattern_builder = pattern_builder.value;
-    pattern_builder.set_match_substrings(true);
-    let pattern = pattern_builder.build();
-
     fn split_recursive(value: &Value, regex: &regex::Regex, result: &mut Vec<Value>) {
         match value {
             Value::List(vec) => {
@@ -537,6 +527,12 @@ fn eval_split(
         }
     }
 
+    let pattern_builder = eval_pattern_builder(scope, &expr.param)?;
+    let used = param.used | pattern_builder.used;
+    let mut pattern_builder = pattern_builder.value;
+    pattern_builder.set_match_substrings(true);
+    let pattern = pattern_builder.build();
+
     let mut result = Vec::new();
     split_recursive(&param.value, &pattern.regex, &mut result);
     Ok(Eval {
@@ -545,9 +541,7 @@ fn eval_split(
     })
 }
 
-fn eval_split_lines(_scope: &dyn Scope, param: Eval<Value>) -> Result<Eval<Value>, EvalError> {
-    let used = param.used;
-
+fn eval_split_lines(_scope: &dyn Scope, param: Eval<Value>) -> Eval<Value> {
     fn split_lines_recursive(value: &Value, result: &mut Vec<Value>) {
         match value {
             Value::List(vec) => {
@@ -563,20 +557,13 @@ fn eval_split_lines(_scope: &dyn Scope, param: Eval<Value>) -> Result<Eval<Value
         }
     }
 
+    let used = param.used;
     let mut result = Vec::new();
     split_lines_recursive(&param.value, &mut result);
-    Ok(Eval {
+    Eval {
         value: Value::List(result),
         used,
-    })
-}
-
-pub async fn eval_collect_strings<P: Scope>(
-    scope: &P,
-    expr: &ast::Expr<'_>,
-) -> Result<Eval<Vec<String>>, EvalError> {
-    let eval = eval(scope, expr)?;
-    Ok(eval.map(super::value::Value::collect_strings))
+    }
 }
 
 pub fn eval_pattern_builder<'a, P: Scope + ?Sized>(
@@ -948,7 +935,7 @@ fn eval_string_interpolation_stem<'a, P: Scope + ?Sized>(
             .get(Lookup::PatternStem)
             .ok_or(EvalError::NoPatternStem(span))?,
         ast::InterpolationStem::CaptureGroup(group) => scope
-            .get(Lookup::CaptureGroup(*group as u32))
+            .get(Lookup::CaptureGroup(*group))
             .ok_or(EvalError::NoSuchCaptureGroup(span, *group))?,
         ast::InterpolationStem::Ident(ref ident) => scope
             .get(Lookup::Ident(ident))
@@ -1057,14 +1044,11 @@ pub fn eval_read<P: Scope + ?Sized>(
         .read_file(fs_entry.path.as_deref())
         .map_err(|err| EvalError::Io(expr.span, err.into()))?;
 
-    let string = match String::from_utf8(contents) {
-        Ok(string) => string,
-        Err(_) => {
-            return Err(EvalError::NonUtf8Read(
-                expr.span,
-                fs_entry.path.clone().into_inner(),
-            ))
-        }
+    let Ok(string) = String::from_utf8(contents) else {
+        return Err(EvalError::NonUtf8Read(
+            expr.span,
+            fs_entry.path.clone().into_inner(),
+        ));
     };
 
     let used = UsedVariable::WorkspaceFile(path.into_owned(), fs_entry.metadata.mtime);
@@ -1109,7 +1093,7 @@ pub(crate) struct EvaluatedBuildRecipe {
     pub commands: Vec<RunCommand>,
 }
 
-pub(crate) async fn eval_build_recipe_statements(
+pub(crate) fn eval_build_recipe_statements(
     scope: &mut BuildRecipeScope<'_>,
     body: &[ast::BodyStmt<ast::BuildRecipeStmt<'_>>],
 ) -> Result<Eval<EvaluatedBuildRecipe>, EvalError> {
@@ -1185,7 +1169,7 @@ pub(crate) struct EvaluatedTaskRecipe {
     pub commands: Vec<RunCommand>,
 }
 
-pub(crate) async fn eval_task_recipe_statements(
+pub(crate) fn eval_task_recipe_statements(
     scope: &mut TaskRecipeScope<'_>,
     body: &[ast::BodyStmt<ast::TaskRecipeStmt<'_>>],
 ) -> Result<EvaluatedTaskRecipe, EvalError> {
@@ -1255,10 +1239,6 @@ fn eval_assert_match(
     expr: &ast::AssertMatchExpr<'_>,
     param: Eval<Value>,
 ) -> Result<Eval<Value>, EvalError> {
-    let scope = SubexprScope::new(scope, &param);
-    let pattern = eval_pattern(&scope, &expr.param)?;
-    let used = param.used | pattern.used;
-
     fn get_mismatch<'a>(pattern: &Pattern, value: &'a Value) -> Option<&'a String> {
         match value {
             Value::List(vec) => vec.iter().find_map(|item| get_mismatch(pattern, item)),
@@ -1271,6 +1251,10 @@ fn eval_assert_match(
             }
         }
     }
+
+    let scope = SubexprScope::new(scope, &param);
+    let pattern = eval_pattern(&scope, &expr.param)?;
+    let used = param.used | pattern.used;
 
     if let Some(mismatch) = get_mismatch(&pattern.value, &param.value) {
         return Err(EvalError::AssertionMatchFailed(
@@ -1315,7 +1299,7 @@ fn flat_join(values: &Value, sep: &str) -> String {
 fn recursive_join(value: Value, sep: &str) -> String {
     match value {
         Value::String(s) => s,
-        ref value => flat_join(value, sep),
+        ref value @ Value::List(_) => flat_join(value, sep),
     }
 }
 
@@ -1330,7 +1314,7 @@ fn recursive_resolve_path(
         let path = path.absolutize(working_dir)?;
         let path = workspace.resolve_path(&path)?;
         match path.to_str() {
-            Some(path) => *string = path.to_owned(),
+            Some(path) => path.clone_into(string),
             None => panic!("Path resolution produced a non-UTF8 path; probably the project root path is non-UTF8"),
         }
         Ok::<_, PathError>(())

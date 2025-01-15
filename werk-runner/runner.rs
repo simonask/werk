@@ -24,7 +24,7 @@ impl RunnerState {
     pub fn new(jobs: usize) -> Self {
         Self {
             concurrency_limit: smol::lock::Semaphore::new(jobs.max(1)),
-            tasks: Mutex::new(Default::default()),
+            tasks: Mutex::new(IndexMap::default()),
         }
     }
 }
@@ -301,16 +301,6 @@ impl<'a> Inner<'a> {
         spec: TaskSpec<'a>,
         dep_chain: DepChain<'_>,
     ) -> Result<BuildStatus, Error> {
-        let task_id = spec.to_task_id();
-
-        // Perform the circular dependency check regardless of how the task was
-        // triggered. Otherwise the check would depend on scheduling, which is
-        // nondeterministic.
-        if dep_chain.contains(&task_id) {
-            let dep_chain = dep_chain.push(&task_id);
-            return Err(Error::CircularDependency(dep_chain.collect()));
-        }
-
         enum Scheduling<'a> {
             Done(Result<BuildStatus, Error>),
             Pending(oneshot::Receiver<Result<BuildStatus, Error>>),
@@ -334,7 +324,7 @@ impl<'a> Inner<'a> {
             }
         }
 
-        fn finish_built(this: &RunnerState, task_id: &TaskId, result: Result<BuildStatus, Error>) {
+        fn finish_built(this: &RunnerState, task_id: &TaskId, result: &Result<BuildStatus, Error>) {
             // Notify dependents
             let mut tasks = this.tasks.lock();
             let status = tasks.get_mut(task_id).expect("task not registered");
@@ -352,6 +342,16 @@ impl<'a> Inner<'a> {
             }
         }
 
+        let task_id = spec.to_task_id();
+
+        // Perform the circular dependency check regardless of how the task was
+        // triggered. Otherwise the check would depend on scheduling, which is
+        // nondeterministic.
+        if dep_chain.contains(&task_id) {
+            let dep_chain = dep_chain.push(&task_id);
+            return Err(Error::CircularDependency(dep_chain.collect()));
+        }
+
         match schedule(&self.workspace.runner_state, spec) {
             Scheduling::Done(result) => result,
             Scheduling::Pending(receiver) => receiver
@@ -362,13 +362,13 @@ impl<'a> Inner<'a> {
                     .clone()
                     .rebuild_spec(&task_id, task_spec, dep_chain)
                     .await;
-                finish_built(&self.workspace.runner_state, &task_id, result.clone());
+                finish_built(&self.workspace.runner_state, &task_id, &result);
                 result
             }
         }
     }
 
-    async fn check_exists(&self, path: &Absolute<werk_fs::Path>) -> Result<BuildStatus, Error> {
+    fn check_exists(&self, path: &Absolute<werk_fs::Path>) -> Result<BuildStatus, Error> {
         let Some(entry) = self.workspace.get_project_file(path) else {
             return Err(Error::NoRuleToBuildTarget(path.to_string()));
         };
@@ -408,8 +408,7 @@ impl<'a> Inner<'a> {
         );
 
         // Evaluate recipe body (`out` is available and in scope).
-        let evaluated =
-            eval::eval_build_recipe_statements(&mut scope, recipe_match.recipe.body).await?;
+        let evaluated = eval::eval_build_recipe_statements(&mut scope, recipe_match.recipe.body)?;
         outdatedness.did_use(evaluated.used);
         let evaluated = evaluated.value;
 
@@ -515,8 +514,7 @@ impl<'a> Inner<'a> {
         // Create the parent directory for the target file if it doesn't exist.
         scope
             .workspace()
-            .create_output_parent_dirs(&recipe_match.target_file)
-            .await?;
+            .create_output_parent_dirs(&recipe_match.target_file)?;
 
         let (outdated, new_cache) = outdatedness.finish();
         self.workspace
@@ -569,7 +567,7 @@ impl<'a> Inner<'a> {
 
         // Evaluate dependencies (`out` is not available in commands).
 
-        let evaluated = eval::eval_task_recipe_statements(&mut scope, recipe.body).await?;
+        let evaluated = eval::eval_task_recipe_statements(&mut scope, recipe.body)?;
         let dependency_specs = evaluated
             .build
             .iter()
@@ -618,70 +616,14 @@ impl<'a> Inner<'a> {
         for (step, run_command) in run_commands.into_iter().enumerate() {
             match run_command {
                 RunCommand::Shell(command_line) => {
-                    self.workspace
-                        .watcher
-                        .will_execute(task_id, &command_line, step, num_steps);
-                    let mut child = self
-                        .workspace
-                        .io
-                        .run_recipe_command(&command_line, self.workspace.project_root())?;
-
-                    // TODO: Avoid this heavy machinery when the watcher isn't
-                    // interested in the output.
-                    let mut reader = ChildLinesStream::new(&mut *child, true);
-                    let result = loop {
-                        match reader.next().await {
-                            Some(Err(err)) => break Err(err),
-                            Some(Ok(output)) => match output {
-                                ChildCaptureOutput::StdoutLine(line) => {
-                                    self.workspace.watcher.on_child_process_stdout_line(
-                                        task_id,
-                                        &command_line,
-                                        &line,
-                                        capture,
-                                    );
-                                }
-                                ChildCaptureOutput::StderrLine(line) => {
-                                    self.workspace.watcher.on_child_process_stderr_line(
-                                        task_id,
-                                        &command_line,
-                                        &line,
-                                    );
-                                }
-                                ChildCaptureOutput::Both(stdout, stderr) => {
-                                    self.workspace.watcher.on_child_process_stdout_line(
-                                        task_id,
-                                        &command_line,
-                                        &stdout,
-                                        capture,
-                                    );
-                                    self.workspace.watcher.on_child_process_stderr_line(
-                                        task_id,
-                                        &command_line,
-                                        &stderr,
-                                    );
-                                }
-                                ChildCaptureOutput::Exit(status) => break Ok(status),
-                            },
-                            None => panic!("child process stream ended without an exit status"),
-                        }
-                    };
-
-                    self.workspace.watcher.did_execute(
+                    self.execute_recipe_run_command(
                         task_id,
                         &command_line,
-                        &result,
+                        capture,
                         step,
                         num_steps,
-                    );
-                    match result {
-                        Ok(status) => {
-                            if !status.success() {
-                                return Err(Error::CommandFailed(status));
-                            }
-                        }
-                        Err(err) => return Err(err.into()),
-                    }
+                    )
+                    .await?;
                 }
                 RunCommand::Write(path_buf, vec) => {
                     self.workspace.io.write_file(path_buf.as_deref(), &vec)?;
@@ -720,6 +662,73 @@ impl<'a> Inner<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    async fn execute_recipe_run_command(
+        &self,
+        task_id: &TaskId,
+        command_line: &ShellCommandLine,
+        capture: bool,
+        step: usize,
+        num_steps: usize,
+    ) -> Result<(), Error> {
+        self.workspace
+            .watcher
+            .will_execute(task_id, command_line, step, num_steps);
+        let mut child = self
+            .workspace
+            .io
+            .run_recipe_command(command_line, self.workspace.project_root())?;
+
+        // TODO: Avoid this heavy machinery when the watcher isn't
+        // interested in the output.
+        let mut reader = ChildLinesStream::new(&mut *child, true);
+        let result = loop {
+            match reader.next().await {
+                Some(Err(err)) => break Err(err),
+                Some(Ok(output)) => match output {
+                    ChildCaptureOutput::StdoutLine(line) => {
+                        self.workspace.watcher.on_child_process_stdout_line(
+                            task_id,
+                            command_line,
+                            &line,
+                            capture,
+                        );
+                    }
+                    ChildCaptureOutput::StderrLine(line) => {
+                        self.workspace.watcher.on_child_process_stderr_line(
+                            task_id,
+                            command_line,
+                            &line,
+                        );
+                    }
+                    ChildCaptureOutput::Both(stdout, stderr) => {
+                        self.workspace.watcher.on_child_process_stdout_line(
+                            task_id,
+                            command_line,
+                            &stdout,
+                            capture,
+                        );
+                        self.workspace.watcher.on_child_process_stderr_line(
+                            task_id,
+                            command_line,
+                            &stderr,
+                        );
+                    }
+                    ChildCaptureOutput::Exit(status) => break Ok(status),
+                },
+                None => panic!("child process stream ended without an exit status"),
+            }
+        };
+
+        self.workspace
+            .watcher
+            .did_execute(task_id, command_line, &result, step, num_steps);
+        let status = result?;
+        if !status.success() {
+            return Err(Error::CommandFailed(status));
+        }
         Ok(())
     }
 
@@ -823,8 +832,8 @@ impl<'a> Inner<'a> {
                         .await
                 }
             },
-            TaskSpec::CheckExists(path) => self.check_exists(path.as_deref()).await,
-            TaskSpec::CheckExistsRelaxed(path) => match self.check_exists(path.as_deref()).await {
+            TaskSpec::CheckExists(path) => self.check_exists(path.as_deref()),
+            TaskSpec::CheckExistsRelaxed(path) => match self.check_exists(path.as_deref()) {
                 Err(Error::NoRuleToBuildTarget(_)) => Ok(BuildStatus::Complete(
                     task_id.clone(),
                     Outdatedness::outdated(Reason::Missing(path.into_inner())),

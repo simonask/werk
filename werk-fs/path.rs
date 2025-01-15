@@ -51,6 +51,7 @@ pub struct Path {
     path: str,
 }
 
+#[allow(clippy::unsafe_derive_deserialize)] // SAFETY: None of the `unsafe` impacts deserialization.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)] // TODO: Validate deserialized paths.
 pub struct PathBuf {
@@ -202,10 +203,8 @@ impl Path {
 
         loop {
             match (self_components.next(), other_components.next()) {
-                // self is shorter than other.
-                (None, Some(_)) => return true,
-                // self == other; path is a parent of itself.
-                (None, None) => return true,
+                // self is shorter than other, or self == other (path is a parent of itself).
+                (None, _) => return true,
                 // self is longer than other.
                 (Some(_), None) => return false,
                 (Some(lhs), Some(rhs)) => {
@@ -369,8 +368,7 @@ impl Path {
         let mut buf = root.to_path_buf().into_inner();
         for component in path.components() {
             match component {
-                Component::Root => {}
-                Component::Current => {}
+                Component::Current | Component::Root => {}
                 Component::Parent => {
                     if !buf.pop() {
                         return Err(PathError::TooManyParents);
@@ -538,8 +536,7 @@ impl Component<'_> {
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
-            Component::Root => 1,
-            Component::Current => 1,
+            Component::Current | Component::Root => 1,
             Component::Parent => 2,
             Component::Component(path) => path.len(),
         }
@@ -653,6 +650,7 @@ impl PathBuf {
         self.try_push(path).expect("invalid path component")
     }
 
+    #[expect(clippy::needless_pass_by_value)]
     pub fn try_push(&mut self, path: impl AsPath) -> Result<&mut Self, PathError> {
         let path = path.as_path()?;
         if path.is_absolute() {

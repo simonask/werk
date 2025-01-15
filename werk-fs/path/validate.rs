@@ -83,11 +83,11 @@ const fn validate_char(ch: char) -> Result<(), PathError> {
     // Must be a printable char.
     match ch {
         // C0 control characters
-        '\0'..='\x1F' | '\x7F' => Err(PathError::IllegalChar(ch)),
+        '\0'..='\x1F' | '\x7F'
         // C1 control characters
-        '\u{80}'..='\u{9F}' => Err(PathError::IllegalChar(ch)),
+        | '\u{80}'..='\u{9F}'
         // Specially disallowed
-        '\\' | ':' => Err(PathError::IllegalChar(ch)),
+        | '\\' | ':' => Err(PathError::IllegalChar(ch)),
         _ => Ok(()),
     }
 }
@@ -195,6 +195,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn fail_windows_reserved() {
         assert_eq!(
             validate_reserved("CON"),

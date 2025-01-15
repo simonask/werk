@@ -158,11 +158,7 @@ impl<'a> Workspace<'a> {
         // results.
         workspace_files.sort_unstable_keys();
 
-        let manifest = ir::Manifest {
-            globals: Default::default(),
-            task_recipes: Default::default(),
-            build_recipes: Default::default(),
-        };
+        let manifest = ir::Manifest::default();
 
         let mut workspace = Self {
             manifest,
@@ -298,6 +294,7 @@ impl<'a> Workspace<'a> {
     }
 
     /// Write outdatedness cache (`which` and `glob`)  to "<out-dir>/.werk-cache".
+    #[expect(clippy::unused_async)] // Preserving `async` for future-proofing.
     pub async fn finalize(&self) -> std::io::Result<()> {
         let cache = self.werk_cache.lock();
         write_workspace_cache(self.io, self.output_directory.as_deref(), &cache)
@@ -358,7 +355,7 @@ impl<'a> Workspace<'a> {
         path.resolve(werk_fs::Path::ROOT, self.output_directory.as_deref())
     }
 
-    pub async fn create_output_parent_dirs(&self, path: &werk_fs::Path) -> Result<(), Error> {
+    pub fn create_output_parent_dirs(&self, path: &werk_fs::Path) -> Result<(), Error> {
         let fs_path = path
             .resolve(werk_fs::Path::ROOT, self.output_directory.as_deref())
             .expect("out dir resolve error");
@@ -561,14 +558,6 @@ fn write_workspace_cache(
     output_dir: &Absolute<std::path::Path>,
     cache: &WerkCache,
 ) -> std::io::Result<()> {
-    let mut doc = match toml_edit::ser::to_document(cache) {
-        Ok(data) => data,
-        Err(err) => {
-            tracing::error!("Serialization error writing .werk-cache: {err}");
-            panic!("Serialization error writing .werk-cache: {err}");
-        }
-    };
-
     fn make_table(item: &mut toml_edit::Item) -> Option<&mut toml_edit::Table> {
         match std::mem::take(item).into_table() {
             Ok(table) => {
@@ -585,6 +574,14 @@ fn write_workspace_cache(
             }
         }
     }
+
+    let mut doc = match toml_edit::ser::to_document(cache) {
+        Ok(data) => data,
+        Err(err) => {
+            tracing::error!("Serialization error writing .werk-cache: {err}");
+            panic!("Serialization error writing .werk-cache: {err}");
+        }
+    };
 
     if let Some(build) = doc.get_mut("build") {
         let build = make_table(build).expect("build is not a table");

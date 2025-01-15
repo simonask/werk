@@ -90,7 +90,6 @@ impl PartialEq for Error {
         match (self, other) {
             (Self::Io(l0), Self::Io(r0)) => l0.kind() == r0.kind(),
             (Self::CommandNotFound(l0, l1), Self::CommandNotFound(r0, r1)) => l0 == r0 && l1 == r1,
-            (Self::NoRuleToBuildTarget(l0), Self::NoRuleToBuildTarget(r0)) => l0 == r0,
             (Self::CircularDependency(l0), Self::CircularDependency(r0)) => l0 == r0,
             (Self::DependencyFailed(l0, l1), Self::DependencyFailed(r0, r1)) => {
                 l0 == r0 && l1 == r1
@@ -99,8 +98,9 @@ impl PartialEq for Error {
             (Self::Eval(l0), Self::Eval(r0)) => l0 == r0,
             (Self::Walk(l0), Self::Walk(r0)) => l0.to_string() == r0.to_string(),
             (Self::Glob(l0), Self::Glob(r0)) => l0 == r0,
-            (Self::DuplicateCommand(l0), Self::DuplicateCommand(r0)) => l0 == r0,
-            (Self::DuplicateTarget(l0), Self::DuplicateTarget(r0)) => l0 == r0,
+            (Self::NoRuleToBuildTarget(l0), Self::NoRuleToBuildTarget(r0))
+            | (Self::DuplicateCommand(l0), Self::DuplicateCommand(r0))
+            | (Self::DuplicateTarget(l0), Self::DuplicateTarget(r0)) => l0 == r0,
             (Self::AmbiguousPattern(l0), Self::AmbiguousPattern(r0)) => l0 == r0,
             (Self::CommandFailed(l0), Self::CommandFailed(r0)) => l0 == r0,
             (Self::ClobberedWorkspace(l0), Self::ClobberedWorkspace(r0)) => l0 == r0,
@@ -207,7 +207,7 @@ pub enum EvalError {
     #[error("no implied interpolation value in this context; provide an identifier or a capture group index")]
     NoImpliedValue(Span),
     #[error("no capture group with index {1}")]
-    NoSuchCaptureGroup(Span, usize),
+    NoSuchCaptureGroup(Span, u32),
     #[error("no identifier with name {1}")]
     NoSuchIdentifier(Span, String),
     #[error("unexpected list; perhaps a join operation `{{var*}}` is missing?")]

@@ -29,9 +29,9 @@ pub type PError = crate::error::ParseError;
 pub type PResult<T> = winnow::PResult<T, PError>;
 
 pub fn parse_werk(source_code: &str) -> Result<crate::Document<'_>, crate::Error> {
-    let root = root
-        .parse(Input::new(source_code))
-        .map_err(|err| crate::Error::Werk(span(err.offset()..err.offset()), err.into_inner()))?;
+    let root = root.parse(Input::new(source_code)).map_err(|err| {
+        crate::Error::Werk(Span::from(err.offset()..err.offset()), err.into_inner())
+    })?;
     Ok(crate::Document::new(root, source_code, None))
 }
 
@@ -44,6 +44,7 @@ fn root<'a>(input: &mut Input<'a>) -> PResult<ast::Root<'a>> {
     })
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn default<T: Default>(_input: &mut Input) -> PResult<T> {
     Ok(Default::default())
 }
@@ -380,8 +381,6 @@ fn warn_expr<'a>(input: &mut Input<'a>) -> PResult<ast::WarnExpr<'a>> {
 
 /// Expression with chaining (`ast::ThenExpr`).
 fn expression_chain<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
-    let expr = expression_head.parse_next(input)?;
-
     // "|" expression_tail
     fn expression_pipe<'a>(input: &mut Input<'a>) -> PResult<ast::ChainSubExpr<'a>> {
         let (mut subexpr, span) = seq! { ast::ChainSubExpr {
@@ -396,6 +395,8 @@ fn expression_chain<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
         subexpr.span = span;
         Ok(subexpr)
     }
+
+    let expr = expression_head.parse_next(input)?;
 
     let (tail, tail_span): (Vec<_>, _) = repeat(0.., expression_pipe)
         .with_token_span()
@@ -896,7 +897,7 @@ where
         let start = input.location();
         self.0.parse_next(input).map(|value| {
             let end = input.location();
-            (value, span(start..end))
+            (value, Span::from(start..end))
         })
     }
 }
@@ -911,7 +912,7 @@ where
         let start = input.location();
         self.0.parse_next(input).map(|_| {
             let end = input.location();
-            span(start..end)
+            Span::from(start..end)
         })
     }
 }
@@ -921,7 +922,7 @@ mod tests {
     use super::Input;
     use crate::{
         ast::{self, token::Keyword as _, ws, ws_ignore},
-        parser::{span, Offset, ParsedWhitespace},
+        parser::{span, Offset, ParsedWhitespace, Span},
     };
     use winnow::Parser as _;
 
@@ -1055,7 +1056,7 @@ mod tests {
     fn string_escape() {
         let input = "*.\\{c,cpp\\}";
         let expected = ast::StringExpr {
-            span: span(0..input.len()),
+            span: Span::from(0..input.len()),
             fragments: vec![ast::StringFragment::Literal("*.{c,cpp}".into())],
         };
         let result = super::string_expr_inside_quotes
@@ -1095,7 +1096,7 @@ mod tests {
 
         let input = "hello %world% {name} <1:.ext1=.ext2>";
         let expected = ast::StringExpr {
-            span: span(0..input.len()),
+            span: Span::from(0..input.len()),
             fragments: vec![
                 ast::StringFragment::Literal("hello %world% ".into()),
                 ast::StringFragment::Interpolation(ast::Interpolation {

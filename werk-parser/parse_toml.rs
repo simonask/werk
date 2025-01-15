@@ -1,7 +1,7 @@
 use crate::{
     ast::{self, kw_ignore, token_ignore, ws_ignore},
     parse_string,
-    parser::{span, Span, Spanned as _, SpannedValue},
+    parser::{Span, Spanned as _, SpannedValue},
     Error, LocatedError,
 };
 
@@ -17,13 +17,13 @@ pub fn parse_toml<'a>(
 struct SmuggledWhitespace(String);
 impl SmuggledWhitespace {
     fn smuggle_decor(&mut self, decor: &str) -> ast::Whitespace {
-        if !decor.is_empty() {
+        if decor.is_empty() {
+            ws_ignore()
+        } else {
             let start = self.0.len();
             let end = start + decor.len();
             self.0.push_str(decor);
-            ast::Whitespace(span(start..end))
-        } else {
-            ws_ignore()
+            ast::Whitespace(Span::from(start..end))
         }
     }
 }
@@ -59,11 +59,11 @@ pub fn parse_toml_document<'a>(
                         ws_pre: smuggled_whitespace.smuggle_decor(decor),
                         statement: ast::RootStmt::Let(ast::LetStmt {
                             span,
-                            token_let: Default::default(),
+                            token_let: kw_ignore(),
                             ws_1: ws_ignore(),
                             ident,
                             ws_2: ws_ignore(),
-                            token_eq: Default::default(),
+                            token_eq: token_ignore(),
                             ws_3: ws_ignore(),
                             value: item,
                         }),
@@ -118,7 +118,7 @@ pub fn parse_toml_document<'a>(
     Ok(crate::Document::new(
         ast::Root {
             statements,
-            ws_trailing: Default::default(),
+            ws_trailing: ws_ignore(),
         },
         toml.raw(),
         Some(smuggled_whitespace.0),
@@ -133,13 +133,7 @@ fn parse_config_table<'a>(
     for (key, item) in table {
         let span = item.span().unwrap_or_default().into();
         let value = match key {
-            "out-dir" => {
-                let Some(value) = item.as_str() else {
-                    return Err(Error::ExpectedString(span));
-                };
-                ast::ConfigValue::String(ast::ConfigString(span, value.into()))
-            }
-            "edition" => {
+            "out-dir" | "edition" | "default" => {
                 let Some(value) = item.as_str() else {
                     return Err(Error::ExpectedString(span));
                 };
@@ -150,12 +144,6 @@ fn parse_config_table<'a>(
                     return Err(Error::ExpectedString(span));
                 };
                 ast::ConfigValue::Bool(ast::ConfigBool(span, value))
-            }
-            "default" => {
-                let Some(value) = item.as_str() else {
-                    return Err(Error::ExpectedString(span));
-                };
-                ast::ConfigValue::String(ast::ConfigString(span, value.into()))
             }
             _ => {
                 let span = table
@@ -170,11 +158,11 @@ fn parse_config_table<'a>(
             ws_pre: smuggled_whitespace.smuggle_decor(get_item_decor(item)),
             statement: ast::RootStmt::Config(ast::ConfigStmt {
                 span,
-                token_config: Default::default(),
+                token_config: kw_ignore(),
                 ws_1: ws_ignore(),
                 ident: ast::Ident::new(span, key),
                 ws_2: ws_ignore(),
-                token_eq: Default::default(),
+                token_eq: token_ignore(),
                 ws_3: ws_ignore(),
                 value,
             }),
@@ -346,6 +334,7 @@ fn find_main_run_expr_type<T: toml_edit::TableLike + ?Sized>(
     Ok(found)
 }
 
+#[allow(clippy::too_many_lines)]
 fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
     span: Span,
     table: &T,
@@ -364,7 +353,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
         ExprType::Env => parse_item_string_expr(item).map(|value| {
             ast::Expr::Env(ast::EnvExpr {
                 span,
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: value,
             })
@@ -372,7 +361,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
         ExprType::Shell => parse_item_string_expr(item).map(|value| {
             ast::Expr::Shell(ast::ShellExpr {
                 span,
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: value,
             })
@@ -380,7 +369,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
         ExprType::Which => parse_item_string_expr(item).map(|value| {
             ast::Expr::Which(ast::WhichExpr {
                 span,
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: value,
             })
@@ -388,7 +377,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
         ExprType::Glob => parse_item_string_expr(item).map(|value| {
             ast::Expr::Glob(ast::GlobExpr {
                 span,
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: value,
             })
@@ -396,7 +385,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
         ExprType::Error => parse_item_string_expr(item).map(|value| {
             ast::Expr::Error(ast::ErrorExpr {
                 span,
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: value,
             })
@@ -436,7 +425,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                             span,
                             pattern,
                             ws_1: ws_ignore(),
-                            token_fat_arrow: Default::default(),
+                            token_fat_arrow: kw_ignore(),
                             ws_2: ws_ignore(),
                             expr: value,
                         },
@@ -451,7 +440,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                     param: ast::MatchBody::Braced(ast::Body {
                         token_open: ast::token::Token(span.start),
                         statements: arms,
-                        ws_trailing: Default::default(),
+                        ws_trailing: ws_ignore(),
                         token_close: ast::token::Token(span.end),
                     }),
                 })
@@ -460,7 +449,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                 let separator = parse_item_string_expr(item)?;
                 ast::ExprOp::Join(ast::JoinExpr {
                     span,
-                    token: Default::default(),
+                    token: kw_ignore(),
                     ws_1: ws_ignore(),
                     param: separator,
                 })
@@ -469,7 +458,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                 let message = parse_item_string_expr(item)?;
                 ast::ExprOp::Warn(ast::WarnExpr {
                     span,
-                    token: Default::default(),
+                    token: kw_ignore(),
                     ws_1: ws_ignore(),
                     param: message,
                 })
@@ -478,7 +467,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                 let message = parse_item_string_expr(item)?;
                 ast::ExprOp::Info(ast::InfoExpr {
                     span,
-                    token: Default::default(),
+                    token: kw_ignore(),
                     ws_1: ws_ignore(),
                     param: message,
                 })
@@ -487,7 +476,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                 let message = parse_item_string_expr(item)?;
                 ast::ExprOp::Error(ast::ErrorExpr {
                     span,
-                    token: Default::default(),
+                    token: kw_ignore(),
                     ws_1: ws_ignore(),
                     param: message,
                 })
@@ -799,6 +788,7 @@ fn parse_item_pattern_expr(toml: &toml_edit::Item) -> Result<ast::PatternExpr<'_
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn parse_command_recipe<'a>(
     name: ast::Ident<'a>,
     toml: &'a toml_edit::Item,
@@ -932,6 +922,7 @@ fn parse_command_recipe<'a>(
     ))
 }
 
+#[allow(clippy::too_many_lines)]
 fn parse_build_recipe<'a>(
     pattern: ast::PatternExpr<'a>,
     toml: &'a toml_edit::Item,
@@ -990,7 +981,7 @@ fn parse_build_recipe<'a>(
             ws_pre: ws_ignore(),
             statement: ast::BuildRecipeStmt::From(ast::FromStmt {
                 span: from.span(),
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: from,
             }),
@@ -1003,7 +994,7 @@ fn parse_build_recipe<'a>(
             ws_pre: ws_ignore(),
             statement: ast::BuildRecipeStmt::Depfile(ast::DepfileStmt {
                 span: depfile.span(),
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: depfile,
             }),
@@ -1016,7 +1007,7 @@ fn parse_build_recipe<'a>(
             ws_pre: ws_ignore(),
             statement: ast::BuildRecipeStmt::Info(ast::InfoExpr {
                 span: pre.span,
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: pre,
             }),
@@ -1028,7 +1019,7 @@ fn parse_build_recipe<'a>(
         ws_pre: ws_ignore(),
         statement: ast::BuildRecipeStmt::Run(ast::RunStmt {
             span: value.span(),
-            token: Default::default(),
+            token: kw_ignore(),
             ws_1: ws_ignore(),
             param: value,
         }),
@@ -1040,7 +1031,7 @@ fn parse_build_recipe<'a>(
             ws_pre: ws_ignore(),
             statement: ast::BuildRecipeStmt::Info(ast::InfoExpr {
                 span: post.span,
-                token: Default::default(),
+                token: kw_ignore(),
                 ws_1: ws_ignore(),
                 param: post,
             }),
@@ -1052,7 +1043,7 @@ fn parse_build_recipe<'a>(
         decor_pre,
         ast::BuildRecipe {
             span,
-            token_build: Default::default(),
+            token_build: kw_ignore(),
             ws_1: ws_ignore(),
             pattern,
             ws_2: ws_ignore(),

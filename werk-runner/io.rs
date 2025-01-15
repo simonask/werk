@@ -222,27 +222,6 @@ impl Io for RealSystem {
         path: &Absolute<Path>,
         settings: &GlobSettings,
     ) -> Result<Vec<DirEntry>, Error> {
-        let GlobSettings {
-            git_ignore,
-            git_ignore_global,
-            git_ignore_exclude,
-            git_ignore_from_parents,
-            dot_ignore,
-            ignore_explicitly,
-        } = settings.clone();
-
-        let mut walker = ignore::WalkBuilder::new(path);
-        walker
-            .git_ignore(git_ignore)
-            .git_global(git_ignore_global)
-            .git_exclude(git_ignore_exclude)
-            .ignore(dot_ignore)
-            .parents(git_ignore_from_parents);
-
-        walker.filter_entry(move |entry| !ignore_explicitly.is_match(entry.path()));
-
-        let walker = walker.build_parallel();
-
         struct Builder<'s>(&'s Mutex<Result<Vec<DirEntry>, Error>>);
         impl<'s> ignore::ParallelVisitorBuilder<'s> for Builder<'s> {
             fn build(&mut self) -> Box<dyn ignore::ParallelVisitor + 's> {
@@ -287,6 +266,27 @@ impl Io for RealSystem {
                 }
             }
         }
+
+        let GlobSettings {
+            git_ignore,
+            git_ignore_global,
+            git_ignore_exclude,
+            git_ignore_from_parents,
+            dot_ignore,
+            ignore_explicitly,
+        } = settings.clone();
+
+        let mut walker = ignore::WalkBuilder::new(path);
+        walker
+            .git_ignore(git_ignore)
+            .git_global(git_ignore_global)
+            .git_exclude(git_ignore_exclude)
+            .ignore(dot_ignore)
+            .parents(git_ignore_from_parents);
+
+        walker.filter_entry(move |entry| !ignore_explicitly.is_match(entry.path()));
+
+        let walker = walker.build_parallel();
 
         let results = Mutex::new(Ok(Vec::new()));
         walker.visit(&mut Builder(&results));

@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use macro_rules_attribute::apply;
 use tests::mock_io;
 
@@ -89,8 +91,8 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     assert!(test.io.did_run_during_build(&ShellCommandLine {
         program: program_path("write"),
         arguments: vec!["debug".into(), output_file("env-dep").display().to_string()],
-        env: Default::default(),
-        env_remove: Default::default()
+        env: BTreeMap::default(),
+        env_remove: BTreeSet::default()
     }));
 
     // Write .werk-cache.

@@ -118,17 +118,20 @@ impl SemanticHash for ExprOp<'_> {
         match self {
             ExprOp::Match(expr) => expr.semantic_hash(state),
             ExprOp::Map(expr) => expr.semantic_hash(state),
-            ExprOp::Flatten(_) => (),
             ExprOp::Filter(expr) => expr.semantic_hash(state),
             ExprOp::FilterMatch(expr) => expr.semantic_hash(state),
             ExprOp::Discard(expr) => expr.semantic_hash(state),
             ExprOp::Join(expr) => expr.semantic_hash(state),
             ExprOp::Split(expr) => expr.semantic_hash(state),
-            ExprOp::Lines(_) => (),
             // Contents of messages do not contribute to outdatedness.
-            ExprOp::Info(_) | ExprOp::Warn(_) | ExprOp::Error(_) => (),
-            // Assertions do not contribute to outdatedness.
-            ExprOp::AssertEq(_) | ExprOp::AssertMatch(_) => (),
+            ExprOp::Info(_)
+            | ExprOp::Warn(_)
+            | ExprOp::Error(_)
+            | ExprOp::AssertEq(_)
+            | ExprOp::AssertMatch(_)
+            // `flatten` and `lines` are caught by the discriminant
+            | ExprOp::Flatten(_) | ExprOp::Lines(_)
+            => (),
         }
     }
 }
@@ -192,6 +195,16 @@ impl<'a> MatchBody<'a> {
             MatchBody::Single(match_arm) => MatchBodyIter::Single(Some(match_arm)),
             MatchBody::Braced(body) => MatchBodyIter::Braced(body.statements.iter()),
         }
+    }
+}
+
+impl<'a, 'b> IntoIterator for &'b MatchBody<'a> {
+    type IntoIter = MatchBodyIter<'a, 'b>;
+    type Item = &'b MatchArm<'a>;
+
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 

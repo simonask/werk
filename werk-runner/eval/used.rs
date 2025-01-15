@@ -91,7 +91,7 @@ impl BitOrAssign for Used {
 impl BitOrAssign<&Used> for Used {
     fn bitor_assign(&mut self, rhs: &Used) {
         if self.vars.is_empty() {
-            self.vars = rhs.vars.clone();
+            self.vars.clone_from(&rhs.vars);
             return;
         }
 

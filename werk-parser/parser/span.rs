@@ -18,6 +18,7 @@ impl Span {
     }
 
     #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
     pub fn from_offset_and_len(offset: Offset, len: usize) -> Self {
         if offset.is_ignored() {
             Self::ignore()
@@ -125,16 +126,6 @@ impl From<std::ops::Range<u32>> for Span {
     }
 }
 
-impl From<std::ops::Range<i32>> for Span {
-    #[inline]
-    fn from(value: std::ops::Range<i32>) -> Self {
-        Self {
-            start: Offset(value.start as _),
-            end: Offset(value.end as _),
-        }
-    }
-}
-
 impl From<std::ops::Range<Offset>> for Span {
     #[inline]
     fn from(value: std::ops::Range<Offset>) -> Self {
@@ -146,6 +137,7 @@ impl From<std::ops::Range<Offset>> for Span {
 }
 
 impl From<std::ops::Range<usize>> for Span {
+    #[allow(clippy::cast_possible_truncation)]
     fn from(value: std::ops::Range<usize>) -> Self {
         Self {
             start: Offset(value.start as u32),
@@ -181,7 +173,8 @@ pub trait Spanned {
     fn span(&self) -> Span;
 }
 
-pub fn span(span: impl Into<Span>) -> Span {
+#[must_use]
+pub fn span(span: std::ops::Range<u32>) -> Span {
     span.into()
 }
 
