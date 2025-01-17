@@ -22,7 +22,7 @@ actually produce output. Furthermore, it can be difficult to write
 cross-platform `Justfile`s, usually relying on a platform-specific shell
 availability.
 
-For mode details, consult the [documentation](documentation/README.md).
+For mode details, consult the [the book](https://simonask.github.io/werk).
 
 ## Installation instructions
 
@@ -48,7 +48,7 @@ Rust and Cargo installed.
 
 ## Features and limitations
 
-See [Features and limitations](documentation/features.md).
+See [Features and limitations](https://simonask.github.io/werk/features.html).
 
 ## Project non-goals
 
@@ -71,7 +71,7 @@ See [Features and limitations](documentation/features.md).
 
 ## Examples
 
-See [Examples](documentation/examples.md).
+See [Examples](./examples).
 
 ## Roadmap
 
