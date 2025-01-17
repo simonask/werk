@@ -10,16 +10,17 @@ use werk_parser::parser::Spanned as _;
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
 
 #[derive(Debug, clap::Parser)]
+#[command(version)]
 pub struct Args {
     /// The target to build.
     pub target: Option<String>,
 
     #[clap(short, long)]
-    /// The path to the werk file. Defaults to searching for `werk.toml` in the
-    /// working dir and its parents.
+    /// The path to the Werkfile. Defaults to searching for `Werkfile` in the
+    /// current working directory and its parents.
     pub file: Option<std::path::PathBuf>,
 
-    /// List the available targets.
+    /// List the available recipes.
     #[clap(short, long)]
     pub list: bool,
 
@@ -28,12 +29,11 @@ pub struct Args {
     #[clap(long)]
     pub dry_run: bool,
 
-    /// Print recipe shell commands as they are executed. Implied by
-    /// `--verbose`.
+    /// Print recipe commands as they are executed. Implied by `--verbose`.
     #[clap(long)]
     pub print_commands: bool,
 
-    /// Print build targets that were not rebuilt because they were up-to-date.
+    /// Print recipes that were up-to-date.
     /// Implied by `--verbose`.
     #[clap(long)]
     pub print_fresh: bool,
@@ -43,7 +43,7 @@ pub struct Args {
     #[clap(long)]
     pub no_capture: bool,
 
-    /// For each outdated recipe, explain why it was outdated. Implied by
+    /// For each outdated target, explain why it was outdated. Implied by
     /// `--verbose`.
     #[clap(long)]
     pub explain: bool,
@@ -63,7 +63,7 @@ pub struct Args {
     pub jobs: Option<usize>,
 
     /// Override the workspace directory. Defaults to the directory containing
-    /// werk.toml.
+    /// Werkfile.
     #[clap(long)]
     pub workspace_dir: Option<std::path::PathBuf>,
 
@@ -71,18 +71,13 @@ pub struct Args {
     #[clap(long)]
     pub output_dir: Option<std::path::PathBuf>,
 
-    /// Override variable in the werk.toml's `[global]` section. This takes the
-    /// form `name=value`.
+    /// Override global variable. This takes the form `name=value`.
     #[clap(long, short = 'D')]
     pub define: Vec<String>,
 
     /// Enable debug logging to stdout.
     ///
-    /// The value is a logging directive (same syntax as the conventional
-    /// `RUST_LOG` environment variable), so it can be a log level like "info"
-    /// or "trace", or a module path like "werk_runner=debug". If passed without
-    /// a directive string, this enables logging at the "info" level for only
-    /// the `werk` runner.
+    /// This takes a logging directive like `RUST_LOG`.
     #[clap(long)]
     pub log: Option<Option<String>>,
 }
@@ -102,9 +97,9 @@ pub enum ColorChoice {
 /// Terminal output mode.
 #[derive(Clone, Copy, Default, Debug, clap::ValueEnum)]
 pub enum OutputChoice {
-    /// Choose the best output format for the current terminal.
+    /// Provide friendly user feedback assuming an ANSI terminal.
     #[default]
-    Auto,
+    Ansi,
     /// Emit the progress as log statements (assuming `WERK_LOG` is set to a value).
     Log,
     /// Report progress as JSON to stdout. This also disables color output.

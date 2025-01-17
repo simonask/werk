@@ -1,3 +1,38 @@
 # Summary
 
-- [Chapter 1](./chapter_1.md)
+- [Introduction](./introduction.md)
+- [Getting started](./getting_started.md)
+- [My first Werkfile](./first_example.md)
+- [Features and limitations](./features.md)
+  - [Why not `make`?](./why_not_make.md)
+  - [Why not `just`?](./why_not_just.md)
+  - [Why not `$toolname`?](./why_not_others.md)
+
+# User Guide
+
+- [Workspace](./workspace.md)
+  - [Paths](./paths.md)
+  - [.werk-cache](./werk_cache.md)
+- [Task recipes](./task_recipes.md)
+- [Build recipes](./build_recipes.md)
+  - [When is a target outdated?](./outdatedness.md)
+  - [Depfile support](./depfile_support.md)
+- [Configure your build](./build_config.md)
+
+# Reference Guide
+
+- [Language Reference](./language.md)
+  - [Variables](./language/variables.md)
+  - [Expressions](./language/expressions.md)
+  - [String Interpolation](./language/strings.md)
+  - [Patterns](./language/patterns.md)
+  - [Recipe commands](./language/recipe_commands.md)
+  - [Built-in variables](./language/builtins.md)
+- [Command-line reference](command_line.md)
+
+-----------------------------
+
+- [Example: C program](./examples/c.md)
+- [Example: Cargo project](./examples/cargo.md)
+- [Example: GLSL shaders](./examples/shaders.md)
+- [Example: Cargo + WASM + Assets](./examples/complex.md)

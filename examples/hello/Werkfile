@@ -1,0 +1,5 @@
+config default = "hello"
+
+task hello {
+    info "Hello, World!"
+}

@@ -5,5 +5,13 @@ multilingual = false
 src = "src"
 title = "Werk Book"
 
+[build]
+create-missing = false
+
 [rust]
 edition = "2021"
+
+[output.html]
+site-url = "/werk/"
+git-repository-url = "https://github.com/simonask/werk"
+edit-url-template = "https://github.com/simonask/werk/edit/main/book/{path}"

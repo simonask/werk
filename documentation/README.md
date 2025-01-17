@@ -36,10 +36,11 @@ Examples of suitable use cases:
   binaries, or downloading static file dependencies.
 - Driving other build systems.
 
-Examples of less suitable use cases, for now:
+Examples of less suitable use cases:
 
-- Building complicated C++ libraries with many dependencies.
-- Building complicated projects using advanced features like cross-compilation.
+- Building cross-platform C/C++ projects with system dependencies. There is no
+  built-in way to discover "traditional" dependencies via `pkg-config`, `vcpkg`,
+  or similar. Use CMake instead.
 - Builds requiring detailed concurrency management. Werk potentially runs all
   independent recipes in parallel, and there is no way to limit parallelism
   outside of the `--jobs` parameter.
