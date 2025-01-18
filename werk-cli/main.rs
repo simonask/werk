@@ -9,8 +9,19 @@ use werk_fs::Absolute;
 use werk_parser::parser::Spanned as _;
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
 
+shadow_rs::shadow!(build);
+
+fn version_string() -> String {
+    format!(
+        "{} ({} {})",
+        build::PKG_VERSION,
+        &build::COMMIT_HASH[0..8],
+        &build::BUILD_TIME[0..10]
+    )
+}
+
 #[derive(Debug, clap::Parser)]
-#[command(version)]
+#[command(version = version_string())]
 pub struct Args {
     /// The target to build.
     pub target: Option<String>,
