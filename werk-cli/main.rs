@@ -55,7 +55,7 @@ pub struct Args {
     #[clap(long, default_value = "auto")]
     pub color: ColorChoice,
 
-    #[clap(long, default_value = "auto")]
+    #[clap(long, default_value = "ansi")]
     pub output_format: OutputChoice,
 
     /// Number of tasks to execute in parallel. Defaults to the number of CPU cores.
