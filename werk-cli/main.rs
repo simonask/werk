@@ -69,6 +69,15 @@ pub struct Args {
     #[clap(long, short)]
     pub verbose: bool,
 
+    /// Build the target, then keep rebuilding it when the workspace changes.
+    #[clap(long, short)]
+    pub watch: bool,
+
+    /// Number of milliseconds to wait after a filesystem change before
+    /// rebuilding the target. Implies `--watch`.
+    #[clap(long, default_value = "250")]
+    pub watch_delay: u64,
+
     #[clap(long, default_value = "auto")]
     pub color: ColorChoice,
 
