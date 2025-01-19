@@ -165,7 +165,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     };
     tracing::info!("Using werkfile: {}", werkfile.as_ref().display());
 
-    let watcher = Arc::new(watcher::StdoutWatcher::new(watcher::OutputSettings {
+    let watcher = Arc::new(watcher::AnsiWatcher::new(watcher::OutputSettings {
         logging_enabled: args.log.is_some(),
         color: args.color,
         print_recipe_commands: args.print_commands | args.verbose,
@@ -292,7 +292,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     result.map(|_| ()).map_err(display_error)
 }
 
-pub fn print_list(doc: &werk_runner::ir::Manifest, watcher: &watcher::StdoutWatcher) {
+pub fn print_list(doc: &werk_runner::ir::Manifest, watcher: &watcher::AnsiWatcher) {
     let globals = doc
         .globals
         .iter()
