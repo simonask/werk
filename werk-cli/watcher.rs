@@ -18,7 +18,7 @@ pub struct OutputSettings {
     pub print_recipe_commands: bool,
     pub print_fresh: bool,
     pub dry_run: bool,
-    pub no_capture: bool,
+    pub quiet: bool,
     pub explain: bool,
 }
 

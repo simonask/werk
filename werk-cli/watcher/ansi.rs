@@ -59,7 +59,7 @@ impl<const LINEAR: bool> TerminalWatcher<LINEAR> {
 
 struct Renderer<const LINEAR: bool> {
     stderr: AutoStream<std::io::Stderr>,
-    state: RenderState<LINEAR>,
+    state: RenderState,
     needs_clear: bool,
 }
 
@@ -67,7 +67,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
     /// Render zero or more lines above the status and re-render the status.
     fn render_lines<F>(&mut self, render: F) -> std::io::Result<()>
     where
-        F: FnOnce(&mut dyn Write, &mut RenderState<LINEAR>) -> std::io::Result<()>,
+        F: FnOnce(&mut dyn Write, &mut RenderState) -> std::io::Result<()>,
     {
         if LINEAR {
             render(&mut self.stderr, &mut self.state)
@@ -84,14 +84,30 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
     }
 }
 
-struct RenderState<const LINEAR: bool> {
-    current_tasks: IndexMap<TaskId, (usize, usize)>,
+struct RenderState {
+    current_tasks: IndexMap<TaskId, TaskStatus>,
     num_tasks: usize,
     num_completed_tasks: usize,
     render_buffer: String,
     spinner_frame: u64,
     last_spinner_tick: std::time::Instant,
     settings: OutputSettings,
+}
+
+struct TaskStatus {
+    pub progress: usize,
+    pub num_steps: usize,
+    pub captured: Option<Vec<u8>>,
+}
+
+impl TaskStatus {
+    pub fn new(num_steps: usize) -> Self {
+        Self {
+            progress: 0,
+            num_steps,
+            captured: None,
+        }
+    }
 }
 
 impl<const LINEAR: bool> Renderer<LINEAR> {
@@ -103,12 +119,8 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
     }
 }
 
-impl<const LINEAR: bool> RenderState<LINEAR> {
+impl RenderState {
     pub fn render_progress(&mut self, out: &mut dyn Write) {
-        if LINEAR {
-            return;
-        }
-
         let now = std::time::Instant::now();
         if now.duration_since(self.last_spinner_tick) > std::time::Duration::from_millis(100) {
             self.spinner_frame += 1;
@@ -168,7 +180,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
     pub fn will_build(&mut self, task_id: &TaskId, num_steps: usize, outdatedness: &Outdatedness) {
         self.state
             .current_tasks
-            .insert(task_id.clone(), (0, num_steps));
+            .insert(task_id.clone(), TaskStatus::new(num_steps));
         self.state.num_tasks += 1;
 
         _ = self.render_lines(|out, state| {
@@ -200,10 +212,10 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
     }
 
     fn did_build(&mut self, task_id: &TaskId, result: &Result<BuildStatus, Error>) {
-        self.state
-            .current_tasks
-            .shift_remove(task_id)
-            .unwrap_or_default();
+        let Some(finished) = self.state.current_tasks.shift_remove(task_id) else {
+            return;
+        };
+
         self.state.num_completed_tasks += 1;
 
         _ = self.render_lines(|out, state| {
@@ -227,11 +239,16 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
                 Ok(BuildStatus::Exists(..)) => {
                     // Print nothing for file existence checks.
                 }
-                Err(err) => writeln!(
-                    out,
-                    "{} {task_id}\n{err}",
-                    Bracketed("ERROR").bright_red().bold()
-                )?,
+                Err(err) => {
+                    writeln!(
+                        out,
+                        "{} {task_id}\n{err}",
+                        Bracketed("ERROR").bright_red().bold()
+                    )?;
+                    if let Some(captured) = finished.captured {
+                        out.write_all(&captured)?;
+                    }
+                }
             }
             Ok(())
         });
@@ -244,11 +261,11 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
         step: usize,
         num_steps: usize,
     ) {
-        *self
-            .state
-            .current_tasks
-            .get_mut(task_id)
-            .expect("task not registered") = (step + 1, num_steps);
+        let Some(status) = self.state.current_tasks.get_mut(task_id) else {
+            return;
+        };
+        status.progress = step + 1;
+        status.num_steps = num_steps;
 
         // Avoid taking the stdout lock if we aren't actually going to render anything.
         let print_something =
@@ -270,16 +287,27 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 
     fn on_child_process_stderr_line(
         &mut self,
-        _task_id: &TaskId,
+        task_id: &TaskId,
         _command: &ShellCommandLine,
         line_without_eol: &[u8],
-        capture: bool,
+        quiet: bool,
     ) {
-        _ = self.render_lines(|out, _| {
-            out.write_all(line_without_eol)?;
-            out.write_all(b"\n")?;
-            Ok(())
-        });
+        if quiet | self.state.settings.quiet {
+            // Capture the output for later in case the task fails.
+            let Some(status) = self.state.current_tasks.get_mut(task_id) else {
+                return;
+            };
+            let captured = status.captured.get_or_insert_default();
+            captured.extend_from_slice(line_without_eol);
+            captured.push(b'\n');
+        } else {
+            // Print the line immediately.
+            _ = self.render_lines(|out, _| {
+                out.write_all(line_without_eol)?;
+                out.write_all(b"\n")?;
+                Ok(())
+            });
+        }
     }
 
     fn did_execute(
@@ -376,10 +404,10 @@ impl<const LINEAR: bool> werk_runner::Watcher for TerminalWatcher<LINEAR> {
         task_id: &TaskId,
         command: &ShellCommandLine,
         line_without_eol: &[u8],
-        capture: bool,
+        quiet: bool,
     ) {
         self.inner
             .lock()
-            .on_child_process_stderr_line(task_id, command, line_without_eol, capture);
+            .on_child_process_stderr_line(task_id, command, line_without_eol, quiet);
     }
 }

@@ -20,9 +20,9 @@ pub trait Watcher: Send + Sync {
         task_id: &TaskId,
         command: &ShellCommandLine,
         line_without_eol: &[u8],
-        capture: bool,
+        quiet: bool,
     ) {
-        _ = (task_id, command, line_without_eol);
+        _ = (task_id, command, line_without_eol, quiet);
     }
 
     /// Run command is finished executing, or failed to start. Note that

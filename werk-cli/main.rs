@@ -50,10 +50,10 @@ pub struct Args {
     #[clap(long)]
     pub print_fresh: bool,
 
-    /// Forward the stdout of all executed commands to the terminal, even when
-    /// successful. Stderr output is always forwarded. Implied by `--verbose`.
+    /// Silence informational output from executed commands, only printing to
+    /// the terminal when a recipe fails.
     #[clap(long)]
-    pub no_capture: bool,
+    pub quiet: bool,
 
     /// For each outdated target, explain why it was outdated. Implied by
     /// `--verbose`.
@@ -252,7 +252,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
         print_recipe_commands: args.print_commands | args.verbose,
         print_fresh: args.print_fresh | args.verbose,
         dry_run: args.dry_run,
-        no_capture: args.no_capture | args.verbose,
+        quiet: args.quiet && !args.verbose,
         explain: args.explain | args.verbose,
     });
 
