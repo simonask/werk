@@ -39,7 +39,7 @@ impl Display for Step {
 
 pub fn make_watcher(settings: OutputSettings) -> Arc<dyn werk_runner::Watcher> {
     match settings.output {
-        OutputChoice::Json => Arc::new(json::JsonWatcher::new(std::io::stdout())),
+        OutputChoice::Json => Arc::new(json::JsonWatcher::new()),
         OutputChoice::Log => Arc::new(log::LogWatcher::new(settings)),
         OutputChoice::Ansi => {
             let stderr = AutoStream::new(std::io::stderr(), settings.color);
