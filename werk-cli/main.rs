@@ -55,12 +55,17 @@ pub struct Args {
     #[clap(long)]
     pub quiet: bool,
 
+    /// Print all informational output from executed commands to the terminal,
+    /// even for quiet recipes. Implied by `--verbose`.
+    #[clap(long)]
+    pub loud: bool,
+
     /// For each outdated target, explain why it was outdated. Implied by
     /// `--verbose`.
     #[clap(long)]
     pub explain: bool,
 
-    /// Shorthand for `--explain --print-commands --print-fresh --no-capture`.
+    /// Shorthand for `--explain --print-commands --print-fresh --no-capture --loud`.
     #[clap(long, short)]
     pub verbose: bool,
 
@@ -252,7 +257,8 @@ async fn try_main(args: Args) -> Result<(), Error> {
         print_recipe_commands: args.print_commands | args.verbose,
         print_fresh: args.print_fresh | args.verbose,
         dry_run: args.dry_run,
-        quiet: args.quiet && !args.verbose,
+        quiet: args.quiet && !args.verbose && !args.loud,
+        loud: args.loud | args.verbose,
         explain: args.explain | args.verbose,
     });
 

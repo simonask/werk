@@ -19,6 +19,7 @@ pub struct OutputSettings {
     pub print_fresh: bool,
     pub dry_run: bool,
     pub quiet: bool,
+    pub loud: bool,
     pub explain: bool,
 }
 

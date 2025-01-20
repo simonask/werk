@@ -292,7 +292,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
         line_without_eol: &[u8],
         quiet: bool,
     ) {
-        if quiet | self.state.settings.quiet {
+        if (quiet | self.state.settings.quiet) && !self.state.settings.loud {
             // Capture the output for later in case the task fails.
             let Some(status) = self.state.current_tasks.get_mut(task_id) else {
                 return;
