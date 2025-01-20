@@ -21,6 +21,7 @@ impl DryRun {
 #[expect(clippy::box_collection, clippy::redundant_allocation)]
 struct DryRunChild {
     stdin: Option<Pin<Box<Vec<u8>>>>,
+    stdout: Option<Pin<Box<&'static [u8]>>>,
     stderr: Option<Pin<Box<&'static [u8]>>>,
 }
 
@@ -37,6 +38,10 @@ impl Child for DryRunChild {
 
     fn take_stdin(&mut self) -> Option<Pin<Box<dyn smol::io::AsyncWrite + Send>>> {
         self.stdin.take().map(|v| v as _)
+    }
+
+    fn take_stdout(&mut self) -> Option<Pin<Box<dyn smol::io::AsyncRead + Send>>> {
+        self.stdout.take().map(|v| v as _)
     }
 
     fn take_stderr(&mut self) -> Option<Pin<Box<dyn smol::io::AsyncRead + Send>>> {
@@ -56,6 +61,7 @@ impl werk_runner::Io for DryRun {
         &self,
         command_line: &ShellCommandLine,
         _working_dir: &Absolute<std::path::Path>,
+        _forward_stdout: bool,
     ) -> std::io::Result<Box<dyn Child>> {
         tracing::info!("[DRY-RUN] Would run: {}", command_line.display());
         Ok(Box::new(DryRunChild::default()))

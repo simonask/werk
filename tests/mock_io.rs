@@ -658,6 +658,7 @@ impl MockIo {
 }
 
 struct MockChild {
+    stdout: Option<Pin<Box<futures::io::Cursor<Vec<u8>>>>>,
     stderr: Option<Pin<Box<futures::io::Cursor<Vec<u8>>>>>,
     status: Option<Pin<Box<futures::future::Ready<std::io::Result<std::process::ExitStatus>>>>>,
 }
@@ -678,6 +679,10 @@ impl werk_runner::Child for MockChild {
 
     fn take_stdin(&mut self) -> Option<std::pin::Pin<Box<dyn futures::AsyncWrite + Send>>> {
         None
+    }
+
+    fn take_stdout(&mut self) -> Option<std::pin::Pin<Box<dyn futures::AsyncRead + Send>>> {
+        self.stdout.take().map(|v| v as _)
     }
 
     fn take_stderr(&mut self) -> Option<std::pin::Pin<Box<dyn futures::AsyncRead + Send>>> {
@@ -701,6 +706,7 @@ impl werk_runner::Io for MockIo {
         &self,
         command_line: &ShellCommandLine,
         _working_dir: &Absolute<std::path::Path>,
+        forward_stdout: bool,
     ) -> std::io::Result<Box<dyn werk_runner::Child>> {
         tracing::trace!("run during build: {}", command_line.display());
         self.oplog
@@ -715,10 +721,19 @@ impl werk_runner::Io for MockIo {
             ));
         };
         let mut fs = self.filesystem.lock();
-        let std::process::Output { status, stderr, .. } = program(command_line, &mut fs)?;
+        let std::process::Output {
+            status,
+            stderr,
+            stdout,
+        } = program(command_line, &mut fs)?;
 
         Ok(Box::new(MockChild {
             stderr: Some(Box::pin(futures::io::Cursor::new(stderr))),
+            stdout: if forward_stdout {
+                Some(Box::pin(futures::io::Cursor::new(stdout)))
+            } else {
+                None
+            },
             status: Some(Box::pin(futures::future::ready(Ok(status)))),
         }))
     }

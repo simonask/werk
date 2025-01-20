@@ -25,6 +25,15 @@ pub trait Watcher: Send + Sync {
         _ = (task_id, command, line_without_eol, quiet);
     }
 
+    fn on_child_process_stdout_line(
+        &self,
+        task_id: &TaskId,
+        command: &ShellCommandLine,
+        line_without_eol: &[u8],
+    ) {
+        _ = (task_id, command, line_without_eol);
+    }
+
     /// Run command is finished executing, or failed to start. Note that
     /// `result` will be `Ok` even if the command returned an error, allowing
     /// access to the command's stdout/stderr.

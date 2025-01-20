@@ -1,3 +1,4 @@
+use anstream::stream::IsTerminal;
 use indexmap::IndexMap;
 use owo_colors::OwoColorize as _;
 use parking_lot::Mutex;
@@ -77,6 +78,26 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
                 self.needs_clear = false;
             }
             render(&mut self.stderr, &mut self.state)?;
+            self.state.render_progress(&mut self.stderr);
+            self.needs_clear = true;
+            Ok(())
+        }
+    }
+
+    /// Render zero or more lines above the status and re-render the status.
+    fn render_lines_stdout<F>(&mut self, render: F) -> std::io::Result<()>
+    where
+        F: FnOnce(&mut dyn Write, &mut RenderState) -> std::io::Result<()>,
+    {
+        let mut stdout = std::io::stdout();
+        if LINEAR || !stdout.is_terminal() {
+            render(&mut stdout, &mut self.state)
+        } else {
+            if self.needs_clear {
+                self.stderr.write_all(b"\x1B[K")?;
+                self.needs_clear = false;
+            }
+            render(&mut stdout, &mut self.state)?;
             self.state.render_progress(&mut self.stderr);
             self.needs_clear = true;
             Ok(())
@@ -310,6 +331,20 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
         }
     }
 
+    fn on_child_process_stdout_line(
+        &mut self,
+        _task_id: &TaskId,
+        _command: &ShellCommandLine,
+        line_without_eol: &[u8],
+    ) {
+        // Print the line immediately.
+        _ = self.render_lines_stdout(|out, _| {
+            out.write_all(line_without_eol)?;
+            out.write_all(b"\n")?;
+            Ok(())
+        });
+    }
+
     fn did_execute(
         &mut self,
         task_id: &TaskId,
@@ -409,5 +444,16 @@ impl<const LINEAR: bool> werk_runner::Watcher for TerminalWatcher<LINEAR> {
         self.inner
             .lock()
             .on_child_process_stderr_line(task_id, command, line_without_eol, quiet);
+    }
+
+    fn on_child_process_stdout_line(
+        &self,
+        task_id: &TaskId,
+        command: &ShellCommandLine,
+        line_without_eol: &[u8],
+    ) {
+        self.inner
+            .lock()
+            .on_child_process_stdout_line(task_id, command, line_without_eol);
     }
 }

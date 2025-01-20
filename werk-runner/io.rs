@@ -27,6 +27,7 @@ pub trait Io: Send + Sync + 'static {
         &self,
         command_line: &ShellCommandLine,
         working_dir: &Absolute<Path>,
+        forward_stdout: bool,
     ) -> Result<Box<dyn Child>, std::io::Error>;
 
     /// Run a command as part of evaluating the contents of a werk.toml file.
@@ -158,6 +159,7 @@ impl Io for RealSystem {
         &self,
         command_line: &ShellCommandLine,
         working_dir: &Absolute<Path>,
+        forward_stdout: bool,
     ) -> Result<Box<dyn Child>, std::io::Error> {
         let mut command = smol::process::Command::new(&*command_line.program);
         command
@@ -171,7 +173,11 @@ impl Io for RealSystem {
             .stdin(std::process::Stdio::piped())
             // Never capture stdout in recipe commands. By convention, all
             // informational output goes to stderr.
-            .stdout(std::process::Stdio::null())
+            .stdout(if forward_stdout {
+                std::process::Stdio::piped()
+            } else {
+                std::process::Stdio::null()
+            })
             .stderr(std::process::Stdio::piped())
             // All spawned commands always run in the project root.
             .current_dir(working_dir);
