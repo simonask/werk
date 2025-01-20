@@ -658,7 +658,6 @@ impl MockIo {
 }
 
 struct MockChild {
-    stdout: Option<Pin<Box<futures::io::Cursor<Vec<u8>>>>>,
     stderr: Option<Pin<Box<futures::io::Cursor<Vec<u8>>>>>,
     status: Option<Pin<Box<futures::future::Ready<std::io::Result<std::process::ExitStatus>>>>>,
 }
@@ -670,13 +669,6 @@ impl werk_runner::Child for MockChild {
         None
     }
 
-    fn stdout(
-        self: std::pin::Pin<&mut Self>,
-    ) -> Option<std::pin::Pin<&mut dyn futures::AsyncRead>> {
-        let this = Pin::into_inner(self);
-        this.stdout.as_mut().map(|v| v.as_mut() as _)
-    }
-
     fn stderr(
         self: std::pin::Pin<&mut Self>,
     ) -> Option<std::pin::Pin<&mut dyn futures::AsyncRead>> {
@@ -686,10 +678,6 @@ impl werk_runner::Child for MockChild {
 
     fn take_stdin(&mut self) -> Option<std::pin::Pin<Box<dyn futures::AsyncWrite + Send>>> {
         None
-    }
-
-    fn take_stdout(&mut self) -> Option<std::pin::Pin<Box<dyn futures::AsyncRead + Send>>> {
-        self.stdout.take().map(|v| v as _)
     }
 
     fn take_stderr(&mut self) -> Option<std::pin::Pin<Box<dyn futures::AsyncRead + Send>>> {
@@ -727,14 +715,9 @@ impl werk_runner::Io for MockIo {
             ));
         };
         let mut fs = self.filesystem.lock();
-        let std::process::Output {
-            status,
-            stdout,
-            stderr,
-        } = program(command_line, &mut fs)?;
+        let std::process::Output { status, stderr, .. } = program(command_line, &mut fs)?;
 
         Ok(Box::new(MockChild {
-            stdout: Some(Box::pin(futures::io::Cursor::new(stdout))),
             stderr: Some(Box::pin(futures::io::Cursor::new(stderr))),
             status: Some(Box::pin(futures::future::ready(Ok(status)))),
         }))

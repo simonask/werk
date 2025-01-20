@@ -13,13 +13,6 @@ pub enum AutoStream<S> {
 }
 
 impl<S> AutoStream<S> {
-    pub fn into_inner(self) -> S {
-        match self {
-            Self::Ansi(stream, _) => stream,
-            Self::Strip(stream) => stream.stream,
-        }
-    }
-
     #[inline]
     pub fn supports_nonlinear_output(&self) -> bool {
         match self {
@@ -184,9 +177,6 @@ impl ColorOutputKind {
                 let clicolor_force = anstyle_query::clicolor_force();
                 let is_ci = anstyle_query::is_ci();
 
-                // Try to enable ANSI colors on Windows.
-                anstyle_query::windows::enable_ansi_colors();
-
                 if clicolor_force {
                     return Self::Ansi(is_actual_terminal);
                 }
@@ -204,9 +194,6 @@ impl ColorOutputKind {
                 }
             }
             ColorChoice::Always => {
-                // Try to enable ANSI colors on Windows.
-                anstyle_query::windows::enable_ansi_colors();
-
                 let is_actual_terminal = stream.is_terminal();
 
                 // Note: Explicitly asking for color enables it regardless of

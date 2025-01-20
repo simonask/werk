@@ -169,7 +169,9 @@ impl Io for RealSystem {
             )
             .envs(&command_line.env)
             .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
+            // Never capture stdout in recipe commands. By convention, all
+            // informational output goes to stderr.
+            .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             // All spawned commands always run in the project root.
             .current_dir(working_dir);

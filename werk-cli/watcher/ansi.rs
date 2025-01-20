@@ -18,13 +18,8 @@ pub struct TerminalWatcher<const LINEAR: bool> {
 }
 
 impl<const LINEAR: bool> TerminalWatcher<LINEAR> {
-    pub fn new(
-        settings: OutputSettings,
-        stdout: AutoStream<std::io::Stdout>,
-        stderr: AutoStream<std::io::Stderr>,
-    ) -> Self {
+    pub fn new(settings: OutputSettings, stderr: AutoStream<std::io::Stderr>) -> Self {
         let inner = Arc::new(Mutex::new(Renderer {
-            stdout,
             stderr,
             state: RenderState {
                 current_tasks: IndexMap::new(),
@@ -63,7 +58,6 @@ impl<const LINEAR: bool> TerminalWatcher<LINEAR> {
 }
 
 struct Renderer<const LINEAR: bool> {
-    stdout: AutoStream<std::io::Stdout>,
     stderr: AutoStream<std::io::Stderr>,
     state: RenderState<LINEAR>,
     needs_clear: bool,
@@ -76,32 +70,14 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
         F: FnOnce(&mut dyn Write, &mut RenderState<LINEAR>) -> std::io::Result<()>,
     {
         if LINEAR {
-            render(&mut self.stdout, &mut self.state)
-        } else {
-            if self.needs_clear {
-                self.stdout.write_all(b"\x1B[K")?;
-                self.needs_clear = false;
-            }
-            render(&mut self.stdout, &mut self.state)?;
-            self.state.render_progress(&mut self.stdout);
-            self.needs_clear = true;
-            Ok(())
-        }
-    }
-
-    fn render_lines_stderr<F>(&mut self, render: F) -> std::io::Result<()>
-    where
-        F: FnOnce(&mut dyn Write) -> std::io::Result<()>,
-    {
-        if LINEAR {
-            render(&mut self.stderr)
+            render(&mut self.stderr, &mut self.state)
         } else {
             if self.needs_clear {
                 self.stderr.write_all(b"\x1B[K")?;
                 self.needs_clear = false;
             }
-            render(&mut self.stderr)?;
-            self.state.render_progress(&mut self.stdout);
+            render(&mut self.stderr, &mut self.state)?;
+            self.state.render_progress(&mut self.stderr);
             self.needs_clear = true;
             Ok(())
         }
@@ -292,27 +268,14 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
         }
     }
 
-    fn on_child_process_stdout_line(
-        &mut self,
-        _task_id: &TaskId,
-        _command: &ShellCommandLine,
-        line_without_eol: &[u8],
-    ) {
-        // Forward stdout with line wrapping enabled.
-        _ = self.render_lines(|out, _status| {
-            out.write_all(line_without_eol)?;
-            out.write_all(b"\n")?;
-            Ok(())
-        });
-    }
-
     fn on_child_process_stderr_line(
         &mut self,
         _task_id: &TaskId,
         _command: &ShellCommandLine,
         line_without_eol: &[u8],
+        capture: bool,
     ) {
-        _ = self.render_lines_stderr(|out| {
+        _ = self.render_lines(|out, _| {
             out.write_all(line_without_eol)?;
             out.write_all(b"\n")?;
             Ok(())
@@ -408,38 +371,15 @@ impl<const LINEAR: bool> werk_runner::Watcher for TerminalWatcher<LINEAR> {
         self.inner.lock().warning(task_id, message)
     }
 
-    fn on_child_process_stdout_line(
+    fn on_child_process_stderr_line(
         &self,
         task_id: &TaskId,
         command: &ShellCommandLine,
         line_without_eol: &[u8],
         capture: bool,
     ) {
-        if !capture {
-            self.inner
-                .lock()
-                .on_child_process_stdout_line(task_id, command, line_without_eol);
-        }
-    }
-
-    fn on_child_process_stderr_line(
-        &self,
-        task_id: &TaskId,
-        command: &ShellCommandLine,
-        line_without_eol: &[u8],
-    ) {
         self.inner
             .lock()
-            .on_child_process_stderr_line(task_id, command, line_without_eol);
-    }
-
-    fn write_raw_stdout(&self, bytes: &[u8]) -> std::io::Result<()> {
-        self.inner.lock().stdout.write_all(bytes)?;
-        Ok(())
-    }
-
-    fn write_raw_stderr(&self, bytes: &[u8]) -> std::io::Result<()> {
-        self.inner.lock().stderr.write_all(bytes)?;
-        Ok(())
+            .on_child_process_stderr_line(task_id, command, line_without_eol, capture);
     }
 }

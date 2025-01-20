@@ -688,32 +688,12 @@ impl<'a> Inner<'a> {
             match reader.next().await {
                 Some(Err(err)) => break Err(err),
                 Some(Ok(output)) => match output {
-                    ChildCaptureOutput::StdoutLine(line) => {
-                        self.workspace.watcher.on_child_process_stdout_line(
-                            task_id,
-                            command_line,
-                            &line,
-                            capture,
-                        );
-                    }
-                    ChildCaptureOutput::StderrLine(line) => {
+                    ChildCaptureOutput::Stderr(line) => {
                         self.workspace.watcher.on_child_process_stderr_line(
                             task_id,
                             command_line,
                             &line,
-                        );
-                    }
-                    ChildCaptureOutput::Both(stdout, stderr) => {
-                        self.workspace.watcher.on_child_process_stdout_line(
-                            task_id,
-                            command_line,
-                            &stdout,
                             capture,
-                        );
-                        self.workspace.watcher.on_child_process_stderr_line(
-                            task_id,
-                            command_line,
-                            &stderr,
                         );
                     }
                     ChildCaptureOutput::Exit(status) => break Ok(status),

@@ -13,6 +13,7 @@ use crate::OutputChoice;
 pub struct OutputSettings {
     /// Logging is enabled, so don't try to modify terminal contents in-place.
     pub logging_enabled: bool,
+    pub color: ColorOutputKind,
     pub output: OutputChoice,
     pub print_recipe_commands: bool,
     pub print_fresh: bool,
@@ -35,22 +36,17 @@ impl Display for Step {
     }
 }
 
-pub fn make_watcher(
-    settings: OutputSettings,
-    stdout: AutoStream<std::io::Stdout>,
-    stderr: AutoStream<std::io::Stderr>,
-) -> Arc<dyn werk_runner::Watcher> {
+pub fn make_watcher(settings: OutputSettings) -> Arc<dyn werk_runner::Watcher> {
     match settings.output {
-        OutputChoice::Json => Arc::new(json::JsonWatcher::new(stdout.into_inner())),
+        OutputChoice::Json => Arc::new(json::JsonWatcher::new(std::io::stdout())),
         OutputChoice::Log => Arc::new(log::LogWatcher::new(settings)),
         OutputChoice::Ansi => {
-            let must_be_linear = settings.logging_enabled | !stdout.supports_nonlinear_output();
+            let stderr = AutoStream::new(std::io::stderr(), settings.color);
+            let must_be_linear = settings.logging_enabled | !stderr.supports_nonlinear_output();
             if must_be_linear {
-                Arc::new(ansi::TerminalWatcher::<true>::new(settings, stdout, stderr))
+                Arc::new(ansi::TerminalWatcher::<true>::new(settings, stderr))
             } else {
-                Arc::new(ansi::TerminalWatcher::<false>::new(
-                    settings, stdout, stderr,
-                ))
+                Arc::new(ansi::TerminalWatcher::<false>::new(settings, stderr))
             }
         }
     }

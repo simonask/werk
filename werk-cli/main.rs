@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use clap::Parser;
 use owo_colors::OwoColorize as _;
+use watcher::AutoStream;
 use werk_fs::Absolute;
 use werk_parser::parser::Spanned as _;
-use werk_runner::{Runner, WatcherWriter, Workspace, WorkspaceSettings};
+use werk_runner::{Runner, Workspace, WorkspaceSettings};
 
 shadow_rs::shadow!(build);
 
@@ -153,12 +154,10 @@ fn main() -> Result<(), Error> {
 }
 
 async fn try_main(args: Args) -> Result<(), Error> {
-    let stdout = std::io::stdout();
-    let stderr = std::io::stderr();
-    let color_stdout = watcher::ColorOutputKind::initialize(&stdout, args.color);
-    let color_stderr = watcher::ColorOutputKind::initialize(&stderr, args.color);
-    let stdout = watcher::AutoStream::new(stdout, color_stdout);
-    let stderr = watcher::AutoStream::new(stderr, color_stderr);
+    anstyle_query::windows::enable_ansi_colors();
+
+    let color_stdout = watcher::ColorOutputKind::initialize(&std::io::stdout(), args.color);
+    let color_stderr = watcher::ColorOutputKind::initialize(&std::io::stderr(), args.color);
 
     let werkfile = if let Some(file) = args.file {
         let file = Absolute::new_unchecked(std::path::absolute(file)?);
@@ -242,29 +241,26 @@ async fn try_main(args: Args) -> Result<(), Error> {
         Arc::new(werk_runner::RealSystem::new())
     };
 
-    let watcher = watcher::make_watcher(
-        watcher::OutputSettings {
-            logging_enabled: args.log.is_some() || args.list,
-            output: if args.log.is_some() {
-                OutputChoice::Log
-            } else {
-                args.output_format
-            },
-            print_recipe_commands: args.print_commands | args.verbose,
-            print_fresh: args.print_fresh | args.verbose,
-            dry_run: args.dry_run,
-            no_capture: args.no_capture | args.verbose,
-            explain: args.explain | args.verbose,
+    let watcher = watcher::make_watcher(watcher::OutputSettings {
+        logging_enabled: args.log.is_some() || args.list,
+        color: color_stderr,
+        output: if args.log.is_some() {
+            OutputChoice::Log
+        } else {
+            args.output_format
         },
-        stdout,
-        stderr,
-    );
+        print_recipe_commands: args.print_commands | args.verbose,
+        print_fresh: args.print_fresh | args.verbose,
+        dry_run: args.dry_run,
+        no_capture: args.no_capture | args.verbose,
+        explain: args.explain | args.verbose,
+    });
 
     let workspace = Workspace::new(&ast, &*io, &*watcher, workspace_dir.to_owned(), &settings)
         .map_err(display_error)?;
 
     if args.list {
-        let mut output = WatcherWriter::new(&*watcher);
+        let mut output = AutoStream::new(std::io::stdout(), color_stdout);
         print_list(&workspace.manifest, &mut output);
         return Ok(());
     }
