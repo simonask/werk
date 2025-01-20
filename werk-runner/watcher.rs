@@ -51,4 +51,36 @@ pub trait Watcher: Send + Sync {
 
     fn message(&self, task_id: Option<&TaskId>, message: &str);
     fn warning(&self, task_id: Option<&TaskId>, message: &str);
+
+    fn write_raw_stdout(&self, bytes: &[u8]) -> std::io::Result<()> {
+        _ = bytes;
+        Ok(())
+    }
+
+    fn write_raw_stderr(&self, bytes: &[u8]) -> std::io::Result<()> {
+        _ = bytes;
+        Ok(())
+    }
+}
+
+pub struct WatcherWriter<'a> {
+    watcher: &'a dyn Watcher,
+}
+
+impl<'a> WatcherWriter<'a> {
+    #[inline]
+    pub fn new(watcher: &'a dyn Watcher) -> Self {
+        Self { watcher }
+    }
+}
+
+impl std::io::Write for WatcherWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.watcher.write_raw_stdout(buf)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }

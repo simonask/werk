@@ -1,265 +1,264 @@
-use crossterm::{
-    cursor::MoveToColumn,
-    queue,
-    style::Print,
-    terminal::{Clear, ClearType},
-};
 use indexmap::IndexMap;
 use owo_colors::OwoColorize as _;
-use parking_lot::{Mutex, MutexGuard};
-use werk_runner::{BuildStatus, Outdatedness, ShellCommandLine, TaskId};
+use parking_lot::Mutex;
+use werk_runner::{BuildStatus, Error, Outdatedness, ShellCommandLine, TaskId};
 
-use std::{fmt::Write as _, io::Write};
+use std::{fmt::Write as _, io::Write, sync::Arc};
 
 use crate::watcher::Bracketed;
 
-use super::{AutoStream, AutoStreamKind, OutputSettings, Step};
+use super::{AutoStream, OutputSettings, Step};
 
 /// A watcher that outputs to the terminal, emitting "destructive" ANSI escape
 /// codes that modify the existing terminal (i.e. overwriting the bottom line(s)
 /// with current status).
-pub struct AnsiWatcher {
-    inner: Mutex<Inner>,
-    kind: AutoStreamKind,
-    settings: OutputSettings,
+pub struct TerminalWatcher<const LINEAR: bool> {
+    inner: Arc<Mutex<Renderer<LINEAR>>>,
+    _render_task: Option<smol::Task<()>>,
 }
 
-impl AnsiWatcher {
-    pub fn new(settings: OutputSettings) -> Self {
-        #[cfg(windows)]
-        {
-            anstyle_query::windows::enable_ansi_colors();
-        }
-        let kind = AutoStreamKind::detect(settings.color);
-
-        Self {
-            inner: Mutex::new(Inner {
+impl<const LINEAR: bool> TerminalWatcher<LINEAR> {
+    pub fn new(
+        settings: OutputSettings,
+        stdout: AutoStream<std::io::Stdout>,
+        stderr: AutoStream<std::io::Stderr>,
+    ) -> Self {
+        let inner = Arc::new(Mutex::new(Renderer {
+            stdout,
+            stderr,
+            state: RenderState {
                 current_tasks: IndexMap::new(),
                 num_tasks: 0,
                 num_completed_tasks: 0,
-                render_buffer: String::with_capacity(1024),
+                render_buffer: String::with_capacity(128),
                 spinner_frame: 0,
                 last_spinner_tick: std::time::Instant::now(),
-            }),
-            settings,
-            kind,
+                settings,
+            },
+            needs_clear: false,
+        }));
+
+        let render_task = if !LINEAR {
+            // Spawn a task that automatically updates the terminal with the current
+            // status when a long-running task is present.
+            let renderer = Arc::downgrade(&inner);
+            Some(smol::spawn(async move {
+                loop {
+                    smol::Timer::after(std::time::Duration::from_millis(100)).await;
+                    let Some(renderer) = renderer.upgrade() else {
+                        return;
+                    };
+                    Renderer::render_now(&*renderer);
+                }
+            }))
+        } else {
+            None
+        };
+
+        Self {
+            inner,
+            _render_task: render_task,
         }
-    }
-
-    #[inline]
-    pub fn enable_color(&self) -> bool {
-        !matches!(self.kind, AutoStreamKind::Strip)
-    }
-
-    pub fn lock(&self) -> StdioLock {
-        StdioLock {
-            inner: self.inner.lock(),
-            stdout: AutoStream::new(std::io::stdout().lock(), self.kind),
-            settings: &self.settings,
-        }
-    }
-
-    pub fn render_force_flush(&self) {
-        self.lock().render();
     }
 }
 
-struct Inner {
+struct Renderer<const LINEAR: bool> {
+    stdout: AutoStream<std::io::Stdout>,
+    stderr: AutoStream<std::io::Stderr>,
+    state: RenderState<LINEAR>,
+    needs_clear: bool,
+}
+
+impl<const LINEAR: bool> Renderer<LINEAR> {
+    /// Render zero or more lines above the status and re-render the status.
+    fn render_lines<F>(&mut self, render: F) -> std::io::Result<()>
+    where
+        F: FnOnce(&mut dyn Write, &mut RenderState<LINEAR>) -> std::io::Result<()>,
+    {
+        if LINEAR {
+            render(&mut self.stdout, &mut self.state)
+        } else {
+            if self.needs_clear {
+                self.stdout.write_all(b"\x1B[K")?;
+                self.needs_clear = false;
+            }
+            render(&mut self.stdout, &mut self.state)?;
+            self.state.render_progress(&mut self.stdout);
+            self.needs_clear = true;
+            Ok(())
+        }
+    }
+
+    fn render_lines_stderr<F>(&mut self, render: F) -> std::io::Result<()>
+    where
+        F: FnOnce(&mut dyn Write) -> std::io::Result<()>,
+    {
+        if LINEAR {
+            render(&mut self.stderr)
+        } else {
+            if self.needs_clear {
+                self.stderr.write_all(b"\x1B[K")?;
+                self.needs_clear = false;
+            }
+            render(&mut self.stderr)?;
+            self.state.render_progress(&mut self.stdout);
+            self.needs_clear = true;
+            Ok(())
+        }
+    }
+}
+
+struct RenderState<const LINEAR: bool> {
     current_tasks: IndexMap<TaskId, (usize, usize)>,
     num_tasks: usize,
     num_completed_tasks: usize,
     render_buffer: String,
     spinner_frame: u64,
     last_spinner_tick: std::time::Instant,
+    settings: OutputSettings,
 }
 
-pub struct StdioLock<'a> {
-    inner: MutexGuard<'a, Inner>,
-    pub stdout: AutoStream<std::io::StdoutLock<'static>>,
-    settings: &'a OutputSettings,
+impl<const LINEAR: bool> Renderer<LINEAR> {
+    pub fn render_now(this: &Mutex<Self>) {
+        if !LINEAR {
+            let mut this = this.lock();
+            _ = this.render_lines(|_, _| Ok(()));
+        }
+    }
 }
 
-impl StdioLock<'_> {
-    pub fn start_advanced_rendering(&mut self) {
-        if self.stdout.advanced_rendering() {
-            queue!(
-                &mut self.stdout,
-                crossterm::cursor::Hide,
-                crossterm::terminal::DisableLineWrap
-            )
-            .unwrap();
+impl<const LINEAR: bool> RenderState<LINEAR> {
+    pub fn render_progress(&mut self, out: &mut dyn Write) {
+        if LINEAR {
+            return;
         }
-    }
 
-    pub fn finish_advanced_rendering(&mut self) {
-        if self.stdout.advanced_rendering() {
-            crossterm::execute!(
-                &mut self.stdout,
-                crossterm::cursor::Show,
-                crossterm::terminal::EnableLineWrap
-            )
-            .unwrap();
+        let now = std::time::Instant::now();
+        if now.duration_since(self.last_spinner_tick) > std::time::Duration::from_millis(100) {
+            self.spinner_frame += 1;
+            self.last_spinner_tick = now;
         }
-    }
 
-    fn start_line_overwrite(&mut self) {
-        if self.stdout.advanced_rendering() && !self.settings.logging_enabled {
-            queue!(&mut self.stdout, MoveToColumn(0)).unwrap();
+        const SPINNER_CHARS: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let spinner = SPINNER_CHARS[(self.spinner_frame % 10) as usize];
+
+        let buffer = &mut self.render_buffer;
+        if self.current_tasks.is_empty() {
+            return;
         }
-    }
+        buffer.clear();
+        _ = write!(
+            buffer,
+            "  {spinner} {} ",
+            Bracketed(Step(self.num_completed_tasks, self.num_tasks)).bright_cyan()
+        );
 
-    fn newline_overwrite(&mut self) {
-        if self.stdout.advanced_rendering() && !self.settings.logging_enabled {
-            _ = queue!(
-                &mut self.stdout,
-                Clear(ClearType::UntilNewLine),
-                Print('\n')
-            );
-        }
-    }
+        // Write the name of the last task in the map.
+        let mut width_written = 20;
+        let max_width = 100;
 
-    fn render(&mut self) {
-        if self.stdout.advanced_rendering() && !self.settings.logging_enabled {
-            let now = std::time::Instant::now();
-            if now.duration_since(self.inner.last_spinner_tick)
-                > std::time::Duration::from_millis(100)
-            {
-                self.inner.spinner_frame += 1;
-                self.inner.last_spinner_tick = now;
-            }
-
-            const SPINNER_CHARS: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-            let spinner = SPINNER_CHARS[(self.inner.spinner_frame % 10) as usize];
-
-            let inner = &mut *self.inner;
-            let buffer = &mut inner.render_buffer;
-            if inner.current_tasks.is_empty() {
-                return;
-            }
-            buffer.clear();
-            _ = write!(
-                buffer,
-                "{} {spinner} ",
-                Bracketed(Step(inner.num_completed_tasks, inner.num_tasks)).bright_cyan()
-            );
-
-            // Write the name of the last task in the map.
-            let mut width_written = 20;
-            let max_width = 100;
-
-            for (index, (id, _)) in inner.current_tasks.iter().enumerate() {
-                if width_written > max_width {
-                    let num_remaining = inner.current_tasks.len() - (index + 1);
-                    if num_remaining > 0 {
-                        if index > 0 {
-                            _ = write!(buffer, " + {} more", num_remaining);
-                        } else {
-                            _ = write!(buffer, "{} recipes", num_remaining);
-                        }
+        for (index, (id, _)) in self.current_tasks.iter().enumerate() {
+            if width_written > max_width {
+                let num_remaining = self.current_tasks.len() - (index + 1);
+                if num_remaining > 0 {
+                    if index > 0 {
+                        _ = write!(buffer, " + {} more", num_remaining);
+                    } else {
+                        _ = write!(buffer, "{} recipes", num_remaining);
                     }
-                    break;
                 }
-
-                if index != 0 {
-                    _ = write!(buffer, ", ");
-                    width_written += 2;
-                }
-
-                let short_name = id.short_name();
-                buffer.push_str(short_name);
-                // Note: Overaccounts for Unicode characters. Probably fine for now.
-                width_written += short_name.len();
+                break;
             }
 
-            _ = queue!(&mut self.stdout, MoveToColumn(0));
-            self.stdout.write_all(buffer.as_bytes()).unwrap();
-            _ = queue!(&mut self.stdout, Clear(ClearType::UntilNewLine));
-            _ = self.stdout.flush();
-        }
-    }
+            if index != 0 {
+                _ = write!(buffer, ", ");
+                width_written += 2;
+            }
 
-    fn will_build(&mut self, task_id: &TaskId, num_steps: usize, outdated: &Outdatedness) {
-        self.inner
+            let short_name = id.short_name();
+            buffer.push_str(short_name);
+            // Note: Overaccounts for Unicode characters. Probably fine for now.
+            width_written += short_name.len();
+        }
+
+        // Place the cursor at column 0.
+        buffer.push('\r');
+        out.write_all(buffer.as_bytes()).unwrap();
+        _ = out.flush();
+    }
+}
+
+impl<const LINEAR: bool> Renderer<LINEAR> {
+    pub fn will_build(&mut self, task_id: &TaskId, num_steps: usize, outdatedness: &Outdatedness) {
+        self.state
             .current_tasks
             .insert(task_id.clone(), (0, num_steps));
-        self.inner.num_tasks += 1;
-        self.start_line_overwrite();
+        self.state.num_tasks += 1;
 
-        if self.settings.explain && outdated.is_outdated() {
-            if let Some(path) = task_id.as_path() {
-                _ = write!(
-                    self.stdout,
-                    "{} rebuilding `{path}`",
-                    Bracketed(Step(0, num_steps)).bright_yellow().bold(),
-                );
-            } else {
-                _ = write!(
-                    self.stdout,
-                    "{} running task `{}`",
-                    Bracketed(Step(0, num_steps)).bright_yellow().bold(),
-                    task_id.as_str(),
-                );
-            };
-            self.newline_overwrite();
+        _ = self.render_lines(|out, state| {
+            if state.settings.explain && outdatedness.is_outdated() {
+                if let Some(path) = task_id.as_path() {
+                    writeln!(
+                        out,
+                        "{} rebuilding `{path}`",
+                        Bracketed(Step(0, num_steps)).bright_yellow().bold(),
+                    )?
+                } else {
+                    writeln!(
+                        out,
+                        "{} running task `{}`",
+                        Bracketed(Step(0, num_steps)).bright_yellow().bold(),
+                        task_id.as_str(),
+                    )?
+                }
 
-            for reason in &outdated.reasons {
-                // Use normal writeln because we already wrote at least one line
-                // (so no overwrite needed).
-                _ = writeln!(self.stdout, "  {} {reason}", "Cause:".bright_yellow());
+                for reason in &outdatedness.reasons {
+                    // Use normal writeln because we already wrote at least one line
+                    // (so no overwrite needed).
+                    _ = writeln!(out, "  {} {reason}", "Cause:".bright_yellow());
+                }
             }
-        }
 
-        self.render();
+            Ok(())
+        });
     }
 
-    fn did_build(
-        &mut self,
-        task_id: &TaskId,
-        result: &Result<werk_runner::BuildStatus, werk_runner::Error>,
-    ) {
-        self.inner
+    fn did_build(&mut self, task_id: &TaskId, result: &Result<BuildStatus, Error>) {
+        self.state
             .current_tasks
             .shift_remove(task_id)
             .unwrap_or_default();
-        self.inner.num_completed_tasks += 1;
+        self.state.num_completed_tasks += 1;
 
-        self.start_line_overwrite();
-        match result {
-            Ok(BuildStatus::Complete(_task_id, outdatedness)) => {
-                if outdatedness.is_outdated() {
-                    _ = write!(
-                        &mut self.stdout,
-                        "{} {task_id}{}",
-                        Bracketed(" ok ").bright_green().bold(),
-                        if self.settings.dry_run {
-                            " (dry-run)"
-                        } else {
-                            ""
-                        }
-                    );
-                    self.newline_overwrite();
-                } else if self.settings.print_fresh {
-                    _ = write!(
-                        &mut self.stdout,
-                        "{} {task_id}",
-                        Bracketed(" -- ").bright_blue()
-                    );
-                    self.newline_overwrite();
+        _ = self.render_lines(|out, state| {
+            match result {
+                Ok(BuildStatus::Complete(_task_id, outdatedness)) => {
+                    if outdatedness.is_outdated() {
+                        writeln!(
+                            out,
+                            "{} {task_id}{}",
+                            Bracketed(" ok ").bright_green().bold(),
+                            if state.settings.dry_run {
+                                " (dry-run)"
+                            } else {
+                                ""
+                            }
+                        )?
+                    } else if state.settings.print_fresh {
+                        writeln!(out, "{} {task_id}", Bracketed(" -- ").bright_blue())?
+                    }
                 }
-            }
-            Ok(BuildStatus::Exists(..)) => {
-                // Print nothing for file existence checks.
-            }
-            Err(err) => {
-                _ = write!(
-                    &mut self.stdout,
+                Ok(BuildStatus::Exists(..)) => {
+                    // Print nothing for file existence checks.
+                }
+                Err(err) => writeln!(
+                    out,
                     "{} {task_id}\n{err}",
                     Bracketed("ERROR").bright_red().bold()
-                );
-                self.newline_overwrite();
+                )?,
             }
-        }
-        self.render();
+            Ok(())
+        });
     }
 
     fn will_execute(
@@ -270,21 +269,27 @@ impl StdioLock<'_> {
         num_steps: usize,
     ) {
         *self
-            .inner
+            .state
             .current_tasks
             .get_mut(task_id)
             .expect("task not registered") = (step + 1, num_steps);
-        self.start_line_overwrite();
-        if self.settings.dry_run || self.settings.print_recipe_commands {
-            _ = write!(
-                self.stdout,
-                "{} {task_id}: {}",
-                Bracketed(Step(step + 1, num_steps)).dimmed(),
-                command.display()
-            );
-            self.newline_overwrite();
+
+        // Avoid taking the stdout lock if we aren't actually going to render anything.
+        let print_something =
+            self.state.settings.dry_run || self.state.settings.print_recipe_commands;
+
+        if print_something {
+            _ = self.render_lines(|out, _status| {
+                write!(
+                    out,
+                    "{} {task_id}: {}",
+                    Bracketed(Step(step + 1, num_steps)).dimmed(),
+                    command.display()
+                )
+            });
+        } else if !LINEAR {
+            _ = self.render_lines(|_, _| Ok(()));
         }
-        self.render();
     }
 
     fn on_child_process_stdout_line(
@@ -293,10 +298,12 @@ impl StdioLock<'_> {
         _command: &ShellCommandLine,
         line_without_eol: &[u8],
     ) {
-        self.start_line_overwrite();
-        _ = self.stdout.write_all(line_without_eol);
-        self.newline_overwrite();
-        self.render();
+        // Forward stdout with line wrapping enabled.
+        _ = self.render_lines(|out, _status| {
+            out.write_all(line_without_eol)?;
+            out.write_all(b"\n")?;
+            Ok(())
+        });
     }
 
     fn on_child_process_stderr_line(
@@ -305,10 +312,11 @@ impl StdioLock<'_> {
         _command: &ShellCommandLine,
         line_without_eol: &[u8],
     ) {
-        self.start_line_overwrite();
-        _ = self.stdout.write_all(line_without_eol);
-        self.newline_overwrite();
-        self.render();
+        _ = self.render_lines_stderr(|out| {
+            out.write_all(line_without_eol)?;
+            out.write_all(b"\n")?;
+            Ok(())
+        });
     }
 
     fn did_execute(
@@ -322,57 +330,49 @@ impl StdioLock<'_> {
         match result {
             Ok(status) => {
                 if !status.success() {
-                    self.start_line_overwrite();
-                    _ = write!(
-                        self.stdout,
-                        "{} Command failed while building '{task_id}': {}",
-                        Bracketed(Step(step, num_steps)).bright_red().bold(),
-                        command.display(),
-                    );
-                    self.newline_overwrite();
-                    self.render();
+                    _ = self.render_lines(|out, _status| {
+                        writeln!(
+                            out,
+                            "{} Command failed while building '{task_id}': {}",
+                            Bracketed(Step(step, num_steps)).bright_red().bold(),
+                            command.display(),
+                        )
+                    });
                 }
             }
             Err(err) => {
-                self.start_line_overwrite();
-                _ = write!(
-                    self.stdout,
-                    "{} Error evaluating command while building '{task_id}': {}\n{err}",
-                    Bracketed(Step(step + 1, num_steps)).bright_red().bold(),
-                    command.display(),
-                );
-                self.newline_overwrite();
-                self.render();
+                _ = self.render_lines(|out, _status| {
+                    writeln!(
+                        out,
+                        "{} Error evaluating command while building '{task_id}': {}\n{err}",
+                        Bracketed(Step(step + 1, num_steps)).bright_red().bold(),
+                        command.display(),
+                    )
+                });
             }
         }
     }
 
     fn message(&mut self, _task_id: Option<&TaskId>, message: &str) {
-        self.start_line_overwrite();
-        _ = write!(self.stdout, "{} {}", "[info]".bright_green(), message);
-        self.newline_overwrite();
-        self.render();
+        _ = self
+            .render_lines(|out, _status| write!(out, "{} {}", "[info]".bright_green(), message));
     }
 
     fn warning(&mut self, _task_id: Option<&TaskId>, message: &str) {
-        self.start_line_overwrite();
-        _ = write!(self.stdout, "{} {}", "[warn]".bright_yellow(), message);
-        self.newline_overwrite();
-        self.render();
+        _ = self
+            .render_lines(|out, _status| write!(out, "{} {}", "[warn]".bright_yellow(), message));
     }
 }
 
-impl werk_runner::Watcher for AnsiWatcher {
-    fn will_build(&self, task_id: &TaskId, num_steps: usize, outdated: &Outdatedness) {
-        self.lock().will_build(task_id, num_steps, outdated);
+impl<const LINEAR: bool> werk_runner::Watcher for TerminalWatcher<LINEAR> {
+    fn will_build(&self, task_id: &TaskId, num_steps: usize, outdatedness: &Outdatedness) {
+        self.inner
+            .lock()
+            .will_build(task_id, num_steps, outdatedness);
     }
 
-    fn did_build(
-        &self,
-        task_id: &TaskId,
-        result: &Result<werk_runner::BuildStatus, werk_runner::Error>,
-    ) {
-        self.lock().did_build(task_id, result);
+    fn did_build(&self, task_id: &TaskId, result: &Result<BuildStatus, Error>) {
+        self.inner.lock().did_build(task_id, result);
     }
 
     fn will_execute(
@@ -382,7 +382,30 @@ impl werk_runner::Watcher for AnsiWatcher {
         step: usize,
         num_steps: usize,
     ) {
-        self.lock().will_execute(task_id, command, step, num_steps);
+        self.inner
+            .lock()
+            .will_execute(task_id, command, step, num_steps);
+    }
+
+    fn did_execute(
+        &self,
+        task_id: &TaskId,
+        command: &ShellCommandLine,
+        status: &std::io::Result<std::process::ExitStatus>,
+        step: usize,
+        num_steps: usize,
+    ) {
+        self.inner
+            .lock()
+            .did_execute(task_id, command, status, step, num_steps);
+    }
+
+    fn message(&self, task_id: Option<&TaskId>, message: &str) {
+        self.inner.lock().message(task_id, message)
+    }
+
+    fn warning(&self, task_id: Option<&TaskId>, message: &str) {
+        self.inner.lock().warning(task_id, message)
     }
 
     fn on_child_process_stdout_line(
@@ -392,8 +415,9 @@ impl werk_runner::Watcher for AnsiWatcher {
         line_without_eol: &[u8],
         capture: bool,
     ) {
-        if !capture || self.settings.no_capture {
-            self.lock()
+        if !capture {
+            self.inner
+                .lock()
                 .on_child_process_stdout_line(task_id, command, line_without_eol);
         }
     }
@@ -404,27 +428,18 @@ impl werk_runner::Watcher for AnsiWatcher {
         command: &ShellCommandLine,
         line_without_eol: &[u8],
     ) {
-        self.lock()
+        self.inner
+            .lock()
             .on_child_process_stderr_line(task_id, command, line_without_eol);
     }
 
-    fn did_execute(
-        &self,
-        task_id: &TaskId,
-        command: &ShellCommandLine,
-        result: &Result<std::process::ExitStatus, std::io::Error>,
-        step: usize,
-        num_steps: usize,
-    ) {
-        self.lock()
-            .did_execute(task_id, command, result, step, num_steps);
+    fn write_raw_stdout(&self, bytes: &[u8]) -> std::io::Result<()> {
+        self.inner.lock().stdout.write_all(bytes)?;
+        Ok(())
     }
 
-    fn message(&self, task_id: Option<&TaskId>, message: &str) {
-        self.lock().message(task_id, message)
-    }
-
-    fn warning(&self, task_id: Option<&TaskId>, message: &str) {
-        self.lock().warning(task_id, message)
+    fn write_raw_stderr(&self, bytes: &[u8]) -> std::io::Result<()> {
+        self.inner.lock().stderr.write_all(bytes)?;
+        Ok(())
     }
 }
