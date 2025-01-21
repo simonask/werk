@@ -527,7 +527,7 @@ impl<'a> Inner<'a> {
         let result = if outdated.is_outdated() {
             tracing::debug!("Rebuilding");
             tracing::trace!("Reasons: {:?}", outdated);
-            self.execute_recipe_commands(task_id, evaluated.commands, true)
+            self.execute_recipe_commands(task_id, evaluated.commands, true, false)
                 .await
                 .map(|()| BuildStatus::Complete(task_id.clone(), outdated))
         } else {
@@ -584,7 +584,7 @@ impl<'a> Inner<'a> {
             .will_build(task_id, evaluated.commands.len(), &outdated);
 
         let result = self
-            .execute_recipe_commands(task_id, evaluated.commands, false)
+            .execute_recipe_commands(task_id, evaluated.commands, false, true)
             .await
             .map(|()| BuildStatus::Complete(task_id.clone(), outdated));
 
@@ -596,7 +596,8 @@ impl<'a> Inner<'a> {
         &self,
         task_id: &TaskId,
         run_commands: Vec<RunCommand>,
-        capture_by_default: bool,
+        silent_by_default: bool,
+        forward_stdout: bool,
     ) -> Result<(), Error> {
         let num_steps = run_commands.len();
         if num_steps == 0 {
@@ -611,7 +612,7 @@ impl<'a> Inner<'a> {
             .acquire()
             .await;
 
-        let mut capture = capture_by_default;
+        let mut silent = silent_by_default;
 
         for (step, run_command) in run_commands.into_iter().enumerate() {
             match run_command {
@@ -619,9 +620,10 @@ impl<'a> Inner<'a> {
                     self.execute_recipe_run_command(
                         task_id,
                         &command_line,
-                        capture,
+                        silent,
                         step,
                         num_steps,
+                        forward_stdout,
                     )
                     .await?;
                 }
@@ -651,7 +653,7 @@ impl<'a> Inner<'a> {
                     self.workspace.watcher.warning(Some(task_id), &message);
                 }
                 RunCommand::SetCapture(value) => {
-                    capture = value;
+                    silent = value;
                 }
                 RunCommand::SetEnv(_key, _value) => {
                     unimplemented!("set-env not implemented yet")
@@ -672,14 +674,16 @@ impl<'a> Inner<'a> {
         capture: bool,
         step: usize,
         num_steps: usize,
+        forward_stdout: bool,
     ) -> Result<(), Error> {
         self.workspace
             .watcher
             .will_execute(task_id, command_line, step, num_steps);
-        let mut child = self
-            .workspace
-            .io
-            .run_recipe_command(command_line, self.workspace.project_root())?;
+        let mut child = self.workspace.io.run_recipe_command(
+            command_line,
+            self.workspace.project_root(),
+            forward_stdout,
+        )?;
 
         // TODO: Avoid this heavy machinery when the watcher isn't
         // interested in the output.
@@ -688,32 +692,19 @@ impl<'a> Inner<'a> {
             match reader.next().await {
                 Some(Err(err)) => break Err(err),
                 Some(Ok(output)) => match output {
-                    ChildCaptureOutput::StdoutLine(line) => {
+                    ChildCaptureOutput::Stdout(line) => {
                         self.workspace.watcher.on_child_process_stdout_line(
-                            task_id,
-                            command_line,
-                            &line,
-                            capture,
-                        );
-                    }
-                    ChildCaptureOutput::StderrLine(line) => {
-                        self.workspace.watcher.on_child_process_stderr_line(
                             task_id,
                             command_line,
                             &line,
                         );
                     }
-                    ChildCaptureOutput::Both(stdout, stderr) => {
-                        self.workspace.watcher.on_child_process_stdout_line(
-                            task_id,
-                            command_line,
-                            &stdout,
-                            capture,
-                        );
+                    ChildCaptureOutput::Stderr(line) => {
                         self.workspace.watcher.on_child_process_stderr_line(
                             task_id,
                             command_line,
-                            &stderr,
+                            &line,
+                            capture,
                         );
                     }
                     ChildCaptureOutput::Exit(status) => break Ok(status),

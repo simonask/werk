@@ -15,17 +15,17 @@ pub trait Watcher: Send + Sync {
         num_steps: usize,
     );
 
-    fn on_child_process_stdout_line(
+    fn on_child_process_stderr_line(
         &self,
         task_id: &TaskId,
         command: &ShellCommandLine,
         line_without_eol: &[u8],
-        capture: bool,
+        quiet: bool,
     ) {
-        _ = (task_id, command, line_without_eol, capture);
+        _ = (task_id, command, line_without_eol, quiet);
     }
 
-    fn on_child_process_stderr_line(
+    fn on_child_process_stdout_line(
         &self,
         task_id: &TaskId,
         command: &ShellCommandLine,

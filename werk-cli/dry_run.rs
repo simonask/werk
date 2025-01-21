@@ -31,11 +31,6 @@ impl Child for DryRunChild {
         this.stdin.as_mut().map(|v| v.as_mut() as _)
     }
 
-    fn stdout(self: Pin<&mut Self>) -> Option<Pin<&mut dyn smol::io::AsyncRead>> {
-        let this = Pin::into_inner(self);
-        this.stdout.as_mut().map(|v| v.as_mut() as _)
-    }
-
     fn stderr(self: Pin<&mut Self>) -> Option<Pin<&mut dyn smol::io::AsyncRead>> {
         let this = Pin::into_inner(self);
         this.stderr.as_mut().map(|v| v.as_mut() as _)
@@ -66,6 +61,7 @@ impl werk_runner::Io for DryRun {
         &self,
         command_line: &ShellCommandLine,
         _working_dir: &Absolute<std::path::Path>,
+        _forward_stdout: bool,
     ) -> std::io::Result<Box<dyn Child>> {
         tracing::info!("[DRY-RUN] Would run: {}", command_line.display());
         Ok(Box::new(DryRunChild::default()))

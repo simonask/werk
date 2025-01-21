@@ -1,10 +1,11 @@
 pub mod dry_run;
 mod watcher;
 
-use std::{io::Write as _, sync::Arc};
+use std::sync::Arc;
 
 use clap::Parser;
 use owo_colors::OwoColorize as _;
+use watcher::AutoStream;
 use werk_fs::Absolute;
 use werk_parser::parser::Spanned as _;
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
@@ -49,17 +50,22 @@ pub struct Args {
     #[clap(long)]
     pub print_fresh: bool,
 
-    /// Forward the stdout of all executed commands to the terminal, even when
-    /// successful. Stderr output is always forwarded. Implied by `--verbose`.
+    /// Silence informational output from executed commands, only printing to
+    /// the terminal when a recipe fails.
     #[clap(long)]
-    pub no_capture: bool,
+    pub quiet: bool,
+
+    /// Print all informational output from executed commands to the terminal,
+    /// even for quiet recipes. Implied by `--verbose`.
+    #[clap(long)]
+    pub loud: bool,
 
     /// For each outdated target, explain why it was outdated. Implied by
     /// `--verbose`.
     #[clap(long)]
     pub explain: bool,
 
-    /// Shorthand for `--explain --print-commands --print-fresh --no-capture`.
+    /// Shorthand for `--explain --print-commands --print-fresh --no-capture --loud`.
     #[clap(long, short)]
     pub verbose: bool,
 
@@ -153,6 +159,11 @@ fn main() -> Result<(), Error> {
 }
 
 async fn try_main(args: Args) -> Result<(), Error> {
+    anstyle_query::windows::enable_ansi_colors();
+
+    let color_stdout = watcher::ColorOutputKind::initialize(&std::io::stdout(), args.color);
+    let color_stderr = watcher::ColorOutputKind::initialize(&std::io::stderr(), args.color);
+
     let werkfile = if let Some(file) = args.file {
         let file = Absolute::new_unchecked(std::path::absolute(file)?);
         if file.extension() == Some("toml".as_ref()) {
@@ -164,16 +175,6 @@ async fn try_main(args: Args) -> Result<(), Error> {
         find_werkfile()?
     };
     tracing::info!("Using werkfile: {}", werkfile.as_ref().display());
-
-    let watcher = Arc::new(watcher::StdoutWatcher::new(watcher::OutputSettings {
-        logging_enabled: args.log.is_some(),
-        color: args.color,
-        print_recipe_commands: args.print_commands | args.verbose,
-        print_fresh: args.print_fresh | args.verbose,
-        dry_run: args.dry_run,
-        no_capture: args.no_capture | args.verbose,
-        explain: args.explain | args.verbose,
-    }));
 
     // Determine the workspace directory.
     let workspace_dir_abs;
@@ -237,7 +238,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
         };
         settings.define(key, value);
     }
-    settings.force_color = watcher.enable_color();
+    settings.force_color = color_stdout.supports_color();
 
     let io: Arc<dyn werk_runner::Io> = if args.dry_run || args.list {
         Arc::new(dry_run::DryRun::new())
@@ -245,11 +246,28 @@ async fn try_main(args: Args) -> Result<(), Error> {
         Arc::new(werk_runner::RealSystem::new())
     };
 
+    let watcher = watcher::make_watcher(watcher::OutputSettings {
+        logging_enabled: args.log.is_some() || args.list,
+        color: color_stderr,
+        output: if args.log.is_some() {
+            OutputChoice::Log
+        } else {
+            args.output_format
+        },
+        print_recipe_commands: args.print_commands | args.verbose,
+        print_fresh: args.print_fresh | args.verbose,
+        dry_run: args.dry_run,
+        quiet: args.quiet && !args.verbose && !args.loud,
+        loud: args.loud | args.verbose,
+        explain: args.explain | args.verbose,
+    });
+
     let workspace = Workspace::new(&ast, &*io, &*watcher, workspace_dir.to_owned(), &settings)
         .map_err(display_error)?;
 
     if args.list {
-        print_list(&workspace.manifest, &watcher);
+        let mut output = AutoStream::new(std::io::stdout(), color_stdout);
+        print_list(&workspace.manifest, &mut output);
         return Ok(());
     }
 
@@ -259,24 +277,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     };
 
     let runner = Runner::new(&workspace);
-
-    let watcher2 = watcher.clone();
-    let render_watcher_task = smol::spawn(async move {
-        loop {
-            smol::Timer::after(std::time::Duration::from_millis(100)).await;
-            watcher2.render_force_flush();
-        }
-    });
-
-    // Hide cursor and disable line wrapping while running.
-    watcher.lock().start_advanced_rendering();
-
     let result = runner.build_or_run(&target).await;
-
-    // Show the cursor again and re-enable line wrapping.
-    watcher.lock().finish_advanced_rendering();
-
-    render_watcher_task.cancel().await;
 
     let write_cache = match result {
         Ok(_) => true,
@@ -292,7 +293,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     result.map(|_| ()).map_err(display_error)
 }
 
-pub fn print_list(doc: &werk_runner::ir::Manifest, watcher: &watcher::StdoutWatcher) {
+pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write) {
     let globals = doc
         .globals
         .iter()
@@ -321,9 +322,6 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, watcher: &watcher::StdoutWatc
         .map(|recipe| recipe.pattern.string.len())
         .max()
         .unwrap_or(0);
-
-    let mut out_lock = watcher.lock();
-    let out = &mut out_lock.stdout;
 
     if max_global_name_len != 0 {
         _ = writeln!(out, "{}", "Global variables:".bright_purple());

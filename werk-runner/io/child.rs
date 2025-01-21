@@ -5,11 +5,12 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::{io::BufReader, ready, AsyncBufRead, AsyncRead, AsyncWrite, Stream};
+use futures::{
+    io::BufReader, ready, AsyncBufRead, AsyncRead, AsyncWrite, FutureExt as _, Stream, StreamExt,
+};
 
 pub trait Child: Send + Sync + Unpin {
     fn stdin(self: Pin<&mut Self>) -> Option<Pin<&mut dyn AsyncWrite>>;
-    fn stdout(self: Pin<&mut Self>) -> Option<Pin<&mut dyn AsyncRead>>;
     fn stderr(self: Pin<&mut Self>) -> Option<Pin<&mut dyn AsyncRead>>;
 
     fn take_stdin(&mut self) -> Option<Pin<Box<dyn AsyncWrite + Send>>>;
@@ -26,11 +27,6 @@ impl Child for smol::process::Child {
     fn stdin(self: Pin<&mut Self>) -> Option<Pin<&mut dyn AsyncWrite>> {
         let stdin = Pin::new(self.get_mut().stdin.as_mut()?);
         Some(stdin as _)
-    }
-
-    fn stdout(self: Pin<&mut Self>) -> Option<Pin<&mut dyn AsyncRead>> {
-        let stdout = Pin::new(self.get_mut().stdout.as_mut()?);
-        Some(stdout as _)
     }
 
     fn stderr(self: Pin<&mut Self>) -> Option<Pin<&mut dyn AsyncRead>> {
@@ -59,17 +55,16 @@ impl Child for smol::process::Child {
 }
 
 pub enum ChildCaptureOutput {
-    /// stdout was available.
-    StdoutLine(Vec<u8>),
     /// stderr was available.
-    StderrLine(Vec<u8>),
-    /// stdout and stderr were simultaneously available.
-    Both(Vec<u8>, Vec<u8>),
+    Stderr(Vec<u8>),
+    /// Will only be produced when the child was spawned with `forward_stdout =
+    /// true`.
+    Stdout(Vec<u8>),
     Exit(std::process::ExitStatus),
 }
 
-/// Read lines of the output from a child process, interleaving stdout and
-/// stderr.
+/// Read lines of the output from a child process, capturing stderr
+/// (informational output).
 ///
 /// If both stdout and stderr are simultaneously available, both are emitted
 /// simultaneously.
@@ -77,9 +72,7 @@ pub enum ChildCaptureOutput {
 pub struct ChildLinesStream {
     stdout: Option<ByteLines<BufReader<Pin<Box<dyn AsyncRead + Send>>>>>,
     stderr: Option<ByteLines<BufReader<Pin<Box<dyn AsyncRead + Send>>>>>,
-    status_fut:
-        Option<Pin<Box<dyn Future<Output = std::io::Result<std::process::ExitStatus>> + Send>>>,
-    status: Option<std::io::Result<std::process::ExitStatus>>,
+    status: Pin<Box<dyn Future<Output = std::io::Result<std::process::ExitStatus>> + Send>>,
 }
 
 impl ChildLinesStream {
@@ -89,9 +82,9 @@ impl ChildLinesStream {
         }
 
         let stdout = child.take_stdout().map(|stdout| {
-            let stdout = BufReader::new(stdout);
+            let reader = BufReader::new(stdout);
             ByteLines {
-                reader: stdout,
+                reader,
                 buf: Vec::new(),
                 bytes: Vec::new(),
                 read: 0,
@@ -113,8 +106,7 @@ impl ChildLinesStream {
         ChildLinesStream {
             stdout,
             stderr,
-            status_fut: Some(status),
-            status: None,
+            status,
         }
     }
 }
@@ -125,61 +117,45 @@ impl Stream for ChildLinesStream {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = Pin::into_inner(self);
 
-        // Note: All futures must be polled every time we are woken up (unless
-        // they already completed), in order to properly register wakers. We
-        // don't know which one actually woke us up.
+        // Note: We have to wake ourselves whenever we produce a result that
+        // isn't that the process exited.
 
-        let stdout = if let Some(stdout) = this.stdout.as_mut() {
-            match Pin::new(stdout).poll_next(cx) {
-                Poll::Ready(Some(Ok(line))) => Some(line),
-                Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e))),
-                Poll::Ready(None) => {
-                    this.stdout = None;
-                    None
+        if let Some(stderr) = this.stderr.as_mut() {
+            match stderr.poll_next_unpin(cx)? {
+                Poll::Ready(Some(line)) => {
+                    // More might be available.
+                    cx.waker().wake_by_ref();
+                    return Poll::Ready(Some(Ok(ChildCaptureOutput::Stderr(line))));
                 }
-                Poll::Pending => None,
-            }
-        } else {
-            None
-        };
-
-        let stderr = if let Some(stderr) = this.stderr.as_mut() {
-            match Pin::new(stderr).poll_next(cx) {
-                Poll::Ready(Some(Ok(line))) => Some(line),
-                Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e))),
                 Poll::Ready(None) => {
+                    // Stop polling the reader.
                     this.stderr = None;
-                    None
-                }
-                Poll::Pending => None,
-            }
-        } else {
-            None
-        };
-
-        if let Some(status_fut) = this.status_fut.as_mut() {
-            match Pin::new(status_fut).poll(cx) {
-                Poll::Ready(status) => {
-                    this.status = Some(status);
                 }
                 Poll::Pending => (),
             }
         }
 
-        match (stdout, stderr) {
-            (Some(stdout), Some(stderr)) => {
-                Poll::Ready(Some(Ok(ChildCaptureOutput::Both(stdout, stderr))))
-            }
-            (Some(stdout), None) => Poll::Ready(Some(Ok(ChildCaptureOutput::StdoutLine(stdout)))),
-            (None, Some(stderr)) => Poll::Ready(Some(Ok(ChildCaptureOutput::StderrLine(stderr)))),
-            (None, None) => {
-                if let Some(status) = this.status.take() {
-                    Poll::Ready(Some(status.map(ChildCaptureOutput::Exit)))
-                } else {
-                    assert!(this.status_fut.is_some(), "child process polled after Exit");
-                    Poll::Pending
+        if let Some(stdout) = this.stdout.as_mut() {
+            match stdout.poll_next_unpin(cx)? {
+                Poll::Ready(Some(line)) => {
+                    // More might be available.
+                    cx.waker().wake_by_ref();
+                    return Poll::Ready(Some(Ok(ChildCaptureOutput::Stdout(line))));
                 }
+                Poll::Ready(None) => {
+                    // Stop polling the reader.
+                    this.stdout = None;
+                }
+                Poll::Pending => (),
             }
+        }
+
+        if this.stdout.is_none() && this.stderr.is_none() {
+            this.status
+                .poll_unpin(cx)?
+                .map(|status| Some(Ok(ChildCaptureOutput::Exit(status))))
+        } else {
+            Poll::Pending
         }
     }
 }
