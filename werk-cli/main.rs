@@ -237,7 +237,8 @@ async fn try_main(args: Args) -> Result<(), Error> {
     let out_dir_from_config = config
         .output_directory
         .as_ref()
-        .map(|p| Absolute::new_unchecked(workspace_dir.join(&**p)));
+        .map(|p| std::path::absolute(workspace_dir.join(&**p)).map(Absolute::new_unchecked))
+        .transpose()?;
 
     let out_dir = out_dir_from_args
         .clone()
@@ -437,18 +438,25 @@ async fn autowatch_loop(
             }
         };
 
+        let out_dir_from_config = config
+            .output_directory
+            .as_ref()
+            .map(|p| std::path::absolute(workspace_dir.join(&**p)).map(Absolute::new_unchecked))
+            .transpose()?;
         let out_dir = output_directory_from_args
             .clone()
-            .or_else(|| {
-                config
-                    .output_directory
-                    .as_ref()
-                    .map(|s| Absolute::new_unchecked(workspace_dir.join(&**s)))
-            })
+            .or(out_dir_from_config)
             .unwrap_or_else(|| Absolute::new_unchecked(workspace_dir.join("target")));
 
         if out_dir != settings.output_directory {
-            watcher.warning(None, "Output directory changed!");
+            watcher.warning(
+                None,
+                &format!(
+                    "Output directory changed: `{}` => `{}`",
+                    settings.output_directory.display(),
+                    out_dir.display()
+                ),
+            );
             settings.output_directory = out_dir;
         }
 

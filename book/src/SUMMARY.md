@@ -18,6 +18,7 @@
   - [When is a target outdated?](./outdatedness.md)
   - [Depfile support](./depfile_support.md)
 - [Configure your build](./build_config.md)
+- [Watch for changes](./watch.md)
 
 # Reference Guide
 

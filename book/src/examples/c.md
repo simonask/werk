@@ -72,4 +72,10 @@ task build {
     build "my-program{EXE_SUFFIX}"
     info "Build complete!"
 }
+
+task run {
+    let executable = "my-program{EXE_SUFFIX}"
+    build executable
+    run "<executable>"
+}
 ```
