@@ -13,7 +13,7 @@ impl LogWatcher {
     }
 }
 
-impl werk_runner::Watcher for LogWatcher {
+impl werk_runner::Render for LogWatcher {
     fn will_build(
         &self,
         task_id: &werk_runner::TaskId,

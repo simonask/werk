@@ -1,6 +1,6 @@
 use crate::{BuildStatus, Error, Outdatedness, ShellCommandLine, TaskId};
 
-pub trait Watcher: Send + Sync {
+pub trait Render: Send + Sync {
     /// Build task is about to start.
     fn will_build(&self, task_id: &TaskId, num_steps: usize, outdatedness: &Outdatedness);
 
@@ -49,6 +49,20 @@ pub trait Watcher: Send + Sync {
         num_steps: usize,
     );
 
+    /// Emit a message from the user, typically from the `info` expression in
+    /// the manifest.
     fn message(&self, task_id: Option<&TaskId>, message: &str);
+
+    /// Emit a warning from the user, typically from the `warn` expression in
+    /// the manifest.
     fn warning(&self, task_id: Option<&TaskId>, message: &str);
+
+    /// Emit an informational message from the runtime, typically the `werk`
+    /// binary wants to tell the user about something that happened.
+    ///
+    /// For example, this is used by the `--watch` flag to tell the user what's
+    /// happening.
+    fn runner_message(&self, message: &str) {
+        _ = message;
+    }
 }

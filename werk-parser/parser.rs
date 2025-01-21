@@ -24,7 +24,7 @@ mod span;
 
 pub use span::*;
 
-pub type Input<'a> = winnow::stream::Located<&'a str>;
+pub type Input<'a> = winnow::stream::LocatingSlice<&'a str>;
 pub type PError = crate::error::ParseError;
 pub type PResult<T> = winnow::PResult<T, PError>;
 

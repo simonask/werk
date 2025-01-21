@@ -6,22 +6,22 @@ mod io;
 pub mod ir;
 mod outdatedness;
 mod pattern;
+mod render;
 mod runner;
 mod scope;
 mod shell;
 mod value;
-mod watcher;
 mod workspace;
 
 pub use error::*;
 pub use io::*;
 pub use outdatedness::*;
 pub use pattern::*;
+pub use render::*;
 pub use runner::*;
 pub use scope::*;
 pub use shell::*;
 pub use value::*;
-pub use watcher::*;
 pub use workspace::*;
 
 pub use which::Error as WhichError;

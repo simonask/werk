@@ -9,7 +9,7 @@ use crate::{
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
     eval::{self, Eval, UsedVariable},
     ir::{self, BuildRecipe, TaskRecipe},
-    DirEntry, Error, EvalError, GlobalVar, Io, RootScope, Watcher,
+    DirEntry, Error, EvalError, GlobalVar, Io, Render, RootScope,
 };
 
 #[derive(Clone)]
@@ -106,7 +106,7 @@ pub struct Workspace<'a> {
     pub defines: HashMap<String, String>,
     pub force_color: bool,
     pub io: &'a dyn Io,
-    pub watcher: &'a dyn Watcher,
+    pub render: &'a dyn Render,
     pub(crate) runner_state: crate::runner::RunnerState,
 }
 
@@ -124,7 +124,7 @@ impl<'a> Workspace<'a> {
     pub fn new(
         ast: &'a werk_parser::Document<'a>,
         io: &'a dyn Io,
-        watcher: &'a dyn Watcher,
+        render: &'a dyn Render,
         project_root: Absolute<std::path::PathBuf>,
         settings: &WorkspaceSettings,
     ) -> Result<Self, Error> {
@@ -175,7 +175,7 @@ impl<'a> Workspace<'a> {
             defines: settings.defines.clone(),
             force_color: settings.force_color,
             io,
-            watcher,
+            render,
             runner_state: crate::RunnerState::new(settings.jobs),
         };
 
@@ -281,7 +281,7 @@ impl<'a> Workspace<'a> {
         // Warn about defines set on the command-line that have no effect.
         for key in self.defines.keys() {
             if !self.manifest.globals.contains_key(key) {
-                self.watcher.warning(None, &format!("Unused define: {key}"));
+                self.render.warning(None, &format!("Unused define: {key}"));
             }
         }
 
@@ -300,14 +300,20 @@ impl<'a> Workspace<'a> {
         write_workspace_cache(self.io, self.output_directory.as_deref(), &cache)
     }
 
+    pub fn workspace_files(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (&Absolute<werk_fs::PathBuf>, &DirEntry)> + '_ {
+        self.workspace_files.iter()
+    }
+
     #[inline]
     pub fn project_root(&self) -> &Absolute<std::path::Path> {
         self.project_root.as_deref()
     }
 
     #[inline]
-    pub fn output_directory(&self) -> &std::path::Path {
-        &self.output_directory
+    pub fn output_directory(&self) -> &Absolute<std::path::Path> {
+        self.output_directory.as_deref()
     }
 
     pub fn get_project_file(&self, path: &Absolute<werk_fs::Path>) -> Option<&DirEntry> {
