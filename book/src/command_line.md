@@ -11,8 +11,8 @@ Arguments:
 
 Options:
   -f, --file <FILE>
-          The path to the Werkfile. Defaults to searching for `Werkfile` in the current
-          working directory and its parents
+          The path to the Werkfile. Defaults to searching for `Werkfile` in the
+          current working directory and its parents
 
   -l, --list
           List the available recipes
@@ -27,15 +27,28 @@ Options:
       --print-fresh
           Print recipes that were up-to-date. Implied by `--verbose`
 
-      --no-capture
-          Forward the stdout of all executed commands to the terminal, even when
-          successful. Stderr output is always forwarded. Implied by `--verbose`
+      --quiet
+          Silence informational output from executed commands, only printing to
+          the terminal when a recipe fails
+
+      --loud
+          Print all informational output from executed commands to the terminal,
+          even for quiet recipes. Implied by `--verbose`
 
       --explain
           For each outdated target, explain why it was outdated. Implied by `--verbose`
 
   -v, --verbose
-          Shorthand for `--explain --print-commands --print-fresh --no-capture`
+          Shorthand for `--explain --print-commands --print-fresh --no-capture --loud`
+
+  -w, --watch
+          Build the target, then keep rebuilding it when the workspace changes
+
+      --watch-delay <WATCH_DELAY>
+          Number of milliseconds to wait after a filesystem change before
+          rebuilding. Implies `--watch`
+
+          [default: 250]
 
       --color <COLOR>
           [default: auto]
@@ -43,12 +56,11 @@ Options:
           Possible values:
           - auto:   Probe the current terminal and environment variables for color
                     support
-          - always: Force color output, even if the command is not running in a
-                    terminal
+          - always: Force color output, even if the command is not running in a terminal
           - never:  Do not use color output
 
       --output-format <OUTPUT_FORMAT>
-          [default: auto]
+          [default: ansi]
 
           Possible values:
           - ansi: Provide friendly user feedback assuming an ANSI terminal
@@ -67,7 +79,7 @@ Options:
           Use the output directory instead of the default
 
   -D, --define <DEFINE>
-          Override global variable. This takes the form `name=value`.
+          Override global variable. This takes the form `name=value`
 
       --log [<LOG>]
           Enable debug logging to stdout.
