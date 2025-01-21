@@ -2,7 +2,7 @@ use ahash::HashMap;
 
 use crate::{
     eval::{Eval, Used},
-    ir, Io, PatternMatchData, TaskId, Value, Watcher, Workspace,
+    ir, Io, PatternMatchData, Render, TaskId, Value, Workspace,
 };
 
 pub type LocalVariables = indexmap::IndexMap<String, Eval<Value>>;
@@ -132,7 +132,7 @@ pub trait Scope: Send + Sync {
     fn workspace(&self) -> &Workspace;
 
     fn task_id(&self) -> Option<&TaskId>;
-    fn watcher(&self) -> &dyn Watcher;
+    fn render(&self) -> &dyn Render;
 
     fn io(&self) -> &dyn Io {
         self.workspace().io()
@@ -274,8 +274,8 @@ impl Scope for RootScope<'_> {
     }
 
     #[inline]
-    fn watcher(&self) -> &dyn Watcher {
-        self.workspace.watcher
+    fn render(&self) -> &dyn Render {
+        self.workspace.render
     }
 }
 
@@ -304,8 +304,8 @@ impl Scope for TaskRecipeScope<'_> {
     }
 
     #[inline]
-    fn watcher(&self) -> &dyn Watcher {
-        self.parent.workspace.watcher
+    fn render(&self) -> &dyn Render {
+        self.parent.workspace.render
     }
 }
 
@@ -352,8 +352,8 @@ impl Scope for BuildRecipeScope<'_> {
     }
 
     #[inline]
-    fn watcher(&self) -> &dyn Watcher {
-        self.parent.workspace.watcher
+    fn render(&self) -> &dyn Render {
+        self.parent.workspace.render
     }
 }
 
@@ -377,8 +377,8 @@ impl Scope for SubexprScope<'_> {
     }
 
     #[inline]
-    fn watcher(&self) -> &dyn Watcher {
-        self.parent.watcher()
+    fn render(&self) -> &dyn Render {
+        self.parent.render()
     }
 }
 
@@ -414,7 +414,7 @@ impl Scope for MatchScope<'_> {
     }
 
     #[inline]
-    fn watcher(&self) -> &dyn Watcher {
-        self.parent.watcher()
+    fn render(&self) -> &dyn Render {
+        self.parent.render()
     }
 }

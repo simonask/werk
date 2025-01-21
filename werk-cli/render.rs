@@ -37,7 +37,7 @@ impl Display for Step {
     }
 }
 
-pub fn make_watcher(settings: OutputSettings) -> Arc<dyn werk_runner::Watcher> {
+pub fn make_renderer(settings: OutputSettings) -> Arc<dyn werk_runner::Render> {
     match settings.output {
         OutputChoice::Json => Arc::new(json::JsonWatcher::new()),
         OutputChoice::Log => Arc::new(log::LogWatcher::new(settings)),
@@ -45,9 +45,9 @@ pub fn make_watcher(settings: OutputSettings) -> Arc<dyn werk_runner::Watcher> {
             let stderr = AutoStream::new(std::io::stderr(), settings.color);
             let must_be_linear = settings.logging_enabled | !stderr.supports_nonlinear_output();
             if must_be_linear {
-                Arc::new(ansi::TerminalWatcher::<true>::new(settings, stderr))
+                Arc::new(ansi::TerminalRenderer::<true>::new(settings, stderr))
             } else {
-                Arc::new(ansi::TerminalWatcher::<false>::new(settings, stderr))
+                Arc::new(ansi::TerminalRenderer::<false>::new(settings, stderr))
             }
         }
     }

@@ -6,7 +6,7 @@ impl JsonWatcher {
     }
 }
 
-impl werk_runner::Watcher for JsonWatcher {
+impl werk_runner::Render for JsonWatcher {
     fn will_build(
         &self,
         task_id: &werk_runner::TaskId,

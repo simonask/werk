@@ -6,19 +6,19 @@ use werk_runner::{BuildStatus, Error, Outdatedness, ShellCommandLine, TaskId};
 
 use std::{fmt::Write as _, io::Write, sync::Arc};
 
-use crate::watcher::Bracketed;
+use crate::render::Bracketed;
 
 use super::{AutoStream, OutputSettings, Step};
 
 /// A watcher that outputs to the terminal, emitting "destructive" ANSI escape
 /// codes that modify the existing terminal (i.e. overwriting the bottom line(s)
 /// with current status).
-pub struct TerminalWatcher<const LINEAR: bool> {
+pub struct TerminalRenderer<const LINEAR: bool> {
     inner: Arc<Mutex<Renderer<LINEAR>>>,
     _render_task: Option<smol::Task<()>>,
 }
 
-impl<const LINEAR: bool> TerminalWatcher<LINEAR> {
+impl<const LINEAR: bool> TerminalRenderer<LINEAR> {
     pub fn new(settings: OutputSettings, stderr: AutoStream<std::io::Stderr>) -> Self {
         let inner = Arc::new(Mutex::new(Renderer {
             stderr,
@@ -396,7 +396,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
     }
 }
 
-impl<const LINEAR: bool> werk_runner::Watcher for TerminalWatcher<LINEAR> {
+impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
     fn will_build(&self, task_id: &TaskId, num_steps: usize, outdatedness: &Outdatedness) {
         self.inner
             .lock()

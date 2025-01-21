@@ -1,6 +1,6 @@
 use crate::{BuildStatus, Error, Outdatedness, ShellCommandLine, TaskId};
 
-pub trait Watcher: Send + Sync {
+pub trait Render: Send + Sync {
     /// Build task is about to start.
     fn will_build(&self, task_id: &TaskId, num_steps: usize, outdatedness: &Outdatedness);
 

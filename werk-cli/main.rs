@@ -1,5 +1,5 @@
 pub mod dry_run;
-mod watcher;
+mod render;
 
 use std::sync::Arc;
 
@@ -8,7 +8,7 @@ use clap::Parser;
 use futures::future::Either;
 use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
-use watcher::AutoStream;
+use render::AutoStream;
 use werk_fs::Absolute;
 use werk_parser::parser::Spanned as _;
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
@@ -175,8 +175,8 @@ fn main() -> Result<(), Error> {
 async fn try_main(args: Args) -> Result<(), Error> {
     anstyle_query::windows::enable_ansi_colors();
 
-    let color_stdout = watcher::ColorOutputKind::initialize(&std::io::stdout(), args.color);
-    let color_stderr = watcher::ColorOutputKind::initialize(&std::io::stderr(), args.color);
+    let color_stdout = render::ColorOutputKind::initialize(&std::io::stdout(), args.color);
+    let color_stderr = render::ColorOutputKind::initialize(&std::io::stderr(), args.color);
 
     let werkfile = if let Some(file) = args.file {
         let file = Absolute::new_unchecked(std::path::absolute(file)?);
@@ -265,7 +265,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
         Arc::new(werk_runner::RealSystem::new())
     };
 
-    let watcher = watcher::make_watcher(watcher::OutputSettings {
+    let renderer = render::make_renderer(render::OutputSettings {
         logging_enabled: args.log.is_some() || args.list,
         color: color_stderr,
         output: if args.log.is_some() {
@@ -281,7 +281,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
         explain: args.explain | args.verbose,
     });
 
-    let workspace = Workspace::new(&ast, &*io, &*watcher, workspace_dir.to_owned(), &settings)
+    let workspace = Workspace::new(&ast, &*io, &*renderer, workspace_dir.to_owned(), &settings)
         .map_err(display_error)?;
 
     if args.list {
@@ -347,7 +347,7 @@ async fn autowatch_loop(
         _ = ctrlc_sender.try_send(());
     });
 
-    let (io, watcher) = (workspace.io, workspace.watcher);
+    let (io, render) = (workspace.io, workspace.render);
 
     let watch_manifest = HashSet::from_iter([werkfile.as_ref().to_path_buf()]);
     let mut watch_set = watch_manifest.clone();
@@ -365,9 +365,9 @@ async fn autowatch_loop(
 
     loop {
         if watch_set == watch_manifest {
-            watcher.runner_message("Watching manifest for changes, press Ctrl-C to stop");
+            render.runner_message("Watching manifest for changes, press Ctrl-C to stop");
         } else {
-            watcher.runner_message(&format!(
+            render.runner_message(&format!(
                 "Watching {} files for changes, press Ctrl-C to stop",
                 watch_set.len(),
             ));
@@ -384,7 +384,7 @@ async fn autowatch_loop(
             Either::Left((result, _)) => result.expect("notifier channel error"),
             Either::Right((result, _)) => {
                 if result.is_ok() {
-                    watcher.runner_message("Stopping...");
+                    render.runner_message("Stopping...");
                     return Ok(());
                 }
             }
@@ -397,7 +397,7 @@ async fn autowatch_loop(
         let source_code = match std::fs::read_to_string(werkfile.as_ref()) {
             Ok(source_code) => source_code,
             Err(err) => {
-                watcher.warning(None, &format!("Error reading manifest: {err}"));
+                render.warning(None, &format!("Error reading manifest: {err}"));
                 watch_set = watch_manifest.clone();
                 continue;
             }
@@ -449,7 +449,7 @@ async fn autowatch_loop(
             .unwrap_or_else(|| Absolute::new_unchecked(workspace_dir.join("target")));
 
         if out_dir != settings.output_directory {
-            watcher.warning(
+            render.warning(
                 None,
                 &format!(
                     "Output directory changed: `{}` => `{}`",
@@ -464,12 +464,12 @@ async fn autowatch_loop(
             .clone()
             .or_else(|| config.default_target.clone());
         let Some(target) = target else {
-            watcher.warning(None, "No configured default target");
+            render.warning(None, "No configured default target");
             watch_set = watch_manifest.clone();
             continue;
         };
 
-        let workspace = match Workspace::new(&ast, io, watcher, workspace_dir.clone(), &settings) {
+        let workspace = match Workspace::new(&ast, io, render, workspace_dir.clone(), &settings) {
             Ok(workspace) => workspace,
             Err(err) => {
                 print_error(werkfile.as_ref(), &source_code, err);

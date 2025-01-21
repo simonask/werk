@@ -28,7 +28,7 @@ pub fn default_mtime() -> std::time::SystemTime {
 
 pub struct Test<'a> {
     pub io: Arc<MockIo>,
-    pub watcher: Arc<MockWatcher>,
+    pub render: Arc<MockRender>,
     pub ast: werk_parser::Document<'a>,
 }
 
@@ -37,7 +37,7 @@ impl<'a> Test<'a> {
         let ast = werk_parser::parse_werk(werk_source)?;
         Ok(Self {
             io: Arc::new(MockIo::default().with_default_workspace_dir()),
-            watcher: Arc::new(MockWatcher::default()),
+            render: Arc::new(MockRender::default()),
             ast,
         })
     }
@@ -52,7 +52,7 @@ impl<'a> Test<'a> {
             .map_err(|err| err.error)?;
         Ok(Self {
             io: Arc::new(MockIo::default().with_default_workspace_dir()),
-            watcher: Arc::new(MockWatcher::default()),
+            render: Arc::new(MockRender::default()),
             ast,
         })
     }
@@ -74,7 +74,7 @@ impl<'a> Test<'a> {
         werk_runner::Workspace::new(
             &self.ast,
             &*self.io,
-            &*self.watcher,
+            &*self.render,
             test_workspace_dir().to_path_buf(),
             &test_workspace_settings(defines),
         )
@@ -82,12 +82,12 @@ impl<'a> Test<'a> {
 }
 
 #[derive(Default)]
-pub struct MockWatcher {
-    pub log: Mutex<Vec<MockWatcherEvent>>,
+pub struct MockRender {
+    pub log: Mutex<Vec<MockRenderEvent>>,
 }
 
 #[derive(Debug, PartialEq)]
-pub enum MockWatcherEvent {
+pub enum MockRenderEvent {
     WillBuild(TaskId, usize, Outdatedness),
     DidBuild(TaskId, Result<BuildStatus, Error>),
     WillExecute(TaskId, ShellCommandLine, usize, usize),
@@ -102,15 +102,15 @@ pub enum MockWatcherEvent {
     Warning(Option<TaskId>, String),
 }
 
-impl MockWatcher {
-    pub fn did_see(&self, event: &MockWatcherEvent) -> bool {
+impl MockRender {
+    pub fn did_see(&self, event: &MockRenderEvent) -> bool {
         self.log.lock().iter().any(|e| e == event)
     }
 }
 
-impl werk_runner::Watcher for MockWatcher {
+impl werk_runner::Render for MockRender {
     fn will_build(&self, task_id: &TaskId, num_steps: usize, outdatedness: &Outdatedness) {
-        self.log.lock().push(MockWatcherEvent::WillBuild(
+        self.log.lock().push(MockRenderEvent::WillBuild(
             task_id.clone(),
             num_steps,
             outdatedness.clone(),
@@ -120,7 +120,7 @@ impl werk_runner::Watcher for MockWatcher {
     fn did_build(&self, task_id: &TaskId, result: &Result<BuildStatus, Error>) {
         self.log
             .lock()
-            .push(MockWatcherEvent::DidBuild(task_id.clone(), result.clone()));
+            .push(MockRenderEvent::DidBuild(task_id.clone(), result.clone()));
     }
 
     fn will_execute(
@@ -130,7 +130,7 @@ impl werk_runner::Watcher for MockWatcher {
         step: usize,
         num_steps: usize,
     ) {
-        self.log.lock().push(MockWatcherEvent::WillExecute(
+        self.log.lock().push(MockRenderEvent::WillExecute(
             task_id.clone(),
             command.clone(),
             step,
@@ -146,7 +146,7 @@ impl werk_runner::Watcher for MockWatcher {
         step: usize,
         num_steps: usize,
     ) {
-        self.log.lock().push(MockWatcherEvent::DidExecute(
+        self.log.lock().push(MockRenderEvent::DidExecute(
             task_id.clone(),
             command.clone(),
             result.as_ref().map_err(|_| ()).cloned(),
@@ -156,14 +156,14 @@ impl werk_runner::Watcher for MockWatcher {
     }
 
     fn message(&self, task_id: Option<&TaskId>, message: &str) {
-        self.log.lock().push(MockWatcherEvent::Message(
+        self.log.lock().push(MockRenderEvent::Message(
             task_id.cloned(),
             message.to_string(),
         ));
     }
 
     fn warning(&self, task_id: Option<&TaskId>, message: &str) {
-        self.log.lock().push(MockWatcherEvent::Warning(
+        self.log.lock().push(MockRenderEvent::Warning(
             task_id.cloned(),
             message.to_string(),
         ));

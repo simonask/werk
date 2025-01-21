@@ -5,11 +5,11 @@
 - [ ] Forward doc comments from TOML to `--list`.
 - [ ] Autoclean: Match files in the output directory against available recipes
   and delete them if they are older than `.werk-cache`.
-- [ ] Autowatcher: Run a recipe and detect which files where checked for
-  outdatedness, and then watch those files and rebuild when any of them changes.
 
 ## Done
 
+- [x] Autowatcher: Run a recipe and detect which files where checked for
+  outdatedness, and then watch those files and rebuild when any of them changes.
 - [x] Don't use `RUST_LOG` to enable logging, as it interferes with child
   processes. ~~Use `WERK_LOG` instead.~~
 - [x] Support generating depfiles in the same command that compiles the file.

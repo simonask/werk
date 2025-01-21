@@ -222,13 +222,13 @@ pub fn eval_op(
         ast::ExprOp::Info(expr) => {
             let scope = SubexprScope::new(scope, &param);
             let message = eval_string_expr(&scope, &expr.param)?;
-            scope.watcher().message(scope.task_id(), &message.value);
+            scope.render().message(scope.task_id(), &message.value);
             Ok(param)
         }
         ast::ExprOp::Warn(expr) => {
             let scope = SubexprScope::new(scope, &param);
             let message = eval_string_expr(&scope, &expr.param)?;
-            scope.watcher().warning(scope.task_id(), &message.value);
+            scope.render().warning(scope.task_id(), &message.value);
             Ok(param)
         }
         ast::ExprOp::Error(error_expr) => {
