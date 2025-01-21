@@ -300,14 +300,20 @@ impl<'a> Workspace<'a> {
         write_workspace_cache(self.io, self.output_directory.as_deref(), &cache)
     }
 
+    pub fn workspace_files(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (&Absolute<werk_fs::PathBuf>, &DirEntry)> + '_ {
+        self.workspace_files.iter()
+    }
+
     #[inline]
     pub fn project_root(&self) -> &Absolute<std::path::Path> {
         self.project_root.as_deref()
     }
 
     #[inline]
-    pub fn output_directory(&self) -> &std::path::Path {
-        &self.output_directory
+    pub fn output_directory(&self) -> &Absolute<std::path::Path> {
+        self.output_directory.as_deref()
     }
 
     pub fn get_project_file(&self, path: &Absolute<werk_fs::Path>) -> Option<&DirEntry> {

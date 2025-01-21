@@ -3,7 +3,10 @@ mod watcher;
 
 use std::sync::Arc;
 
+use ahash::HashSet;
 use clap::Parser;
+use futures::future::Either;
+use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
 use watcher::AutoStream;
 use werk_fs::Absolute;
@@ -74,7 +77,7 @@ pub struct Args {
     pub watch: bool,
 
     /// Number of milliseconds to wait after a filesystem change before
-    /// rebuilding the target. Implies `--watch`.
+    /// rebuilding. Implies `--watch`.
     #[clap(long, default_value = "250")]
     pub watch_delay: u64,
 
@@ -150,6 +153,8 @@ enum Error {
     NoTarget,
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Notify(#[from] notify::Error),
 }
 
 fn main() -> Result<(), Error> {
@@ -199,12 +204,12 @@ async fn try_main(args: Args) -> Result<(), Error> {
             werkfile
                 .as_ref()
                 .parent()
-                .ok_or_else(|| Error::Workspace(werkfile.as_ref().to_path_buf()))?,
+                .ok_or_else(|| Error::Workspace(werkfile.as_ref().to_path_buf().into_inner()))?,
         )
     };
 
     // Parse the werk manifest!
-    let source_code = std::fs::read_to_string(&werkfile)?;
+    let source_code = std::fs::read_to_string(werkfile.as_ref())?;
     let display_error = |err: werk_runner::Error| print_error(werkfile.as_ref(), &source_code, err);
     let display_parse_error =
         |err: werk_parser::Error| print_parse_error(werkfile.as_ref(), &source_code, err);
@@ -225,15 +230,19 @@ async fn try_main(args: Args) -> Result<(), Error> {
     // Read the configuration statements from the AST.
     let config = werk_runner::ir::Config::new(&ast).map_err(display_root_eval_error)?;
 
-    let out_dir = args
+    let out_dir_from_args = args
         .output_dir
-        .or_else(|| {
-            config
-                .output_directory
-                .as_ref()
-                .map(|s| workspace_dir.join(&**s))
-        })
-        .unwrap_or_else(|| workspace_dir.join("target"));
+        .map(|p| std::path::absolute(p).map(Absolute::new_unchecked))
+        .transpose()?;
+    let out_dir_from_config = config
+        .output_directory
+        .as_ref()
+        .map(|p| Absolute::new_unchecked(workspace_dir.join(&**p)));
+
+    let out_dir = out_dir_from_args
+        .clone()
+        .or(out_dir_from_config)
+        .unwrap_or_else(|| Absolute::new_unchecked(workspace_dir.join("target")));
     let out_dir = Absolute::new_unchecked(std::path::absolute(out_dir)?);
     tracing::info!("Project directory: {}", workspace_dir.display());
     tracing::info!("Output directory: {}", out_dir.display());
@@ -280,7 +289,10 @@ async fn try_main(args: Args) -> Result<(), Error> {
         return Ok(());
     }
 
-    let target = args.target.or_else(|| config.default_target.clone());
+    let target = args
+        .target
+        .clone()
+        .or_else(|| config.default_target.clone());
     let Some(target) = target else {
         return Err(Error::NoTarget);
     };
@@ -299,7 +311,218 @@ async fn try_main(args: Args) -> Result<(), Error> {
         }
     }
 
-    result.map(|_| ()).map_err(display_error)
+    std::mem::drop(runner);
+
+    if args.watch {
+        autowatch_loop(
+            std::time::Duration::from_millis(args.watch_delay),
+            workspace,
+            werkfile,
+            args.target,
+            out_dir_from_args,
+            &settings,
+        )
+        .await?;
+        Ok(())
+    } else {
+        result.map(|_| ()).map_err(display_error)
+    }
+}
+
+async fn autowatch_loop(
+    timeout: std::time::Duration,
+    // The initial workspace built by main(). Must be finalize()d.
+    workspace: Workspace<'_>,
+    werkfile: Werkfile,
+    // Target to keep building
+    target_from_args: Option<String>,
+    output_directory_from_args: Option<Absolute<std::path::PathBuf>>,
+    settings: &WorkspaceSettings,
+) -> Result<(), notify::Error> {
+    let (notification_sender, notification_receiver) = smol::channel::bounded(1);
+
+    let (ctrlc_sender, ctrlc_receiver) = smol::channel::bounded(1);
+    _ = ctrlc::set_handler(move || {
+        _ = ctrlc_sender.try_send(());
+    });
+
+    let (io, watcher) = (workspace.io, workspace.watcher);
+
+    let watch_manifest = HashSet::from_iter([werkfile.as_ref().to_path_buf()]);
+    let mut watch_set = watch_manifest.clone();
+    watch_set.extend(workspace.workspace_files().filter_map(|(_, entry)| {
+        if entry.metadata.is_file {
+            Some(entry.path.clone())
+        } else {
+            None
+        }
+    }));
+    let workspace_dir = workspace.project_root().to_path_buf();
+    std::mem::drop(workspace);
+
+    let mut settings = settings.clone();
+
+    loop {
+        if watch_set == watch_manifest {
+            watcher.runner_message("Watching manifest for changes, press Ctrl-C to stop");
+        } else {
+            watcher.runner_message(&format!(
+                "Watching {} files for changes, press Ctrl-C to stop",
+                watch_set.len(),
+            ));
+        }
+
+        // Start the notifier.
+        let notifier = make_notifier_for_files(&watch_set, notification_sender.clone(), timeout)?;
+        let notification_recv = notification_receiver.recv();
+        let ctrlc_recv = ctrlc_receiver.recv();
+        smol::pin!(notification_recv);
+        smol::pin!(ctrlc_recv);
+
+        match futures::future::select(notification_recv, ctrlc_recv).await {
+            Either::Left((result, _)) => result.expect("notifier channel error"),
+            Either::Right((result, _)) => {
+                if result.is_ok() {
+                    watcher.runner_message("Stopping...");
+                    return Ok(());
+                }
+            }
+        }
+
+        // Stop the notifier again immediately. TODO: Consider if it makes sense to reuse it.
+        notifier.stop();
+
+        // Re-read the manifest.
+        let source_code = match std::fs::read_to_string(werkfile.as_ref()) {
+            Ok(source_code) => source_code,
+            Err(err) => {
+                watcher.warning(None, &format!("Error reading manifest: {err}"));
+                watch_set = watch_manifest.clone();
+                continue;
+            }
+        };
+
+        let toml_document;
+        let ast = match werkfile {
+            Werkfile::Werk(_) => werk_parser::parse_werk(&source_code),
+            Werkfile::Toml(_) => {
+                toml_document = match toml_edit::ImDocument::parse(&*source_code) {
+                    Ok(doc) => doc,
+                    Err(err) => {
+                        print_parse_error(werkfile.as_ref(), &source_code, err.into());
+                        watch_set = watch_manifest.clone();
+                        continue;
+                    }
+                };
+                werk_parser::parse_toml_document(&toml_document)
+            }
+        };
+
+        let ast = match ast {
+            Ok(ast) => ast,
+            Err(err) => {
+                print_parse_error(werkfile.as_ref(), &source_code, err);
+                watch_set = watch_manifest.clone();
+                continue;
+            }
+        };
+
+        // Reload config.
+        let config = match werk_runner::ir::Config::new(&ast) {
+            Ok(config) => config,
+            Err(err) => {
+                print_eval_error(werkfile.as_ref(), &source_code, err);
+                watch_set = watch_manifest.clone();
+                continue;
+            }
+        };
+
+        let out_dir = output_directory_from_args
+            .clone()
+            .or_else(|| {
+                config
+                    .output_directory
+                    .as_ref()
+                    .map(|s| Absolute::new_unchecked(workspace_dir.join(&**s)))
+            })
+            .unwrap_or_else(|| Absolute::new_unchecked(workspace_dir.join("target")));
+
+        if out_dir != settings.output_directory {
+            watcher.warning(None, "Output directory changed!");
+            settings.output_directory = out_dir;
+        }
+
+        let target = target_from_args
+            .clone()
+            .or_else(|| config.default_target.clone());
+        let Some(target) = target else {
+            watcher.warning(None, "No configured default target");
+            watch_set = watch_manifest.clone();
+            continue;
+        };
+
+        let workspace = match Workspace::new(&ast, io, watcher, workspace_dir.clone(), &settings) {
+            Ok(workspace) => workspace,
+            Err(err) => {
+                print_error(werkfile.as_ref(), &source_code, err);
+                // Workspace evaluation may depend on other files, so just keep
+                // the current watchset.
+                continue;
+            }
+        };
+
+        // Update the watchset.
+        watch_set.clear();
+        watch_set.extend(watch_manifest.iter().cloned());
+        watch_set.extend(workspace.workspace_files().filter_map(|(_, entry)| {
+            if entry.metadata.is_file {
+                Some(entry.path.clone())
+            } else {
+                None
+            }
+        }));
+
+        // Finally, rebuild the target!
+        let runner = Runner::new(&workspace);
+        let write_cache = match runner.build_or_run(&target).await {
+            Ok(_) => true,
+            Err(err) => {
+                let write_cache = err.should_still_write_werk_cache();
+                print_error(werkfile.as_ref(), &source_code, err);
+                write_cache
+            }
+        };
+
+        if write_cache {
+            if let Err(err) = workspace.finalize().await {
+                eprintln!("Error writing `.werk-cache`: {err}");
+                return Err(err.into());
+            }
+        }
+    }
+}
+
+fn make_notifier_for_files(
+    watch_set: &HashSet<Absolute<std::path::PathBuf>>,
+    notification_sender: smol::channel::Sender<()>,
+    timeout: std::time::Duration,
+) -> Result<
+    notify_debouncer_full::Debouncer<
+        notify::RecommendedWatcher,
+        notify_debouncer_full::RecommendedCache,
+    >,
+    notify::Error,
+> {
+    let mut notifier =
+        notify_debouncer_full::new_debouncer(timeout, Some(timeout), move |_event| {
+            _ = notification_sender.force_send(());
+        })?;
+
+    for path in watch_set {
+        _ = notifier.watch(path, notify::RecursiveMode::NonRecursive);
+    }
+
+    Ok(notifier)
 }
 
 pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write) {
@@ -404,10 +627,10 @@ enum Werkfile {
     Toml(Absolute<std::path::PathBuf>),
 }
 
-impl AsRef<std::path::Path> for Werkfile {
-    fn as_ref(&self) -> &std::path::Path {
+impl AsRef<Absolute<std::path::Path>> for Werkfile {
+    fn as_ref(&self) -> &Absolute<std::path::Path> {
         match self {
-            Werkfile::Werk(path) | Werkfile::Toml(path) => path,
+            Werkfile::Werk(path) | Werkfile::Toml(path) => path.as_deref(),
         }
     }
 }

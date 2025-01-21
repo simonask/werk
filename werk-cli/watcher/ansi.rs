@@ -381,12 +381,18 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 
     fn message(&mut self, _task_id: Option<&TaskId>, message: &str) {
         _ = self
-            .render_lines(|out, _status| write!(out, "{} {}", "[info]".bright_green(), message));
+            .render_lines(|out, _status| writeln!(out, "{} {}", "[info]".bright_green(), message));
     }
 
     fn warning(&mut self, _task_id: Option<&TaskId>, message: &str) {
         _ = self
-            .render_lines(|out, _status| write!(out, "{} {}", "[warn]".bright_yellow(), message));
+            .render_lines(|out, _status| writeln!(out, "{} {}", "[warn]".bright_yellow(), message));
+    }
+
+    fn runner_message(&mut self, message: &str) {
+        _ = self.render_lines(|out, _status| {
+            writeln!(out, "{} {}", "[werk]".bright_purple().bold(), message)
+        });
     }
 }
 
@@ -432,6 +438,10 @@ impl<const LINEAR: bool> werk_runner::Watcher for TerminalWatcher<LINEAR> {
 
     fn warning(&self, task_id: Option<&TaskId>, message: &str) {
         self.inner.lock().warning(task_id, message)
+    }
+
+    fn runner_message(&self, message: &str) {
+        self.inner.lock().runner_message(message);
     }
 
     fn on_child_process_stderr_line(
