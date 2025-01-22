@@ -1950,6 +1950,7 @@ dependencies = [
  "ctrlc",
  "futures",
  "indexmap",
+ "libc",
  "line-span",
  "notify-debouncer-full",
  "num_cpus",
@@ -1966,6 +1967,7 @@ dependencies = [
  "werk-fs",
  "werk-parser",
  "werk-runner",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

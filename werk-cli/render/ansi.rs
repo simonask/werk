@@ -1,10 +1,13 @@
+mod progress;
+pub mod term_width;
+
 use anstream::stream::IsTerminal;
 use indexmap::IndexMap;
 use owo_colors::OwoColorize as _;
 use parking_lot::Mutex;
 use werk_runner::{BuildStatus, Error, Outdatedness, ShellCommandLine, TaskId};
 
-use std::{fmt::Write as _, io::Write, sync::Arc};
+use std::{io::Write, sync::Arc};
 
 use crate::render::Bracketed;
 
@@ -26,9 +29,11 @@ impl<const LINEAR: bool> TerminalRenderer<LINEAR> {
                 current_tasks: IndexMap::new(),
                 num_tasks: 0,
                 num_completed_tasks: 0,
-                render_buffer: String::with_capacity(128),
-                spinner_frame: 0,
-                last_spinner_tick: std::time::Instant::now(),
+                progress: if LINEAR {
+                    None
+                } else {
+                    Some(progress::Progress::default())
+                },
                 settings,
             },
             needs_clear: false,
@@ -37,6 +42,10 @@ impl<const LINEAR: bool> TerminalRenderer<LINEAR> {
         let render_task = if !LINEAR {
             // Spawn a task that automatically updates the terminal with the current
             // status when a long-running task is present.
+            //
+            // TODO: This task polls continuously when a `--watch` loop is
+            // waiting for changes. Consider pausing it when a run is not in
+            // progress.
             let renderer = Arc::downgrade(&inner);
             Some(smol::spawn(async move {
                 loop {
@@ -78,8 +87,15 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
                 self.needs_clear = false;
             }
             render(&mut self.stderr, &mut self.state)?;
-            self.state.render_progress(&mut self.stderr);
-            self.needs_clear = true;
+
+            if let Some(progress) = self.state.progress.as_mut() {
+                let term_width = term_width::stderr_width();
+                progress.set_width(term_width);
+                progress.set_progress(self.state.num_completed_tasks, self.state.num_tasks);
+                progress.render(&mut self.stderr, self.state.current_tasks.iter())?;
+                self.needs_clear = true;
+            }
+
             Ok(())
         }
     }
@@ -98,8 +114,15 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
                 self.needs_clear = false;
             }
             render(&mut stdout, &mut self.state)?;
-            self.state.render_progress(&mut self.stderr);
-            self.needs_clear = true;
+
+            if let Some(progress) = self.state.progress.as_mut() {
+                let term_width = term_width::stderr_width();
+                progress.set_width(term_width);
+                progress.set_progress(self.state.num_completed_tasks, self.state.num_tasks);
+                progress.render(&mut self.stderr, self.state.current_tasks.iter())?;
+                self.needs_clear = true;
+            }
+
             Ok(())
         }
     }
@@ -109,9 +132,7 @@ struct RenderState {
     current_tasks: IndexMap<TaskId, TaskStatus>,
     num_tasks: usize,
     num_completed_tasks: usize,
-    render_buffer: String,
-    spinner_frame: u64,
-    last_spinner_tick: std::time::Instant,
+    progress: Option<progress::Progress>,
     settings: OutputSettings,
 }
 
@@ -137,63 +158,6 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
             let mut this = this.lock();
             _ = this.render_lines(|_, _| Ok(()));
         }
-    }
-}
-
-impl RenderState {
-    pub fn render_progress(&mut self, out: &mut dyn Write) {
-        let now = std::time::Instant::now();
-        if now.duration_since(self.last_spinner_tick) > std::time::Duration::from_millis(100) {
-            self.spinner_frame += 1;
-            self.last_spinner_tick = now;
-        }
-
-        const SPINNER_CHARS: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-        let spinner = SPINNER_CHARS[(self.spinner_frame % 10) as usize];
-
-        let buffer = &mut self.render_buffer;
-        if self.current_tasks.is_empty() {
-            return;
-        }
-        buffer.clear();
-        _ = write!(
-            buffer,
-            "  {spinner} {} ",
-            Bracketed(Step(self.num_completed_tasks, self.num_tasks)).bright_cyan()
-        );
-
-        // Write the name of the last task in the map.
-        let mut width_written = 20;
-        let max_width = 100;
-
-        for (index, (id, _)) in self.current_tasks.iter().enumerate() {
-            if width_written > max_width {
-                let num_remaining = self.current_tasks.len() - (index + 1);
-                if num_remaining > 0 {
-                    if index > 0 {
-                        _ = write!(buffer, " + {} more", num_remaining);
-                    } else {
-                        _ = write!(buffer, "{} recipes", num_remaining);
-                    }
-                }
-                break;
-            }
-
-            if index != 0 {
-                _ = write!(buffer, ", ");
-                width_written += 2;
-            }
-
-            let short_name = id.short_name();
-            buffer.push_str(short_name);
-            // Note: Overaccounts for Unicode characters. Probably fine for now.
-            width_written += short_name.len();
-        }
-
-        // Place the cursor at column 0.
-        buffer.push('\r');
-        out.write_all(buffer.as_bytes()).unwrap();
-        _ = out.flush();
     }
 }
 
@@ -394,6 +358,12 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
             writeln!(out, "{} {}", "[werk]".bright_purple().bold(), message)
         });
     }
+
+    fn reset(&mut self) {
+        self.state.current_tasks.clear();
+        self.state.num_tasks = 0;
+        self.state.num_completed_tasks = 0;
+    }
 }
 
 impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
@@ -465,5 +435,9 @@ impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
         self.inner
             .lock()
             .on_child_process_stdout_line(task_id, command, line_without_eol);
+    }
+
+    fn reset(&self) {
+        self.inner.lock().reset();
     }
 }

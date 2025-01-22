@@ -393,6 +393,9 @@ async fn autowatch_loop(
         // Stop the notifier again immediately. TODO: Consider if it makes sense to reuse it.
         notifier.stop();
 
+        // Reset any progress indicators between runs.
+        render.reset();
+
         // Re-read the manifest.
         let source_code = match std::fs::read_to_string(werkfile.as_ref()) {
             Ok(source_code) => source_code,
@@ -689,7 +692,7 @@ fn print_error(path: &std::path::Path, werkfile: &str, err: werk_runner::Error) 
 }
 
 fn print_eval_error(path: &std::path::Path, werkfile: &str, err: werk_runner::EvalError) -> Error {
-    use annotate_snippets::{Level, Snippet};
+    use annotate_snippets::{renderer::DEFAULT_TERM_WIDTH, Level, Snippet};
 
     let file_name = path.display().to_string();
     let span = err.span();
@@ -701,7 +704,11 @@ fn print_eval_error(path: &std::path::Path, werkfile: &str, err: werk_runner::Ev
             .fold(true)
             .annotation(Level::Error.span(span.into()).label(&err_string)),
     );
-    let renderer = annotate_snippets::Renderer::styled();
+    let renderer = annotate_snippets::Renderer::styled().term_width(
+        render::stderr_width()
+            .diagnostic_terminal_width()
+            .unwrap_or(DEFAULT_TERM_WIDTH),
+    );
     let render = renderer.render(err);
     anstream::eprintln!("{}", render);
     Error::Eval

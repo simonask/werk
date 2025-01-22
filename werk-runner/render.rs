@@ -65,4 +65,8 @@ pub trait Render: Send + Sync {
     fn runner_message(&self, message: &str) {
         _ = message;
     }
+
+    /// Reset the renderer. This is called between iterations in `--watch` to
+    /// reset the render state between runs.
+    fn reset(&self) {}
 }

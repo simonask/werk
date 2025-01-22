@@ -36,6 +36,14 @@ serde_json = "1.0.137"
 notify-debouncer-full = "0.5.0"
 ctrlc = { version = "3.4.5", features = ["termination"] }
 futures.workspace = true
+libc = "0.2.169"
+
+[target.'cfg(windows)'.dependencies]
+# Needed to get terminal width.
+windows-sys = { version = "0.59.0", features = [
+    "Win32_System_Console",
+    "Win32_Foundation",
+] }
 
 
 [build-dependencies]

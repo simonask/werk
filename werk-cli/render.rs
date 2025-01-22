@@ -5,6 +5,7 @@ mod json;
 mod log;
 mod stream;
 
+pub use ansi::term_width::*;
 pub use stream::*;
 
 use crate::OutputChoice;
