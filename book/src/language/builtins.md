@@ -69,3 +69,6 @@ These variables are valid in all scopes.
   - Windows: `.lib`
   - Linux and macOS: `.a`
 - `EMPTY`: Always the empty string
+- `COLOR`: When color output is enabled for `werk`, this is set to `"1"`. This
+  may be used to conditionally pass command-line arguments to compilers that
+  don't respect the conventional `CLICOLOR` environment variables.

@@ -1,7 +1,7 @@
 use std::{future::Future, pin::Pin};
 
 use werk_fs::Absolute;
-use werk_runner::{Child, DirEntry, Error, ShellCommandLine};
+use werk_runner::{Child, DirEntry, Env, Error, ShellCommandLine};
 
 pub struct DryRun(werk_runner::RealSystem);
 
@@ -61,9 +61,10 @@ impl werk_runner::Io for DryRun {
         &self,
         command_line: &ShellCommandLine,
         _working_dir: &Absolute<std::path::Path>,
+        _env: &Env,
         _forward_stdout: bool,
     ) -> std::io::Result<Box<dyn Child>> {
-        tracing::info!("[DRY-RUN] Would run: {}", command_line.display());
+        tracing::info!("[DRY-RUN] Would run: {}", command_line);
         Ok(Box::new(DryRunChild::default()))
     }
 
@@ -71,12 +72,13 @@ impl werk_runner::Io for DryRun {
         &self,
         command_line: &ShellCommandLine,
         working_dir: &Absolute<std::path::Path>,
+        env: &Env,
     ) -> Result<std::process::Output, std::io::Error> {
         tracing::warn!(
             "[DRY-MODE] Running executable, despite dry-run mode: {}",
-            command_line.display()
+            command_line
         );
-        self.0.run_during_eval(command_line, working_dir)
+        self.0.run_during_eval(command_line, working_dir, env)
     }
 
     fn which(

@@ -188,7 +188,7 @@ fn expressions() -> anyhow::Result<()> {
     let toml = toml_edit::ImDocument::parse(EXPRESSIONS_TOML)?;
     let test = Test::new_toml(&toml)?;
     test.io
-        .set_program("clang", program_path("clang"), |_cmdline, _fs| {
+        .set_program("clang", program_path("clang"), |_cmdline, _fs, _env| {
             Ok(std::process::Output {
                 status: std::process::ExitStatus::default(),
                 stdout: Vec::from(b"clang output"),
@@ -243,7 +243,7 @@ fn fail_custom_err() -> anyhow::Result<()> {
     let toml = toml_edit::ImDocument::parse(EXPRESSIONS_TOML)?;
     let test = Test::new_toml(&toml)?;
     test.io
-        .set_program("clang", program_path("clang"), |_cmdline, _fs| {
+        .set_program("clang", program_path("clang"), |_cmdline, _fs, _env| {
             Ok(std::process::Output {
                 status: std::process::ExitStatus::default(),
                 stdout: Vec::from(b"clang output"),

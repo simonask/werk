@@ -1,5 +1,3 @@
-use std::collections::{BTreeMap, BTreeSet};
-
 use macro_rules_attribute::apply;
 use tests::mock_io;
 
@@ -91,8 +89,6 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     assert!(test.io.did_run_during_build(&ShellCommandLine {
         program: program_path("write"),
         arguments: vec!["debug".into(), output_file("env-dep").display().to_string()],
-        env: BTreeMap::default(),
-        env_remove: BTreeSet::default()
     }));
 
     // Write .werk-cache.
@@ -156,8 +152,6 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     assert!(test.io.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
         arguments: vec![],
-        env: Default::default(),
-        env_remove: Default::default()
     }));
 
     // Write .werk-cache.
@@ -172,7 +166,7 @@ async fn test_outdated_which() -> anyhow::Result<()> {
 
     // Change the environment!
     test.io
-        .set_program("clang", program_path("path/to/clang"), |_cmd, _fs| {
+        .set_program("clang", program_path("path/to/clang"), |_cmd, _fs, _env| {
             Ok(std::process::Output {
                 status: Default::default(),
                 stdout: Default::default(),
@@ -190,8 +184,6 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     assert!(test.io.did_run_during_build(&ShellCommandLine {
         program: program_path("path/to/clang"),
         arguments: vec![],
-        env: Default::default(),
-        env_remove: Default::default()
     }));
 
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -235,8 +227,6 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     assert!(test.io.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
         arguments: vec![],
-        env: Default::default(),
-        env_remove: Default::default()
     }));
 
     // Write .werk-cache.
@@ -266,8 +256,6 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
             String::from("-o"),
             output_file("which-dep").display().to_string()
         ],
-        env: Default::default(),
-        env_remove: Default::default()
     }));
 
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -315,8 +303,6 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     assert!(test.io.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
         arguments: vec![workspace_file_str("a.c"), workspace_file_str("b.c")],
-        env: Default::default(),
-        env_remove: Default::default()
     }));
 
     // Write .werk-cache.
@@ -339,8 +325,6 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     assert!(test.io.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
         arguments: vec![workspace_file_str("a.c")],
-        env: Default::default(),
-        env_remove: Default::default()
     }));
 
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -385,8 +369,6 @@ async fn test_outdated_define() -> anyhow::Result<()> {
     assert!(test.io.did_run_during_build(&ShellCommandLine {
         program: program_path("write"),
         arguments: vec!["debug".into(), output_file("env-dep").display().to_string()],
-        env: Default::default(),
-        env_remove: Default::default()
     }));
 
     // Write .werk-cache.

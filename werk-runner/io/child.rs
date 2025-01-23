@@ -165,6 +165,7 @@ pin_project_lite::pin_project! {
     struct ByteLines<R> {
         #[pin]
         reader: R,
+        // TODO: It feels like only one of these buffers is necessary.
         buf: Vec<u8>,
         bytes: Vec<u8>,
         read: usize,

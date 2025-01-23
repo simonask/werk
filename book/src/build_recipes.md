@@ -45,6 +45,12 @@ build "%.o" {
     # from compilers are always forwarded.
     capture true
 
+    # Set an environment variable for all child processes in this recipe.
+    env "MY_VAR" = "value"
+
+    # Remove an environment variable for all child processes in this recipe.
+    env-remove "MY_VAR"
+
     # Run an external program to build the file.
     # out is the target file of the recipe, and in is the first dependency.
     run "clang -c -o <out> <in>"

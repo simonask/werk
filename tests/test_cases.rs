@@ -7,6 +7,7 @@ use werk_runner::{Metadata, Runner};
 struct PragmaRegexes {
     pub file: regex::Regex,
     pub assert_file: regex::Regex,
+    pub env: regex::Regex,
 }
 
 impl Default for PragmaRegexes {
@@ -14,6 +15,7 @@ impl Default for PragmaRegexes {
         Self {
             file: regex::Regex::new(r"^#\!file (.*)=(.*)$").unwrap(),
             assert_file: regex::Regex::new(r"^#\!assert-file (.*)=(.*)$").unwrap(),
+            env: regex::Regex::new(r"^#\!env (.*)=(.*)$").unwrap(),
         }
     }
 }
@@ -61,6 +63,10 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
                 let filename = captures.get(1).unwrap().as_str();
                 let content = captures.get(2).unwrap().as_str();
                 check_files.push((filename, content.as_bytes()));
+            } else if let Some(captures) = regexes.env.captures(line) {
+                let key = captures.get(1).unwrap().as_str();
+                let value = captures.get(2).unwrap().as_str();
+                test.io.set_env(key, value);
             }
         }
     }
@@ -117,3 +123,4 @@ success_case!(filter);
 success_case!(write);
 success_case!(copy);
 success_case!(read);
+success_case!(env);

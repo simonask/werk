@@ -29,6 +29,12 @@ task my-task {
     # Enable forwarding the output of executed commands to the console.
     capture false
 
+    # Set an environment variable for all child processes in this recipe.
+    env "MY_VAR" = "value"
+
+    # Remove an environment variable for all child processes in this recipe.
+    env-remove "MY_VAR"
+
     # Run an external program after building this task's dependencies.
     run "echo \"Hello!\""
 

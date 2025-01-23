@@ -166,7 +166,9 @@ fn main() -> Result<(), Error> {
         Some(_) => tracing_subscriber::fmt::fmt()
             .with_env_filter("werk=info,werk_runner=info")
             .init(),
-        _ => (),
+        None => tracing_subscriber::fmt::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_env("WERK_LOG"))
+            .init(),
     }
 
     smol::block_on(try_main(args))

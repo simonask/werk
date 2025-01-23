@@ -9,7 +9,7 @@ use crate::{
     depfile::Depfile,
     eval::{self, Eval},
     ir::{self},
-    AmbiguousPatternError, BuildRecipeScope, ChildCaptureOutput, ChildLinesStream, Error,
+    AmbiguousPatternError, BuildRecipeScope, ChildCaptureOutput, ChildLinesStream, Env, Error,
     Outdatedness, OutdatednessTracker, Reason, RootScope, Scope as _, ShellCommandLine,
     TaskRecipeScope, Value, Workspace, WorkspaceSettings,
 };
@@ -527,7 +527,7 @@ impl<'a> Inner<'a> {
         let result = if outdated.is_outdated() {
             tracing::debug!("Rebuilding");
             tracing::trace!("Reasons: {:?}", outdated);
-            self.execute_recipe_commands(task_id, evaluated.commands, true, false)
+            self.execute_recipe_commands(task_id, evaluated.commands, evaluated.env, true, false)
                 .await
                 .map(|()| BuildStatus::Complete(task_id.clone(), outdated))
         } else {
@@ -584,7 +584,7 @@ impl<'a> Inner<'a> {
             .will_build(task_id, evaluated.commands.len(), &outdated);
 
         let result = self
-            .execute_recipe_commands(task_id, evaluated.commands, false, true)
+            .execute_recipe_commands(task_id, evaluated.commands, evaluated.env, false, true)
             .await
             .map(|()| BuildStatus::Complete(task_id.clone(), outdated));
 
@@ -596,6 +596,7 @@ impl<'a> Inner<'a> {
         &self,
         task_id: &TaskId,
         run_commands: Vec<RunCommand>,
+        mut env: Env,
         silent_by_default: bool,
         forward_stdout: bool,
     ) -> Result<(), Error> {
@@ -612,6 +613,12 @@ impl<'a> Inner<'a> {
             .acquire()
             .await;
 
+        if self.workspace.force_color {
+            env.set_force_color();
+        } else {
+            env.set_no_color();
+        }
+
         let mut silent = silent_by_default;
 
         for (step, run_command) in run_commands.into_iter().enumerate() {
@@ -620,6 +627,7 @@ impl<'a> Inner<'a> {
                     self.execute_recipe_run_command(
                         task_id,
                         &command_line,
+                        &env,
                         silent,
                         step,
                         num_steps,
@@ -655,11 +663,11 @@ impl<'a> Inner<'a> {
                 RunCommand::SetCapture(value) => {
                     silent = value;
                 }
-                RunCommand::SetEnv(_key, _value) => {
-                    unimplemented!("set-env not implemented yet")
+                RunCommand::SetEnv(key, value) => {
+                    env.env(key, value);
                 }
-                RunCommand::RemoveEnv(_key) => {
-                    unimplemented!("remove-env not implemented yet")
+                RunCommand::RemoveEnv(key) => {
+                    env.env_remove(key);
                 }
             }
         }
@@ -667,10 +675,12 @@ impl<'a> Inner<'a> {
         Ok(())
     }
 
+    #[expect(clippy::too_many_arguments)]
     async fn execute_recipe_run_command(
         &self,
         task_id: &TaskId,
         command_line: &ShellCommandLine,
+        env: &Env,
         capture: bool,
         step: usize,
         num_steps: usize,
@@ -682,6 +692,7 @@ impl<'a> Inner<'a> {
         let mut child = self.workspace.io.run_recipe_command(
             command_line,
             self.workspace.project_root(),
+            env,
             forward_stdout,
         )?;
 
@@ -836,7 +847,6 @@ impl<'a> Inner<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[expect(dead_code)]
 pub(crate) enum RunCommand {
     Shell(ShellCommandLine),
     Write(Absolute<std::path::PathBuf>, Vec<u8>),
@@ -854,7 +864,7 @@ pub(crate) enum RunCommand {
 impl std::fmt::Display for RunCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RunCommand::Shell(shell_command_line) => shell_command_line.display().fmt(f),
+            RunCommand::Shell(shell_command_line) => shell_command_line.fmt(f),
             RunCommand::Write(path_buf, vec) => {
                 write!(f, "write {} ({} bytes)", path_buf.display(), vec.len())
             }

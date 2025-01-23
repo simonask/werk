@@ -262,7 +262,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
                     out,
                     "{} {task_id}: {}",
                     Bracketed(Step(step + 1, num_steps)).dimmed(),
-                    command.display()
+                    command
                 )
             });
         } else if !LINEAR {
@@ -325,7 +325,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
                             out,
                             "{} Command failed while building '{task_id}': {}",
                             Bracketed(Step(step, num_steps)).bright_red().bold(),
-                            command.display(),
+                            command,
                         )
                     });
                 }
@@ -336,7 +336,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
                         out,
                         "{} Error evaluating command while building '{task_id}': {}\n{err}",
                         Bracketed(Step(step + 1, num_steps)).bright_red().bold(),
-                        command.display(),
+                        command,
                     )
                 });
             }

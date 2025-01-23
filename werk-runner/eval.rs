@@ -10,9 +10,9 @@ use werk_parser::{
 };
 
 use crate::{
-    BuildRecipeScope, Error, EvalError, Lookup, LookupValue, MatchScope, Pattern, PatternBuilder,
-    RunCommand, Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError, SubexprScope,
-    TaskRecipeScope, Value, Workspace,
+    BuildRecipeScope, Env, Error, EvalError, Lookup, LookupValue, MatchScope, Pattern,
+    PatternBuilder, RunCommand, Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError,
+    SubexprScope, TaskRecipeScope, Value, Workspace,
 };
 
 /// Evaluated value, which keeps track of "outdatedness" with respect to cached
@@ -698,7 +698,7 @@ pub(crate) fn eval_run_exprs<S: Scope>(
     ) -> Result<(), EvalError> {
         match expr {
             ast::RunExpr::Shell(expr) => {
-                let shell = eval_shell_command(scope, &expr.param, scope.workspace().force_color)?;
+                let shell = eval_shell_command(scope, &expr.param)?;
                 *used |= shell.used;
                 commands.push(RunCommand::Shell(shell.value));
             }
@@ -743,6 +743,18 @@ pub(crate) fn eval_run_exprs<S: Scope>(
                 *used |= path.used;
                 commands.push(RunCommand::Delete(delete_path));
             }
+            ast::RunExpr::Env(expr) => {
+                let key = eval_string_expr(scope, &expr.key)?;
+                let value = eval_string_expr(scope, &expr.value)?;
+                *used |= key.used;
+                *used |= value.used;
+                commands.push(RunCommand::SetEnv(key.value, value.value));
+            }
+            ast::RunExpr::EnvRemove(expr) => {
+                let key = eval_string_expr(scope, &expr.param)?;
+                *used |= key.used;
+                commands.push(RunCommand::RemoveEnv(key.value));
+            }
             ast::RunExpr::Info(expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;
                 *used |= message.used;
@@ -777,7 +789,6 @@ pub(crate) fn eval_run_exprs<S: Scope>(
 pub fn eval_shell_command<P: Scope + ?Sized>(
     scope: &P,
     expr: &ast::StringExpr,
-    force_color: bool,
 ) -> Result<Eval<ShellCommandLine>, EvalError> {
     let mut builder = ShellCommandLineBuilder::default();
 
@@ -839,10 +850,7 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
         }
     }
 
-    let (mut command_line, used_which) = builder.build(expr.span, scope.workspace())?;
-    if force_color {
-        command_line.set_force_color();
-    }
+    let (command_line, used_which) = builder.build(expr.span, scope.workspace())?;
 
     if let Some(used_which) = used_which {
         used.insert(used_which);
@@ -858,7 +866,6 @@ fn eval_shell_commands_into<S: Scope>(
     scope: &S,
     expr: &ast::Expr,
     cmds: &mut Vec<ShellCommandLine>,
-    force_color: bool,
 ) -> Result<Used, Error> {
     let span = expr.span();
 
@@ -867,7 +874,7 @@ fn eval_shell_commands_into<S: Scope>(
         | ast::Expr::Shell(ast::ShellExpr {
             param: string_expr, ..
         }) => {
-            let command = eval_shell_command(scope, string_expr, force_color)?;
+            let command = eval_shell_command(scope, string_expr)?;
             cmds.push(command.value);
             Ok(command.used)
         }
@@ -878,7 +885,7 @@ fn eval_shell_commands_into<S: Scope>(
         ast::Expr::List(list) => {
             let mut used = Used::none();
             for item in &list.items {
-                used |= eval_shell_commands_into(scope, &item.item, cmds, force_color)?;
+                used |= eval_shell_commands_into(scope, &item.item, cmds)?;
             }
             Ok(used)
         }
@@ -902,10 +909,9 @@ fn eval_shell_commands_into<S: Scope>(
 pub fn eval_shell_commands<S: Scope>(
     scope: &S,
     expr: &ast::Expr,
-    force_color: bool,
 ) -> Result<Vec<ShellCommandLine>, Error> {
     let mut cmds = Vec::new();
-    eval_shell_commands_into(scope, expr, &mut cmds, force_color)?;
+    eval_shell_commands_into(scope, expr, &mut cmds)?;
     Ok(cmds)
 }
 
@@ -915,10 +921,9 @@ pub fn eval_shell_commands<S: Scope>(
 pub fn eval_shell_commands_run_which_and_detect_outdated<S: Scope>(
     scope: &S,
     expr: &ast::Expr,
-    force_color: bool,
 ) -> Result<Eval<Vec<ShellCommandLine>>, Error> {
     let mut value = Vec::new();
-    let used = eval_shell_commands_into(scope, expr, &mut value, force_color)?;
+    let used = eval_shell_commands_into(scope, expr, &mut value)?;
     Ok(Eval { value, used })
 }
 
@@ -977,15 +982,15 @@ pub fn eval_shell<P: Scope + ?Sized>(
     scope: &P,
     expr: &ast::StringExpr<'_>,
 ) -> Result<Eval<String>, EvalError> {
-    let mut command = eval_shell_command(scope, expr, false)?;
+    let command = eval_shell_command(scope, expr)?;
 
-    // Unconditionally disable color output when the command supports it,
-    // because we are capturing the output as a string.
-    command.set_no_color();
+    // Unconditionally disable color output when executing shell command during eval.
+    let mut env = Env::default();
+    env.set_no_color();
 
     let output = match scope
         .io()
-        .run_during_eval(&command, scope.workspace().project_root())
+        .run_during_eval(&command, scope.workspace().project_root(), &env)
     {
         Ok(output) => output,
         Err(e) => {
@@ -1091,6 +1096,7 @@ pub(crate) struct EvaluatedBuildRecipe {
     pub explicit_dependencies: Vec<String>,
     pub depfile: Option<String>,
     pub commands: Vec<RunCommand>,
+    pub env: Env,
 }
 
 pub(crate) fn eval_build_recipe_statements(
@@ -1101,6 +1107,7 @@ pub(crate) fn eval_build_recipe_statements(
         explicit_dependencies: Vec::new(),
         depfile: None,
         commands: Vec::new(),
+        env: Env::default(),
     };
     let mut used = Used::none();
 
@@ -1133,6 +1140,18 @@ pub(crate) fn eval_build_recipe_statements(
                         return Err(EvalError::UnexpectedList(expr.span));
                     }
                 }
+            }
+            ast::BuildRecipeStmt::Env(ref expr) => {
+                let key = eval_string_expr(scope, &expr.key)?;
+                let value = eval_string_expr(scope, &expr.value)?;
+                used |= key.used;
+                used |= value.used;
+                evaluated.env.env(key.value, value.value);
+            }
+            ast::BuildRecipeStmt::EnvRemove(ref expr) => {
+                let key = eval_string_expr(scope, &expr.param)?;
+                used |= key.used;
+                evaluated.env.env_remove(key.value);
             }
             ast::BuildRecipeStmt::Run(ref expr) => {
                 used |= eval_run_exprs(scope, &expr.param, &mut evaluated.commands)?;
@@ -1167,6 +1186,7 @@ pub(crate) fn eval_build_recipe_statements(
 pub(crate) struct EvaluatedTaskRecipe {
     pub build: Vec<String>,
     pub commands: Vec<RunCommand>,
+    pub env: Env,
 }
 
 pub(crate) fn eval_task_recipe_statements(
@@ -1176,6 +1196,7 @@ pub(crate) fn eval_task_recipe_statements(
     let mut evaluated = EvaluatedTaskRecipe {
         build: Vec::new(),
         commands: Vec::new(),
+        env: Env::default(),
     };
 
     for stmt in body {
@@ -1190,6 +1211,15 @@ pub(crate) fn eval_task_recipe_statements(
             ast::TaskRecipeStmt::Build(ref expr) => {
                 let value = eval(scope, &expr.param)?;
                 value.value.collect_strings_into(&mut evaluated.build);
+            }
+            ast::TaskRecipeStmt::Env(ref expr) => {
+                let key = eval_string_expr(scope, &expr.key)?;
+                let value = eval_string_expr(scope, &expr.value)?;
+                evaluated.env.env(key.value, value.value);
+            }
+            ast::TaskRecipeStmt::EnvRemove(ref expr) => {
+                let key = eval_string_expr(scope, &expr.param)?;
+                evaluated.env.env_remove(key.value);
             }
             ast::TaskRecipeStmt::Run(ref expr) => {
                 eval_run_exprs(scope, &expr.param, &mut evaluated.commands)?;

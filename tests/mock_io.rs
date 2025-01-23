@@ -1,7 +1,7 @@
 use core::panic;
 use std::{
     collections::{hash_map, HashMap},
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     pin::Pin,
     sync::{atomic::AtomicU64, Arc},
     time::SystemTime,
@@ -10,8 +10,8 @@ use std::{
 use parking_lot::Mutex;
 use werk_fs::Absolute;
 use werk_runner::{
-    globset, BuildStatus, DirEntry, Error, GlobSettings, Metadata, Outdatedness, ShellCommandLine,
-    TaskId, WhichError, WorkspaceSettings,
+    globset, BuildStatus, DirEntry, Env, Error, GlobSettings, Metadata, Outdatedness,
+    ShellCommandLine, TaskId, WhichError, WorkspaceSettings,
 };
 
 #[inline]
@@ -179,13 +179,13 @@ pub enum MockDirEntry {
     Dir(MockDir),
 }
 
-pub type Program = Box<dyn FnMut(&ShellCommandLine, &mut MockDir) -> ProgramResult + Send>;
+pub type Program = Box<dyn FnMut(&ShellCommandLine, &mut MockDir, &Env) -> ProgramResult + Send>;
 
 pub struct MockIo {
     pub filesystem: Mutex<MockDir>,
     pub which: Mutex<HashMap<String, Absolute<std::path::PathBuf>>>,
     pub programs: Mutex<HashMap<Absolute<std::path::PathBuf>, Program>>,
-    pub env: Mutex<HashMap<String, String>>,
+    pub env: Mutex<Env>,
     pub oplog: Mutex<Vec<MockIoOp>>,
     pub now: AtomicU64,
 }
@@ -196,20 +196,20 @@ impl Default for MockIo {
             filesystem: Mutex::new(HashMap::new()),
             which: Mutex::new(HashMap::new()),
             programs: Mutex::new(HashMap::new()),
-            env: Mutex::new(HashMap::new()),
+            env: Mutex::new(Env::default()),
             oplog: Mutex::new(Vec::new()),
             now: AtomicU64::new(0),
         }
         .with_default_workspace_dir()
         .with_envs([("PROFILE", "debug")])
-        .with_program("clang", program_path("clang"), |_cmd, _fs| {
+        .with_program("clang", program_path("clang"), |_cmd, _fs, _env| {
             Ok(std::process::Output {
                 status: std::process::ExitStatus::default(),
                 stdout: vec![],
                 stderr: vec![],
             })
         })
-        .with_program("write", program_path("write"), |cmdline, fs| {
+        .with_program("write", program_path("write"), |cmdline, fs, _env| {
             let contents = cmdline.arguments[0].as_str();
             let file = output_file(cmdline.arguments[1].as_str());
             tracing::trace!("write {}", file.display());
@@ -232,6 +232,41 @@ impl Default for MockIo {
                 stderr: vec![],
             })
         })
+        .with_program(
+            "write-env",
+            program_path("write-env"),
+            |cmdline, fs, env| {
+                let varname = std::ffi::OsString::from(cmdline.arguments[0].as_str());
+                let file = output_file(cmdline.arguments[1].as_str());
+                tracing::trace!("write-env {}", file.display());
+
+                let contents = env
+                    .get(&varname)
+                    .cloned()
+                    .or_else(|| std::env::var_os(&varname))
+                    .unwrap_or_default();
+                let contents: String = contents.into_string().unwrap();
+                insert_fs(
+                    fs,
+                    &file,
+                    (
+                        Metadata {
+                            mtime: make_mtime(1),
+                            is_file: true,
+                            is_symlink: false,
+                        },
+                        contents.as_bytes().into(),
+                    ),
+                )
+                .unwrap();
+
+                Ok(std::process::Output {
+                    status: std::process::ExitStatus::default(),
+                    stdout: vec![],
+                    stderr: vec![],
+                })
+            },
+        )
     }
 }
 
@@ -497,7 +532,7 @@ impl MockIo {
         self,
         program: impl Into<String>,
         path: Absolute<std::path::PathBuf>,
-        fun: impl FnMut(&ShellCommandLine, &mut MockDir) -> ProgramResult + Send + 'static,
+        fun: impl FnMut(&ShellCommandLine, &mut MockDir, &Env) -> ProgramResult + Send + 'static,
     ) -> Self {
         self.set_program(program, path, fun);
         self
@@ -507,24 +542,24 @@ impl MockIo {
     pub fn with_envs<I, K, V>(self, iter: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
-        V: Into<String>,
+        K: Into<OsString>,
+        V: Into<OsString>,
     {
         self.env
             .lock()
-            .extend(iter.into_iter().map(|(k, v)| (k.into(), v.into())));
+            .envs(iter.into_iter().map(|(k, v)| (k.into(), v.into())));
         self
     }
 
-    pub fn set_env(&self, name: impl Into<String>, value: impl Into<String>) {
-        self.env.lock().insert(name.into(), value.into());
+    pub fn set_env(&self, name: impl AsRef<OsStr>, value: impl AsRef<OsStr>) {
+        self.env.lock().env(name, value);
     }
 
     pub fn set_program(
         &self,
         program: impl Into<String>,
         path: Absolute<std::path::PathBuf>,
-        fun: impl FnMut(&ShellCommandLine, &mut MockDir) -> ProgramResult + Send + 'static,
+        fun: impl FnMut(&ShellCommandLine, &mut MockDir, &Env) -> ProgramResult + Send + 'static,
     ) {
         let program = program.into();
         self.which.lock().insert(program.clone(), path.clone());
@@ -706,9 +741,10 @@ impl werk_runner::Io for MockIo {
         &self,
         command_line: &ShellCommandLine,
         _working_dir: &Absolute<std::path::Path>,
+        env: &Env,
         forward_stdout: bool,
     ) -> std::io::Result<Box<dyn werk_runner::Child>> {
-        tracing::trace!("run during build: {}", command_line.display());
+        tracing::trace!("run during build: {}", command_line);
         self.oplog
             .lock()
             .push(MockIoOp::RunDuringBuild(command_line.clone()));
@@ -721,11 +757,13 @@ impl werk_runner::Io for MockIo {
             ));
         };
         let mut fs = self.filesystem.lock();
+        let mut global_env = self.env.lock().clone();
+        global_env.merge_from(env);
         let std::process::Output {
             status,
             stderr,
             stdout,
-        } = program(command_line, &mut fs)?;
+        } = program(command_line, &mut fs, &global_env)?;
 
         Ok(Box::new(MockChild {
             stderr: Some(Box::pin(futures::io::Cursor::new(stderr))),
@@ -742,6 +780,7 @@ impl werk_runner::Io for MockIo {
         &self,
         command_line: &ShellCommandLine,
         _working_dir: &Absolute<std::path::Path>,
+        command_env: &werk_runner::Env,
     ) -> Result<std::process::Output, std::io::Error> {
         self.oplog
             .lock()
@@ -755,7 +794,9 @@ impl werk_runner::Io for MockIo {
             ));
         };
         let mut fs = self.filesystem.lock();
-        program(command_line, &mut fs)
+        let mut env = self.env.lock().clone();
+        env.merge_from(command_env);
+        program(command_line, &mut fs, &env)
     }
 
     fn which(&self, command: &str) -> Result<Absolute<std::path::PathBuf>, WhichError> {
@@ -892,7 +933,10 @@ impl werk_runner::Io for MockIo {
 
     fn read_env(&self, name: &str) -> Option<String> {
         self.oplog.lock().push(MockIoOp::ReadEnv(name.to_string()));
-        self.env.lock().get(name).cloned()
+        self.env
+            .lock()
+            .get(OsStr::new(name))
+            .map(|s| s.clone().into_string().unwrap())
     }
 
     fn is_dry_run(&self) -> bool {
