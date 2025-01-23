@@ -1,5 +1,6 @@
 use anstream::stream::IsTerminal;
 
+#[allow(dead_code)]
 pub enum TtyWidth {
     NoTty,
     Guess(usize),
@@ -42,7 +43,7 @@ mod imp {
             let mut winsize: libc::winsize = std::mem::zeroed();
             // The .into() here is needed for FreeBSD which defines TIOCGWINSZ
             // as c_uint but ioctl wants c_ulong.
-            if libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ.into(), &mut winsize) < 0 {
+            if libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, &mut winsize) < 0 {
                 return TtyWidth::NoTty;
             }
             if winsize.ws_col > 0 {
