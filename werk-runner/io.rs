@@ -7,7 +7,7 @@ pub use ignore::WalkState;
 use parking_lot::Mutex;
 use werk_fs::Absolute;
 
-use crate::{Error, GlobSettings, ShellCommandLine};
+use crate::{Env, Error, GlobSettings, ShellCommandLine};
 
 mod child;
 pub use child::*;
@@ -27,6 +27,7 @@ pub trait Io: Send + Sync + 'static {
         &self,
         command_line: &ShellCommandLine,
         working_dir: &Absolute<Path>,
+        env: &Env,
         forward_stdout: bool,
     ) -> Result<Box<dyn Child>, std::io::Error>;
 
@@ -36,6 +37,7 @@ pub trait Io: Send + Sync + 'static {
         &self,
         command_line: &ShellCommandLine,
         working_dir: &Absolute<Path>,
+        env: &Env,
     ) -> Result<std::process::Output, std::io::Error>;
 
     /// Determine the absolute filesystem path to a program.
@@ -159,6 +161,7 @@ impl Io for RealSystem {
         &self,
         command_line: &ShellCommandLine,
         working_dir: &Absolute<Path>,
+        env: &Env,
         forward_stdout: bool,
     ) -> Result<Box<dyn Child>, std::io::Error> {
         let mut command = smol::process::Command::new(&*command_line.program);
@@ -169,7 +172,6 @@ impl Io for RealSystem {
                     .iter()
                     .filter(|s| !s.trim().is_empty()),
             )
-            .envs(&command_line.env)
             .stdin(std::process::Stdio::piped())
             // Never capture stdout in recipe commands. By convention, all
             // informational output goes to stderr.
@@ -182,9 +184,10 @@ impl Io for RealSystem {
             // All spawned commands always run in the project root.
             .current_dir(working_dir);
 
-        for k in &command_line.env_remove {
+        for k in &env.env_remove {
             command.env_remove(k);
         }
+        command.envs(&env.env);
 
         tracing::trace!("spawning {command:?}");
         let child = command.spawn()?;
@@ -195,6 +198,7 @@ impl Io for RealSystem {
         &self,
         command_line: &ShellCommandLine,
         working_dir: &Absolute<Path>,
+        env: &Env,
     ) -> Result<std::process::Output, std::io::Error> {
         let mut command = std::process::Command::new(&*command_line.program);
         command
@@ -204,16 +208,16 @@ impl Io for RealSystem {
                     .iter()
                     .filter(|s| !s.trim().is_empty()),
             )
-            .envs(&command_line.env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             // All spawned commands always run in the project root.
             .current_dir(working_dir);
 
-        for k in &command_line.env_remove {
+        for k in &env.env_remove {
             command.env_remove(k);
         }
+        command.envs(&env.env);
 
         tracing::trace!("spawning {command:?}");
         let child = command.spawn()?;

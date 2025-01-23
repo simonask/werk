@@ -19,6 +19,7 @@
   - [Depfile support](./depfile_support.md)
 - [Configure your build](./build_config.md)
 - [Watch for changes](./watch.md)
+- [Color support](./color.md)
 
 # Reference Guide
 
@@ -30,6 +31,7 @@
   - [Recipe commands](./language/recipe_commands.md)
   - [Built-in variables](./language/builtins.md)
 - [Command-line reference](command_line.md)
+- [Environment variables](env.md)
 
 -----------------------------
 

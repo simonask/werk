@@ -239,6 +239,8 @@ pub enum BuildRecipeStmt<'a> {
     Warn(WarnExpr<'a>),
     SetCapture(KwExpr<token::SetCapture, ConfigBool>),
     SetNoCapture(KwExpr<token::SetNoCapture, ConfigBool>),
+    Env(EnvStmt<'a>),
+    EnvRemove(EnvRemoveStmt<'a>),
 }
 
 impl SemanticHash for BuildRecipeStmt<'_> {
@@ -249,6 +251,8 @@ impl SemanticHash for BuildRecipeStmt<'_> {
             BuildRecipeStmt::From(stmt) => stmt.semantic_hash(state),
             BuildRecipeStmt::Depfile(stmt) => stmt.semantic_hash(state),
             BuildRecipeStmt::Run(stmt) => stmt.semantic_hash(state),
+            BuildRecipeStmt::Env(stmt) => stmt.semantic_hash(state),
+            BuildRecipeStmt::EnvRemove(stmt) => stmt.semantic_hash(state),
             // Information statements do not contribute to outdatedness.
             BuildRecipeStmt::SetCapture(_)
             | BuildRecipeStmt::SetNoCapture(_)
@@ -267,6 +271,8 @@ pub enum TaskRecipeStmt<'a> {
     Warn(WarnExpr<'a>),
     SetCapture(KwExpr<token::SetCapture, ConfigBool>),
     SetNoCapture(KwExpr<token::SetNoCapture, ConfigBool>),
+    Env(EnvStmt<'a>),
+    EnvRemove(EnvRemoveStmt<'a>),
 }
 
 impl SemanticHash for TaskRecipeStmt<'_> {
@@ -276,6 +282,8 @@ impl SemanticHash for TaskRecipeStmt<'_> {
             TaskRecipeStmt::Let(stmt) => stmt.semantic_hash(state),
             TaskRecipeStmt::Build(stmt) => stmt.semantic_hash(state),
             TaskRecipeStmt::Run(stmt) => stmt.semantic_hash(state),
+            TaskRecipeStmt::Env(stmt) => stmt.semantic_hash(state),
+            TaskRecipeStmt::EnvRemove(stmt) => stmt.semantic_hash(state),
             // Information statements do not contribute to outdatedness.
             TaskRecipeStmt::SetCapture(_)
             | TaskRecipeStmt::SetNoCapture(_)
@@ -304,12 +312,32 @@ impl SemanticHash for LetStmt<'_> {
     }
 }
 
+#[derive(Debug, PartialEq)]
+pub struct EnvStmt<'a> {
+    pub span: Span,
+    pub token: token::Env,
+    pub ws_1: Whitespace,
+    pub key: StringExpr<'a>,
+    pub ws_2: Whitespace,
+    pub token_eq: token::Eq,
+    pub ws_3: Whitespace,
+    pub value: StringExpr<'a>,
+}
+
+impl SemanticHash for EnvStmt<'_> {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.key.semantic_hash(state);
+        self.value.semantic_hash(state);
+    }
+}
+
 pub type FromStmt<'a> = KwExpr<token::From, Expr<'a>>;
 pub type BuildStmt<'a> = KwExpr<token::Build, Expr<'a>>;
 pub type DepfileStmt<'a> = KwExpr<token::Depfile, Expr<'a>>;
 pub type RunStmt<'a> = KwExpr<token::Run, RunExpr<'a>>;
 pub type ErrorStmt<'a> = KwExpr<token::Error, StringExpr<'a>>;
 pub type DeleteExpr<'a> = KwExpr<token::Delete, StringExpr<'a>>;
+pub type EnvRemoveStmt<'a> = KwExpr<token::RemoveEnv, StringExpr<'a>>;
 
 /// Things that can appear in the `command` part of recipes.
 #[derive(Debug, PartialEq)]
@@ -322,6 +350,10 @@ pub enum RunExpr<'a> {
     Copy(CopyExpr<'a>),
     /// Delete a file.
     Delete(DeleteExpr<'a>),
+    /// Set an environment variable.
+    Env(EnvStmt<'a>),
+    /// Remove an environment variable.
+    EnvRemove(EnvRemoveStmt<'a>),
     /// Print a message while running the command.
     Info(InfoExpr<'a>),
     /// Print a warning while running the command.
@@ -339,6 +371,8 @@ impl Spanned for RunExpr<'_> {
             RunExpr::Write(expr) => expr.span,
             RunExpr::Copy(expr) => expr.span,
             RunExpr::Delete(expr) => expr.span,
+            RunExpr::Env(expr) => expr.span,
+            RunExpr::EnvRemove(expr) => expr.span,
             RunExpr::Info(expr) => expr.span,
             RunExpr::Warn(expr) => expr.span,
             RunExpr::List(list) => list.span,
@@ -355,6 +389,8 @@ impl SemanticHash for RunExpr<'_> {
             RunExpr::Write(expr) => expr.semantic_hash(state),
             RunExpr::Copy(expr) => expr.semantic_hash(state),
             RunExpr::Delete(expr) => expr.semantic_hash(state),
+            RunExpr::Env(expr) => expr.semantic_hash(state),
+            RunExpr::EnvRemove(expr) => expr.semantic_hash(state),
             // Messages don't contribute to outdatedness.
             RunExpr::Info(_) | RunExpr::Warn(_) => (),
             RunExpr::List(expr) => expr.semantic_hash(state),

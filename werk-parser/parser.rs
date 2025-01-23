@@ -241,6 +241,8 @@ fn task_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::CommandRecipe<'a>> {
             let_stmt.map(ast::TaskRecipeStmt::Let),
             build_stmt.map(ast::TaskRecipeStmt::Build),
             run_stmt.map(ast::TaskRecipeStmt::Run),
+            kw_expr(string_expr).map(ast::TaskRecipeStmt::EnvRemove),
+            env_stmt.map(ast::TaskRecipeStmt::Env),
             info_expr.map(ast::TaskRecipeStmt::Info),
             warn_expr.map(ast::TaskRecipeStmt::Warn),
             kw_expr(config_bool).map(ast::TaskRecipeStmt::SetCapture),
@@ -275,6 +277,8 @@ fn build_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::BuildRecipe<'a>> {
             let_stmt.map(ast::BuildRecipeStmt::Let),
             depfile_stmt.map(ast::BuildRecipeStmt::Depfile),
             run_stmt.map(ast::BuildRecipeStmt::Run),
+            kw_expr(string_expr).map(ast::BuildRecipeStmt::EnvRemove),
+            env_stmt.map(ast::BuildRecipeStmt::Env),
             info_expr.map(ast::BuildRecipeStmt::Info),
             warn_expr.map(ast::BuildRecipeStmt::Warn),
             kw_expr(config_bool).map(ast::BuildRecipeStmt::SetCapture),
@@ -330,6 +334,38 @@ fn let_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::LetStmt<'a>> {
     }
 
     let (mut stmt, span) = let_stmt_inner.with_token_span().parse_next(input)?;
+    stmt.span = span;
+    Ok(stmt)
+}
+
+fn env_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::EnvStmt<'a>> {
+    fn env_stmt_inner<'a>(input: &mut Input<'a>) -> PResult<ast::EnvStmt<'a>> {
+        let (token, ws_1, key, ws_2, token_eq, ws_3, value) = seq! {(
+            keyword::<token::Env>,
+            cut_err(whitespace_nonempty).context(Expected::Expected(&"whitespace after `env`")),
+            cut_err(string_expr.context(Expected::Expected(
+                &"`env` must be followed by a string",
+            ))),
+            whitespace,
+            cut_err(token), // `=`
+            whitespace,
+            cut_err(string_expr),
+        )}
+        .parse_next(input)?;
+
+        Ok(ast::EnvStmt {
+            span: Span::default(),
+            token,
+            ws_1,
+            key,
+            ws_2,
+            token_eq,
+            ws_3,
+            value,
+        })
+    }
+
+    let (mut stmt, span) = env_stmt_inner.with_token_span().parse_next(input)?;
     stmt.span = span;
     Ok(stmt)
 }
@@ -468,6 +504,8 @@ fn run_expression<'a>(input: &mut Input<'a>) -> PResult<ast::RunExpr<'a>> {
         kw_expr(string_expr).map(ast::RunExpr::Warn),
         write_expr.map(ast::RunExpr::Write),
         copy_expr.map(ast::RunExpr::Copy),
+        kw_expr(string_expr).map(ast::RunExpr::EnvRemove),
+        env_stmt.map(ast::RunExpr::Env),
         body(run_expression).map(ast::RunExpr::Block),
     ))
     .parse_next(input)
