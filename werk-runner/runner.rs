@@ -674,33 +674,7 @@ impl<'a> Inner<'a> {
                     self.workspace.io.copy_file(&src_entry.path, &to)?;
                 }
                 RunCommand::Delete(paths) => {
-                    for path in paths {
-                        if self.workspace.is_in_output_directory(&path) {
-                            match self.workspace.io.delete_file(&path) {
-                                Ok(()) => (),
-                                Err(err) => match err.kind() {
-                                    std::io::ErrorKind::NotFound => {
-                                        self.workspace.render.warning(
-                                            Some(task_id),
-                                            &format!(
-                                                "`delete` ignoring file not found: {}",
-                                                path.display()
-                                            ),
-                                        );
-                                    }
-                                    _ => return Err(err.into()),
-                                },
-                            }
-                        } else {
-                            self.workspace.render.warning(
-                                Some(task_id),
-                                &format!(
-                                    "cannot `delete` path outside of output directory: {}",
-                                    path.display()
-                                ),
-                            );
-                        }
-                    }
+                    self.execute_recipe_delete_command(task_id, &paths, silent)?;
                 }
                 RunCommand::Info(message) => {
                     self.workspace.render.message(Some(task_id), &message);
@@ -783,6 +757,45 @@ impl<'a> Inner<'a> {
         if !status.success() {
             return Err(Error::CommandFailed(status));
         }
+        Ok(())
+    }
+
+    fn execute_recipe_delete_command(
+        &self,
+        task_id: &TaskId,
+        paths: &[Absolute<std::path::PathBuf>],
+        silent: bool,
+    ) -> Result<(), Error> {
+        for path in paths {
+            if self.workspace.is_in_output_directory(path) {
+                match self.workspace.io.delete_file(path) {
+                    Ok(()) => (),
+                    Err(err) => match err.kind() {
+                        std::io::ErrorKind::NotFound => {
+                            if !silent {
+                                self.workspace.render.warning(
+                                    Some(task_id),
+                                    &format!(
+                                        "`delete` ignoring file not found: {}",
+                                        path.display()
+                                    ),
+                                );
+                            }
+                        }
+                        _ => return Err(err.into()),
+                    },
+                }
+            } else if !silent {
+                self.workspace.render.warning(
+                    Some(task_id),
+                    &format!(
+                        "cannot `delete` path outside of output directory: {}",
+                        path.display()
+                    ),
+                );
+            }
+        }
+
         Ok(())
     }
 
