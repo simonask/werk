@@ -165,11 +165,11 @@ impl ShellCommandLineBuilder {
             let (program_path, hash) = workspace
                 .which(&program)
                 .map_err(|err| EvalError::CommandNotFound(span, program.clone(), err))?;
-            let used = hash.map(|hash| UsedVariable::Which(program, hash));
+            let used = hash.map(|hash| UsedVariable::Which(program.clone(), hash));
 
             Ok((
                 ShellCommandLine {
-                    program: program_path,
+                    program: program_path.into_owned(),
                     arguments: parts.collect(),
                 },
                 used,

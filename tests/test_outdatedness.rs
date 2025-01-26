@@ -2,7 +2,7 @@ use macro_rules_attribute::apply;
 use tests::mock_io;
 
 use mock_io::*;
-use werk_fs::{Absolute, Path, PathBuf};
+use werk_fs::{Absolute, Path};
 use werk_runner::{BuildStatus, Outdatedness, Reason, ShellCommandLine, TaskId};
 
 static WERK: &str = r#"
@@ -77,10 +77,8 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(
-                Absolute::new_unchecked(PathBuf::try_from("/env-dep").unwrap()).into_boxed_path()
-            ),
-            Outdatedness::new([Reason::Missing(PathBuf::try_from("/env-dep")?),])
+            TaskId::try_build("/env-dep").unwrap(),
+            Outdatedness::new([Reason::Missing(Absolute::try_from("/env-dep")?),])
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -118,9 +116,7 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(
-                Absolute::new_unchecked(PathBuf::try_from("/env-dep").unwrap()).into_boxed_path()
-            ),
+            TaskId::try_build("/env-dep").unwrap(),
             Outdatedness::new([Reason::Env(String::from("PROFILE")),])
         )
     );
@@ -141,10 +137,8 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(
-                Absolute::new_unchecked(PathBuf::try_from("/which-dep").unwrap()).into_boxed_path()
-            ),
-            Outdatedness::new([Reason::Missing(PathBuf::try_from("/which-dep")?),])
+            TaskId::try_build("/which-dep").unwrap(),
+            Outdatedness::new([Reason::Missing(Absolute::try_from("/which-dep")?),])
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -190,11 +184,9 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(
-                Absolute::new_unchecked(PathBuf::try_from("/which-dep").unwrap()).into_boxed_path()
-            ),
+            TaskId::try_build("/which-dep").unwrap(),
             Outdatedness::new([
-                Reason::Missing(PathBuf::try_from("/which-dep")?),
+                Reason::Missing(Absolute::try_from("/which-dep")?),
                 Reason::Which(String::from("clang"))
             ])
         )
@@ -216,10 +208,8 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(
-                Absolute::new_unchecked(PathBuf::try_from("/which-dep").unwrap()).into_boxed_path()
-            ),
-            Outdatedness::new([Reason::Missing(PathBuf::try_from("/which-dep")?),])
+            TaskId::try_build("/which-dep").unwrap(),
+            Outdatedness::new([Reason::Missing(Absolute::try_from("/which-dep")?),])
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -262,11 +252,9 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(
-                Absolute::new_unchecked(PathBuf::try_from("/which-dep").unwrap()).into_boxed_path()
-            ),
+            TaskId::try_build("/which-dep").unwrap(),
             Outdatedness::new([
-                Reason::Missing(PathBuf::try_from("/which-dep")?),
+                Reason::Missing(Absolute::try_from("/which-dep")?),
                 Reason::RecipeChanged
             ])
         )
@@ -292,10 +280,8 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(
-                Absolute::new_unchecked(PathBuf::try_from("/glob-dep").unwrap()).into_boxed_path()
-            ),
-            Outdatedness::new([Reason::Missing(PathBuf::try_from("/glob-dep")?),])
+            TaskId::try_build("/glob-dep").unwrap(),
+            Outdatedness::new([Reason::Missing(Absolute::try_from("/glob-dep")?),])
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -331,11 +317,9 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(
-                Absolute::new_unchecked(PathBuf::try_from("/glob-dep").unwrap()).into_boxed_path()
-            ),
+            TaskId::try_build("/glob-dep").unwrap(),
             Outdatedness::new([
-                Reason::Missing(PathBuf::try_from("/glob-dep")?),
+                Reason::Missing(Absolute::try_from("/glob-dep")?),
                 Reason::Glob(String::from("/*.c"))
             ])
         )
@@ -357,10 +341,8 @@ async fn test_outdated_define() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(
-                Absolute::new_unchecked(PathBuf::try_from("/env-dep").unwrap()).into_boxed_path()
-            ),
-            Outdatedness::new([Reason::Missing(PathBuf::try_from("/env-dep")?),])
+            TaskId::try_build("/env-dep").unwrap(),
+            Outdatedness::new([Reason::Missing(Absolute::try_from("/env-dep")?),])
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -432,7 +414,7 @@ async fn test_outdated_global_constant() -> anyhow::Result<()> {
         status,
         BuildStatus::Complete(
             TaskId::build(Absolute::try_from("/output").unwrap()),
-            Outdatedness::new([Reason::Missing(PathBuf::try_from("/output")?),])
+            Outdatedness::new([Reason::Missing(Absolute::try_from("/output")?),])
         )
     );
     workspace.finalize().await?;

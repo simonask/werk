@@ -95,8 +95,8 @@ impl<'a> Manifest<'a> {
         let task = self.match_task_recipe(name);
 
         if let Ok(path) = werk_fs::Path::new(name) {
-            if let Some(path) = Absolute::try_new_ref(path) {
-                if let Some(build_recipe_match) = self.match_build_recipe(path)? {
+            if let Ok(path) = path.normalize() {
+                if let Some(build_recipe_match) = self.match_build_recipe(&path)? {
                     if task.is_some() {
                         return Err(crate::AmbiguousPatternError {
                             pattern1: build_recipe_match.recipe.pattern.to_string(),

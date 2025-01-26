@@ -30,13 +30,10 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
     let path = std::path::Path::new(file);
     let test = Test::new(&source)
         .map_err(|err| anyhow::Error::msg(err.with_location(path, &source).to_string()))?;
+    let ast = test.ast.as_ref().unwrap();
 
     // Interpret pragmas in the trailing comment of the werkfile.
-    let trailing_whitespace = test
-        .ast
-        .get_whitespace(test.ast.root.ws_trailing)
-        .trim()
-        .lines();
+    let trailing_whitespace = ast.get_whitespace(ast.root.ws_trailing).trim().lines();
     let regexes = regexes();
     let mut check_files = Vec::new();
     {
@@ -77,7 +74,7 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
     if let Some(ast::ConfigStmt {
         value: ast::ConfigValue::String(ast::ConfigString(_, default_target)),
         ..
-    }) = test.ast.find_config("default")
+    }) = ast.find_config("default")
     {
         let runner = Runner::new(&workspace);
         runner.build_or_run(default_target).await?;
@@ -85,7 +82,7 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
         let fs = test.io.filesystem.lock();
         for (filename, contents) in &check_files {
             let out_file = output_file(filename);
-            let (_entry, data) = read_fs(&fs, out_file.as_deref())?;
+            let (_entry, data) = read_fs(&fs, &out_file)?;
             assert_eq!(
                 data, *contents,
                 "assert-file failed: contents of output file `{filename}` do not match"

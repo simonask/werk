@@ -10,7 +10,7 @@ use std::{
 use parking_lot::Mutex;
 use werk_fs::Absolute;
 use werk_runner::{
-    globset, BuildStatus, DirEntry, Env, Error, GlobSettings, Metadata, Outdatedness,
+    globset, BuildStatus, DirEntry, Env, Error, GlobSettings, Io, Metadata, Outdatedness,
     ShellCommandLine, TaskId, WhichError, WorkspaceSettings,
 };
 
@@ -26,58 +26,164 @@ pub fn default_mtime() -> std::time::SystemTime {
     make_mtime(0)
 }
 
+pub struct TestBuilder<'a> {
+    /// Note: Path in the mocked filesystem, not the actual filesystem.
+    /// `canonicalize()` won't work etc.
+    pub workspace_dir: Absolute<std::path::PathBuf>,
+    pub output_dir: Absolute<std::path::PathBuf>,
+    pub defines: Vec<(String, String)>,
+    pub default_filesystem: bool,
+    pub create_workspace_dir: bool,
+    pub werkfile: Option<TestSource<'a>>,
+}
+
+pub fn native_path<I: IntoIterator<Item: AsRef<OsStr>>>(
+    components: I,
+) -> Absolute<std::path::PathBuf> {
+    let mut path = if cfg!(windows) {
+        std::path::PathBuf::from("c:\\")
+    } else {
+        std::path::PathBuf::from("/")
+    };
+    for c in components.into_iter() {
+        path.push(c.as_ref());
+    }
+    Absolute::new(path).expect("native path contains relative components")
+}
+
+impl Default for TestBuilder<'_> {
+    fn default() -> Self {
+        Self {
+            workspace_dir: native_path(&["workspace"]),
+            output_dir: native_path(&["workspace", "output"]),
+            defines: Vec::new(),
+            default_filesystem: true,
+            create_workspace_dir: true,
+            werkfile: None,
+        }
+    }
+}
+
+impl<'a> TestBuilder<'a> {
+    pub fn workspace_dir(&mut self, path: &[&str]) -> &mut Self {
+        self.workspace_dir = native_path(path);
+        self
+    }
+
+    pub fn output_dir(&mut self, path: &[&str]) -> &mut Self {
+        self.output_dir = native_path(path);
+        self
+    }
+
+    pub fn define(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
+        self.defines.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn werkfile(&mut self, werkfile: impl Into<TestSource<'a>>) -> &mut Self {
+        self.werkfile = Some(werkfile.into());
+        self
+    }
+
+    pub fn build(&self) -> Result<Test<'a>, werk_parser::Error> {
+        let ast = match self.werkfile {
+            Some(TestSource::Werk(source)) => Some(werk_parser::parse_werk(source)?),
+            Some(TestSource::Toml(toml)) => Some(
+                werk_parser::parse_toml(std::path::Path::new("werk.toml"), toml.raw(), toml)
+                    .map_err(|err| err.error)?,
+            ),
+            None => None,
+        };
+
+        let mut io = MockIo::default();
+        io.initialize_default_env();
+        if self.default_filesystem {
+            create_dirs(&mut io.filesystem.lock(), &self.workspace_dir).unwrap();
+            io.initialize_default_filesystem();
+        }
+        if self.create_workspace_dir {
+            io.create_parent_dirs(&self.workspace_dir).unwrap()
+        }
+        Ok(Test {
+            io: Arc::new(io),
+            render: Arc::new(MockRender::default()),
+            workspace_dir: self.workspace_dir.clone(),
+            output_dir: self.output_dir.clone(),
+            ast,
+        })
+    }
+}
+
+pub enum TestSource<'a> {
+    Werk(&'a str),
+    Toml(&'a toml_edit::ImDocument<&'a str>),
+}
+
+impl<'a> From<&'a str> for TestSource<'a> {
+    fn from(s: &'a str) -> Self {
+        TestSource::Werk(s)
+    }
+}
+
+impl<'a> From<&'a toml_edit::ImDocument<&'a str>> for TestSource<'a> {
+    fn from(t: &'a toml_edit::ImDocument<&'a str>) -> Self {
+        TestSource::Toml(t)
+    }
+}
+
 pub struct Test<'a> {
     pub io: Arc<MockIo>,
     pub render: Arc<MockRender>,
-    pub ast: werk_parser::Document<'a>,
+    pub workspace_dir: Absolute<std::path::PathBuf>,
+    pub output_dir: Absolute<std::path::PathBuf>,
+    pub ast: Option<werk_parser::Document<'a>>,
 }
 
 impl<'a> Test<'a> {
     pub fn new(werk_source: &'a str) -> Result<Self, werk_parser::Error> {
-        let ast = werk_parser::parse_werk(werk_source)?;
-        Ok(Self {
-            io: Arc::new(MockIo::default().with_default_workspace_dir()),
-            render: Arc::new(MockRender::default()),
-            ast,
-        })
+        TestBuilder::default().werkfile(werk_source).build()
     }
 
-    pub fn reload(&mut self, werk_source: &'a str) -> Result<(), werk_parser::Error> {
-        self.ast = werk_parser::parse_werk(werk_source)?;
+    pub fn reload(
+        &mut self,
+        werkfile: impl Into<TestSource<'a>>,
+    ) -> Result<(), werk_parser::Error> {
+        self.ast = match werkfile.into() {
+            TestSource::Werk(source) => Some(werk_parser::parse_werk(source)?),
+            TestSource::Toml(toml) => Some(
+                werk_parser::parse_toml(std::path::Path::new("werk.toml"), toml.raw(), toml)
+                    .map_err(|err| err.error)?,
+            ),
+        };
         Ok(())
     }
 
     pub fn new_toml(toml: &'a toml_edit::ImDocument<&'a str>) -> Result<Self, werk_parser::Error> {
-        let ast = werk_parser::parse_toml(std::path::Path::new("werk.toml"), toml.raw(), toml)
-            .map_err(|err| err.error)?;
-        Ok(Self {
-            io: Arc::new(MockIo::default().with_default_workspace_dir()),
-            render: Arc::new(MockRender::default()),
-            ast,
-        })
+        TestBuilder::default().werkfile(toml).build()
     }
 
     pub fn reload_toml(
         &mut self,
         toml: &'a toml_edit::ImDocument<&'a str>,
     ) -> Result<(), werk_parser::Error> {
-        let ast = werk_parser::parse_toml(std::path::Path::new("werk.toml"), toml.raw(), toml)
-            .map_err(|err| err.error)?;
-        self.ast = ast;
-        Ok(())
+        self.reload(toml)
     }
 
     pub fn create_workspace(
         &self,
         defines: &[(&str, &str)],
     ) -> Result<werk_runner::Workspace<'_>, werk_runner::Error> {
-        werk_runner::Workspace::new(
-            &self.ast,
-            &*self.io,
-            &*self.render,
-            test_workspace_dir().to_path_buf(),
-            &test_workspace_settings(defines),
-        )
+        if let Some(ref ast) = self.ast {
+            werk_runner::Workspace::new(
+                ast,
+                &*self.io,
+                &*self.render,
+                test_workspace_dir().to_path_buf(),
+                &test_workspace_settings(defines),
+            )
+        } else {
+            panic!("no werkfile loaded!")
+        }
     }
 }
 
@@ -181,6 +287,7 @@ pub enum MockDirEntry {
 
 pub type Program = Box<dyn FnMut(&ShellCommandLine, &mut MockDir, &Env) -> ProgramResult + Send>;
 
+#[derive(Default)]
 pub struct MockIo {
     pub filesystem: Mutex<MockDir>,
     pub which: Mutex<HashMap<String, Absolute<std::path::PathBuf>>>,
@@ -190,26 +297,16 @@ pub struct MockIo {
     pub now: AtomicU64,
 }
 
-impl Default for MockIo {
-    fn default() -> Self {
-        MockIo {
-            filesystem: Mutex::new(HashMap::new()),
-            which: Mutex::new(HashMap::new()),
-            programs: Mutex::new(HashMap::new()),
-            env: Mutex::new(Env::default()),
-            oplog: Mutex::new(Vec::new()),
-            now: AtomicU64::new(0),
-        }
-        .with_default_workspace_dir()
-        .with_envs([("PROFILE", "debug")])
-        .with_program("clang", program_path("clang"), |_cmd, _fs, _env| {
+impl MockIo {
+    pub fn initialize_default_filesystem(&mut self) {
+        self.set_program("clang", program_path("clang"), |_cmd, _fs, _env| {
             Ok(std::process::Output {
                 status: std::process::ExitStatus::default(),
                 stdout: vec![],
                 stderr: vec![],
             })
         })
-        .with_program("write", program_path("write"), |cmdline, fs, _env| {
+        .set_program("write", program_path("write"), |cmdline, fs, _env| {
             let contents = cmdline.arguments[0].as_str();
             let file = output_file(cmdline.arguments[1].as_str());
             tracing::trace!("write {}", file.display());
@@ -232,7 +329,7 @@ impl Default for MockIo {
                 stderr: vec![],
             })
         })
-        .with_program(
+        .set_program(
             "write-env",
             program_path("write-env"),
             |cmdline, fs, env| {
@@ -266,7 +363,11 @@ impl Default for MockIo {
                     stderr: vec![],
                 })
             },
-        )
+        );
+    }
+
+    pub fn initialize_default_env(&mut self) {
+        self.with_envs([("PROFILE", "debug")]);
     }
 }
 
@@ -322,7 +423,7 @@ fn create_parent_dirs(fs: &mut MockDir, path: &Absolute<std::path::Path>) -> std
     let Some(parent) = path.parent() else {
         return Ok(());
     };
-    create_dirs(fs, Absolute::new_ref_unchecked(parent))
+    create_dirs(fs, parent)
 }
 
 pub fn insert_fs(
@@ -491,34 +592,25 @@ fn copy_fs(
 }
 
 #[must_use]
-pub fn contains_file(fs: &MockDir, path: &std::path::Path) -> bool {
-    let path2;
-    let path = if path.is_absolute() {
-        path
-    } else {
-        path2 = std::path::PathBuf::from("/").join(path);
-        &path2
-    };
-    read_fs(fs, Absolute::new_ref_unchecked(path)).is_ok()
+pub fn contains_file(fs: &MockDir, path: &Absolute<std::path::Path>) -> bool {
+    read_fs(fs, path).is_ok()
 }
 
 impl MockIo {
-    #[must_use]
-    pub fn with_default_workspace_dir(self) -> Self {
+    pub fn with_default_workspace_dir(&self) -> &Self {
         let mut fs = self.filesystem.lock();
         create_dirs(&mut fs, test_workspace_dir()).unwrap();
         std::mem::drop(fs);
         self
     }
 
-    #[must_use]
-    pub fn with_programs<I>(self, iter: I) -> Self
+    pub fn with_programs<I>(&self, iter: I) -> &Self
     where
         I: IntoIterator<Item = (String, Program)>,
     {
         let mut programs = self.programs.lock();
         for (program, fun) in iter {
-            let path = Absolute::new_unchecked(std::path::Path::new("/").join(&program));
+            let path = native_path([&program]);
             self.which.lock().insert(program, path.clone());
             programs.insert(path, fun);
         }
@@ -527,19 +619,7 @@ impl MockIo {
         self
     }
 
-    #[must_use]
-    pub fn with_program(
-        self,
-        program: impl Into<String>,
-        path: Absolute<std::path::PathBuf>,
-        fun: impl FnMut(&ShellCommandLine, &mut MockDir, &Env) -> ProgramResult + Send + 'static,
-    ) -> Self {
-        self.set_program(program, path, fun);
-        self
-    }
-
-    #[must_use]
-    pub fn with_envs<I, K, V>(self, iter: I) -> Self
+    pub fn with_envs<I, K, V>(&self, iter: I) -> &Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: Into<OsString>,
@@ -560,10 +640,11 @@ impl MockIo {
         program: impl Into<String>,
         path: Absolute<std::path::PathBuf>,
         fun: impl FnMut(&ShellCommandLine, &mut MockDir, &Env) -> ProgramResult + Send + 'static,
-    ) {
+    ) -> &Self {
         let program = program.into();
         self.which.lock().insert(program.clone(), path.clone());
         self.programs.lock().insert(path, Box::new(fun));
+        self
     }
 
     pub fn remove_program(&self, program: &str) {
@@ -590,7 +671,7 @@ impl MockIo {
             let path = path.into();
             let path = workspace_file(&path);
             tracing::trace!("inserting workspace file: {}", path.display());
-            create_parent_dirs(&mut filesystem, path.as_deref()).unwrap();
+            create_parent_dirs(&mut filesystem, &path).unwrap();
             insert_fs(&mut filesystem, &path, (metadata, data)).unwrap();
         }
         std::mem::drop(filesystem);
@@ -604,7 +685,7 @@ impl MockIo {
     ) -> std::io::Result<()> {
         let mut fs = self.filesystem.lock();
         let path = workspace_file(path);
-        create_parent_dirs(&mut fs, path.as_deref()).unwrap();
+        create_parent_dirs(&mut fs, &path).unwrap();
         insert_fs(
             &mut fs,
             path.as_ref(),
@@ -687,7 +768,7 @@ impl MockIo {
             .any(|op| matches!(op, MockIoOp::ReadEnv(n) if n == name))
     }
 
-    pub fn contains_file(&self, path: impl AsRef<std::path::Path>) -> bool {
+    pub fn contains_file(&self, path: impl AsRef<Absolute<std::path::Path>>) -> bool {
         contains_file(&self.filesystem.lock(), path.as_ref())
     }
 }
@@ -750,7 +831,7 @@ impl werk_runner::Io for MockIo {
             .push(MockIoOp::RunDuringBuild(command_line.clone()));
 
         let mut programs = self.programs.lock();
-        let Some(program) = programs.get_mut(command_line.program.as_deref()) else {
+        let Some(program) = programs.get_mut(&command_line.program) else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "program not found",
@@ -817,13 +898,13 @@ impl werk_runner::Io for MockIo {
         settings: &GlobSettings,
     ) -> Result<Vec<DirEntry>, Error> {
         fn glob(
-            path: &std::path::Path,
+            path: &Absolute<std::path::Path>,
             dir: &MockDir,
             results: &mut Vec<DirEntry>,
             ignore_explicitly: &globset::GlobSet,
         ) -> Result<(), Error> {
             for (name, entry) in dir {
-                let entry_path = Absolute::new_unchecked(path.join(name));
+                let entry_path = path.join(name).unwrap();
                 match entry {
                     MockDirEntry::File(metadata, _) => {
                         if !ignore_explicitly.is_match(&*entry_path) {
@@ -947,31 +1028,32 @@ impl werk_runner::Io for MockIo {
 #[must_use]
 pub fn test_workspace_dir() -> &'static Absolute<std::path::Path> {
     if cfg!(windows) {
-        Absolute::new_ref_unchecked(std::path::Path::new("c:\\workspace"))
+        Absolute::new_ref(std::path::Path::new("c:\\workspace")).unwrap()
     } else {
-        Absolute::new_ref_unchecked(std::path::Path::new("/workspace"))
+        Absolute::new_ref(std::path::Path::new("/workspace")).unwrap()
     }
 }
 
 #[must_use]
 pub fn output_dir() -> Absolute<std::path::PathBuf> {
-    Absolute::new_unchecked(test_workspace_dir().join("target"))
+    test_workspace_dir().join("target").unwrap()
 }
 
 #[must_use]
 pub fn output_file(filename: &str) -> Absolute<std::path::PathBuf> {
-    Absolute::new_unchecked(output_dir().join(filename))
+    output_dir().join(filename).unwrap()
 }
 
 #[must_use]
 pub fn workspace_file(filename: &str) -> Absolute<std::path::PathBuf> {
-    Absolute::new_unchecked(test_workspace_dir().join(filename))
+    test_workspace_dir().join(filename).unwrap()
 }
 
 #[must_use]
 pub fn workspace_file_str(filename: &str) -> String {
     test_workspace_dir()
         .join(filename)
+        .unwrap()
         .to_string_lossy()
         .into_owned()
 }
@@ -1000,8 +1082,14 @@ pub fn test_workspace_settings(defines: &[(&str, &str)]) -> WorkspaceSettings {
 #[must_use]
 pub fn program_path(program: &str) -> Absolute<std::path::PathBuf> {
     if cfg!(windows) {
-        Absolute::new_unchecked(std::path::Path::new("c:\\bin").join(program))
+        Absolute::new_ref(std::path::Path::new("c:\\bin"))
+            .unwrap()
+            .join(program)
+            .unwrap()
     } else {
-        Absolute::new_unchecked(std::path::Path::new("/bin").join(program))
+        Absolute::new_ref(std::path::Path::new("/bin"))
+            .unwrap()
+            .join(program)
+            .unwrap()
     }
 }

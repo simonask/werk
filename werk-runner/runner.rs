@@ -3,7 +3,7 @@ use std::{future::Future, sync::Arc, time::SystemTime};
 use futures::{channel::oneshot, StreamExt};
 use indexmap::{map::Entry, IndexMap};
 use parking_lot::Mutex;
-use werk_fs::{Absolute, Path};
+use werk_fs::{Absolute, Normalize as _, Path};
 
 use crate::{
     depfile::Depfile,
@@ -51,7 +51,7 @@ pub enum BuildStatus {
     Complete(TaskId, Outdatedness),
     /// Target is a dependency that exists in the filesystem, along with its
     /// last modification time.
-    Exists(werk_fs::PathBuf, SystemTime),
+    Exists(Absolute<werk_fs::PathBuf>, SystemTime),
 }
 
 impl BuildStatus {
@@ -87,39 +87,54 @@ enum TaskStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TaskId(Box<str>);
+pub enum TaskId {
+    Task(Box<str>),
+    // TODO: When recipes can build multiple files, this needs to change to some
+    // ID that encapsulates the "recipe instance" rather than the path of a
+    // single target.
+    Build(Box<Absolute<werk_fs::Path>>),
+}
 
 impl TaskId {
     pub fn command(s: impl Into<Box<str>>) -> Self {
         let name = s.into();
         debug_assert!(!name.starts_with('/'));
-        TaskId(name)
+        TaskId::Task(name)
     }
 
-    pub fn build(p: impl Into<Box<Absolute<Path>>>) -> Self {
+    pub fn build(p: impl Into<Box<Absolute<werk_fs::Path>>>) -> Self {
         let path = p.into();
-        TaskId(path.into_boxed_str())
+        TaskId::Build(path)
+    }
+
+    pub fn try_build<P>(p: P) -> Result<Self, P::Error>
+    where
+        P: TryInto<Absolute<werk_fs::PathBuf>>,
+    {
+        let path = p.try_into()?;
+        Ok(TaskId::build(path))
     }
 
     #[inline]
     #[must_use]
     pub fn is_command(&self) -> bool {
-        !self.0.starts_with('/')
+        matches!(self, TaskId::Task(_))
     }
 
     #[inline]
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        match self {
+            TaskId::Task(task) => task,
+            TaskId::Build(build) => build.as_str(),
+        }
     }
 
     #[inline]
     #[must_use]
     pub fn as_path(&self) -> Option<&Absolute<werk_fs::Path>> {
-        if self.0.starts_with('/') {
-            Some(Absolute::new_ref_unchecked(werk_fs::Path::new_unchecked(
-                &self.0,
-            )))
+        if let TaskId::Build(build) = self {
+            Some(build)
         } else {
             None
         }
@@ -128,21 +143,24 @@ impl TaskId {
     #[inline]
     #[must_use]
     pub fn short_name(&self) -> &str {
-        if self.is_command() {
-            &self.0
-        } else {
-            let Some((_prefix, filename)) = self.0.rsplit_once('/') else {
-                // The string starts with a slash.
-                unreachable!()
-            };
-            filename
+        match self {
+            TaskId::Task(task) => task,
+            TaskId::Build(path) => {
+                let Some((_prefix, filename)) = path.as_str().rsplit_once(werk_fs::Path::SEPARATOR)
+                else {
+                    // The path is absolute.
+                    unreachable!()
+                };
+                filename
+            }
         }
     }
 }
 
 impl std::fmt::Display for TaskId {
+    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(self.as_str())
     }
 }
 
@@ -470,26 +488,25 @@ impl<'a> Inner<'a> {
                 // previous run of this recipe. Parse it and add its
                 // dependencies!
                 tracing::debug!("Parsing depfile: {}", depfile_entry.path.display());
-                let depfile_contents =
-                    self.workspace.io.read_file(depfile_entry.path.as_deref())?;
+                let depfile_contents = self.workspace.io.read_file(&depfile_entry.path)?;
                 let depfile = Depfile::parse(&depfile_contents)?;
                 for dep in &depfile.deps {
                     // Translate the filesystem path produced by the compiler into an
                     // abstract path within the workspace. Normally this will be a file
                     // inside the output directory.
-                    let abstract_path = self.workspace.unresolve_path(dep).map_err(|err| {
+                    let dep = dep.as_path().normalize()?;
+                    let abstract_path = self.workspace.unresolve_path(&dep).map_err(|err| {
                         Error::InvalidPathInDepfile(dep.display().to_string(), err)
                     })?;
                     tracing::debug!("Discovered depfile dependency: {abstract_path}");
-                    explicit_dependency_specs
-                        .push(self.get_build_spec_relaxed(abstract_path.as_deref())?);
+                    explicit_dependency_specs.push(self.get_build_spec_relaxed(&abstract_path)?);
                 }
             } else if is_implicit_depfile {
                 // The implicit depfile was not generated yet, in this run
                 // or a previous run. Add that as a reason to rebuild the
                 // main recipe. Note that this causes the main recipe to
                 // always be outdated if it fails to generate the depfile!
-                outdatedness.add_reason(Reason::Missing(depfile_path.into_owned().into_inner()));
+                outdatedness.add_reason(Reason::Missing(depfile_path.into_owned()));
             } else {
                 // If the depfile is generated by a rule, it is an error if that
                 // rule did not generate the depfile. If it is implicit, it's
@@ -500,7 +517,9 @@ impl<'a> Inner<'a> {
                         "Depfile does not exist, and was not generated, because this is a dry run",
                     );
                 } else {
-                    return Err(Error::DepfileNotFound(depfile_path.to_path_buf()));
+                    return Err(Error::DepfileNotFound(
+                        depfile_path.into_owned().into_inner(),
+                    ));
                 }
             }
         }
@@ -540,7 +559,7 @@ impl<'a> Inner<'a> {
             if !self.workspace.io.is_dry_run() {
                 if let Ok(None) | Err(_) = self
                     .workspace
-                    .get_existing_output_file(implicit_depfile_path.as_deref())
+                    .get_existing_output_file(implicit_depfile_path)
                 {
                     self.workspace.render.warning(
                         Some(task_id),
@@ -621,6 +640,10 @@ impl<'a> Inner<'a> {
 
         let mut silent = silent_by_default;
 
+        if let Some(delay) = self.workspace.artificial_delay {
+            smol::Timer::after(delay).await;
+        }
+
         for (step, run_command) in run_commands.into_iter().enumerate() {
             match run_command {
                 RunCommand::Shell(command_line) => {
@@ -636,12 +659,11 @@ impl<'a> Inner<'a> {
                     .await?;
                 }
                 RunCommand::Write(path_buf, vec) => {
-                    self.workspace.io.write_file(path_buf.as_deref(), &vec)?;
+                    self.workspace.io.write_file(&path_buf, &vec)?;
                 }
                 RunCommand::Copy(from, to) => {
-                    let Some(src_entry) = self
-                        .workspace
-                        .get_existing_project_or_output_file(from.as_deref())?
+                    let Some(src_entry) =
+                        self.workspace.get_existing_project_or_output_file(&from)?
                     else {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::NotFound,
@@ -649,11 +671,11 @@ impl<'a> Inner<'a> {
                         )
                         .into());
                     };
-                    self.workspace
-                        .io
-                        .copy_file(src_entry.path.as_deref(), to.as_deref())?;
+                    self.workspace.io.copy_file(&src_entry.path, &to)?;
                 }
-                RunCommand::Delete(path) => self.workspace.io.delete_file(path.as_deref())?,
+                RunCommand::Delete(paths) => {
+                    self.execute_recipe_delete_command(task_id, &paths, silent)?;
+                }
                 RunCommand::Info(message) => {
                     self.workspace.render.message(Some(task_id), &message);
                 }
@@ -669,6 +691,10 @@ impl<'a> Inner<'a> {
                 RunCommand::RemoveEnv(key) => {
                     env.env_remove(key);
                 }
+            }
+
+            if let Some(delay) = self.workspace.artificial_delay {
+                smol::Timer::after(delay).await;
             }
         }
 
@@ -731,6 +757,45 @@ impl<'a> Inner<'a> {
         if !status.success() {
             return Err(Error::CommandFailed(status));
         }
+        Ok(())
+    }
+
+    fn execute_recipe_delete_command(
+        &self,
+        task_id: &TaskId,
+        paths: &[Absolute<std::path::PathBuf>],
+        silent: bool,
+    ) -> Result<(), Error> {
+        for path in paths {
+            if self.workspace.is_in_output_directory(path) {
+                match self.workspace.io.delete_file(path) {
+                    Ok(()) => (),
+                    Err(err) => match err.kind() {
+                        std::io::ErrorKind::NotFound => {
+                            if !silent {
+                                self.workspace.render.warning(
+                                    Some(task_id),
+                                    &format!(
+                                        "`delete` ignoring file not found: {}",
+                                        path.display()
+                                    ),
+                                );
+                            }
+                        }
+                        _ => return Err(err.into()),
+                    },
+                }
+            } else if !silent {
+                self.workspace.render.warning(
+                    Some(task_id),
+                    &format!(
+                        "cannot `delete` path outside of output directory: {}",
+                        path.display()
+                    ),
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -834,11 +899,11 @@ impl<'a> Inner<'a> {
                         .await
                 }
             },
-            TaskSpec::CheckExists(path) => self.check_exists(path.as_deref()),
-            TaskSpec::CheckExistsRelaxed(path) => match self.check_exists(path.as_deref()) {
+            TaskSpec::CheckExists(path) => self.check_exists(&path),
+            TaskSpec::CheckExistsRelaxed(path) => match self.check_exists(&path) {
                 Err(Error::NoRuleToBuildTarget(_)) => Ok(BuildStatus::Complete(
                     task_id.clone(),
-                    Outdatedness::outdated(Reason::Missing(path.into_inner())),
+                    Outdatedness::outdated(Reason::Missing(path)),
                 )),
                 otherwise => otherwise,
             },
@@ -855,7 +920,8 @@ pub(crate) enum RunCommand {
     Copy(Absolute<werk_fs::PathBuf>, Absolute<std::path::PathBuf>),
     Info(String),
     Warn(String),
-    Delete(Absolute<std::path::PathBuf>),
+    // Path is always in the output directory. They don't need to exist.
+    Delete(Vec<Absolute<std::path::PathBuf>>),
     SetCapture(bool),
     SetEnv(String, String),
     RemoveEnv(String),
@@ -877,8 +943,20 @@ impl std::fmt::Display for RunCommand {
             RunCommand::Warn(message) => {
                 write!(f, "warn \"{}\"", message.escape_default())
             }
-            RunCommand::Delete(path) => {
-                write!(f, "delete '{}'", path.display())
+            RunCommand::Delete(paths) => {
+                write!(f, "delete ")?;
+                if paths.len() == 1 {
+                    write!(f, "{}", paths[0].display())
+                } else {
+                    write!(f, "[")?;
+                    for (i, p) in paths.iter().enumerate() {
+                        if i != 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", p.display())?;
+                    }
+                    write!(f, "]")
+                }
             }
             RunCommand::SetCapture(value) => write!(f, "set_capture = {value}"),
             RunCommand::SetEnv(key, value) => write!(f, "env {key} = {value}"),

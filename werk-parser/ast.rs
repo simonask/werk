@@ -336,7 +336,7 @@ pub type BuildStmt<'a> = KwExpr<token::Build, Expr<'a>>;
 pub type DepfileStmt<'a> = KwExpr<token::Depfile, Expr<'a>>;
 pub type RunStmt<'a> = KwExpr<token::Run, RunExpr<'a>>;
 pub type ErrorStmt<'a> = KwExpr<token::Error, StringExpr<'a>>;
-pub type DeleteExpr<'a> = KwExpr<token::Delete, StringExpr<'a>>;
+pub type DeleteExpr<'a> = KwExpr<token::Delete, Expr<'a>>;
 pub type EnvRemoveStmt<'a> = KwExpr<token::RemoveEnv, StringExpr<'a>>;
 
 /// Things that can appear in the `command` part of recipes.

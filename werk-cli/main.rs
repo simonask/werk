@@ -9,7 +9,7 @@ use futures::future::Either;
 use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
 use render::AutoStream;
-use werk_fs::Absolute;
+use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_parser::parser::Spanned as _;
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
 
@@ -143,8 +143,10 @@ enum Error {
     Eval,
     #[error("Runner error")]
     Runner,
-    #[error("Invalid workspace directory: {}", .0.display())]
-    Workspace(std::path::PathBuf),
+    #[error("Invalid workspace directory '{0}': {1}")]
+    WorkspaceDirectory(String, std::io::Error),
+    #[error("Invalid output directory '{0}': {1}")]
+    OutputDirectory(String, PathError),
     #[error("werk.toml or Werkfile not found in this directory or any parent directory")]
     NoWerkfile,
     #[error("Invalid define (must take the form `key=value`): {0}")]
@@ -181,7 +183,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     let color_stderr = render::ColorOutputKind::initialize(&std::io::stderr(), args.color);
 
     let werkfile = if let Some(file) = args.file {
-        let file = Absolute::new_unchecked(std::path::absolute(file)?);
+        let file = file.normalize()?;
         if file.extension() == Some("toml".as_ref()) {
             Werkfile::Toml(file)
         } else {
@@ -195,19 +197,20 @@ async fn try_main(args: Args) -> Result<(), Error> {
     // Determine the workspace directory.
     let workspace_dir_abs;
     let workspace_dir = if let Some(ref workspace_dir) = args.workspace_dir {
-        workspace_dir_abs = std::path::absolute(workspace_dir)?;
+        workspace_dir_abs = workspace_dir.as_path().normalize()?;
         if !workspace_dir_abs.is_dir() {
-            return Err(Error::Workspace(workspace_dir.clone()));
+            return Err(Error::WorkspaceDirectory(
+                workspace_dir.display().to_string(),
+                std::io::Error::new(std::io::ErrorKind::NotADirectory, "not a directory"),
+            ));
         } else {
-            Absolute::new_ref_unchecked(&*workspace_dir_abs)
+            &workspace_dir_abs
         }
     } else {
-        Absolute::new_ref_unchecked(
-            werkfile
-                .as_ref()
-                .parent()
-                .ok_or_else(|| Error::Workspace(werkfile.as_ref().to_path_buf().into_inner()))?,
-        )
+        werkfile
+            .as_ref()
+            .parent()
+            .expect("normalized Werkfile path has no parent directory")
     };
 
     // Parse the werk manifest!
@@ -232,21 +235,12 @@ async fn try_main(args: Args) -> Result<(), Error> {
     // Read the configuration statements from the AST.
     let config = werk_runner::ir::Config::new(&ast).map_err(display_root_eval_error)?;
 
-    let out_dir_from_args = args
-        .output_dir
-        .map(|p| std::path::absolute(p).map(Absolute::new_unchecked))
-        .transpose()?;
-    let out_dir_from_config = config
-        .output_directory
-        .as_ref()
-        .map(|p| std::path::absolute(workspace_dir.join(&**p)).map(Absolute::new_unchecked))
-        .transpose()?;
+    let out_dir = find_output_directory(
+        workspace_dir,
+        args.output_dir.as_deref(),
+        config.output_directory.as_deref(),
+    )?;
 
-    let out_dir = out_dir_from_args
-        .clone()
-        .or(out_dir_from_config)
-        .unwrap_or_else(|| Absolute::new_unchecked(workspace_dir.join("target")));
-    let out_dir = Absolute::new_unchecked(std::path::absolute(out_dir)?);
     tracing::info!("Project directory: {}", workspace_dir.display());
     tracing::info!("Output directory: {}", out_dir.display());
 
@@ -260,6 +254,11 @@ async fn try_main(args: Args) -> Result<(), Error> {
         settings.define(key, value);
     }
     settings.force_color = color_stdout.supports_color();
+
+    settings.artificial_delay = std::env::var("_WERK_ARTIFICIAL_DELAY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .map(std::time::Duration::from_millis);
 
     let io: Arc<dyn werk_runner::Io> = if args.dry_run || args.list {
         Arc::new(dry_run::DryRun::new())
@@ -322,7 +321,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
             workspace,
             werkfile,
             args.target,
-            out_dir_from_args,
+            args.output_dir.as_deref(),
             &settings,
         )
         .await?;
@@ -339,7 +338,7 @@ async fn autowatch_loop(
     werkfile: Werkfile,
     // Target to keep building
     target_from_args: Option<String>,
-    output_directory_from_args: Option<Absolute<std::path::PathBuf>>,
+    output_directory_from_args: Option<&std::path::Path>,
     settings: &WorkspaceSettings,
 ) -> Result<(), notify::Error> {
     let (notification_sender, notification_receiver) = smol::channel::bounded(1);
@@ -443,15 +442,18 @@ async fn autowatch_loop(
             }
         };
 
-        let out_dir_from_config = config
-            .output_directory
-            .as_ref()
-            .map(|p| std::path::absolute(workspace_dir.join(&**p)).map(Absolute::new_unchecked))
-            .transpose()?;
-        let out_dir = output_directory_from_args
-            .clone()
-            .or(out_dir_from_config)
-            .unwrap_or_else(|| Absolute::new_unchecked(workspace_dir.join("target")));
+        let out_dir = match find_output_directory(
+            &workspace_dir,
+            output_directory_from_args,
+            config.output_directory.as_deref(),
+        ) {
+            Ok(out_dir) => out_dir,
+            Err(err) => {
+                render.warning(None, &format!("Error finding output directory: {err}"));
+                watch_set = watch_manifest.clone();
+                continue;
+            }
+        };
 
         if out_dir != settings.output_directory {
             render.warning(
@@ -643,7 +645,7 @@ enum Werkfile {
 impl AsRef<Absolute<std::path::Path>> for Werkfile {
     fn as_ref(&self) -> &Absolute<std::path::Path> {
         match self {
-            Werkfile::Werk(path) | Werkfile::Toml(path) => path.as_deref(),
+            Werkfile::Werk(path) | Werkfile::Toml(path) => path,
         }
     }
 }
@@ -652,21 +654,18 @@ fn find_werkfile() -> Result<Werkfile, Error> {
     const WERKFILE_NAMES_TOML: &[&str] = &["werk.toml"];
     const WERKFILE_NAMES: &[&str] = &["werk.toml", "Werkfile", "werkfile", "build.werk"];
 
-    let mut current = std::env::current_dir()?;
-    if !current.is_absolute() {
-        return Err(Error::Workspace(current));
-    }
+    let mut current = Absolute::current_dir()?;
 
     loop {
         for name in WERKFILE_NAMES_TOML {
-            let candidate = Absolute::new_unchecked(current.join(name));
+            let candidate = current.join(name).unwrap();
             if candidate.is_file() {
                 return Ok(Werkfile::Toml(candidate));
             }
         }
 
         for name in WERKFILE_NAMES {
-            let candidate = Absolute::new_unchecked(current.join(name));
+            let candidate = current.join(name).unwrap();
             if candidate.is_file() {
                 return Ok(Werkfile::Werk(candidate));
             }
@@ -677,6 +676,24 @@ fn find_werkfile() -> Result<Werkfile, Error> {
         } else {
             return Err(Error::NoWerkfile);
         }
+    }
+}
+
+fn find_output_directory(
+    workspace_dir: &Absolute<std::path::Path>,
+    from_args: Option<&std::path::Path>,
+    from_config: Option<&str>,
+) -> Result<Absolute<std::path::PathBuf>, Error> {
+    if let Some(from_args) = from_args {
+        workspace_dir
+            .join(from_args)
+            .map_err(|err| Error::OutputDirectory(from_args.display().to_string(), err.into()))
+    } else if let Some(from_config) = from_config {
+        workspace_dir
+            .join(from_config)
+            .map_err(|err| Error::OutputDirectory(from_config.to_owned(), err.into()))
+    } else {
+        Ok(workspace_dir.join("target").unwrap())
     }
 }
 

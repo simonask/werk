@@ -172,6 +172,25 @@
             "cwd": "${workspaceFolder}"
         },
         {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration test 'test_cases'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=test_cases",
+                    "--package=tests"
+                ],
+                "filter": {
+                    "name": "test_cases",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
             "name": "Extension",
             "type": "extensionHost",
             "request": "launch",

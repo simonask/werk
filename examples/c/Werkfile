@@ -45,3 +45,11 @@ task run {
     build "build"
     run "<executable>"
 }
+
+task clean {
+    let object-files = glob "*.c" | map "{profile}{:.c=.o}"
+    run {
+        delete object-files
+        delete executable
+    }
+}

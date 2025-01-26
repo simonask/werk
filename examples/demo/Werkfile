@@ -1,0 +1,12 @@
+config out-dir = "../../target/examples/demo"
+
+let cc = which "clang"
+let ld = cc
+
+build "%.o" {
+    run "{cc} -c <in> -o <out> -MF <depfile> -MM -MT <in>"
+}
+
+task build {
+    build "program{EXE_SUFFIX}"
+}

@@ -7,7 +7,14 @@ use std::{
     str::FromStr,
 };
 
-use crate::{Absolute, Absolutize, IsAbsolute};
+use crate::{
+    traits::{self, Normalize},
+    Absolute,
+};
+
+pub trait AsPath {
+    fn as_path(&self) -> Result<&Path, PathError>;
+}
 
 /// Virtual path in a werkspace.
 ///
@@ -55,7 +62,7 @@ pub struct Path {
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)] // TODO: Validate deserialized paths.
 pub struct PathBuf {
-    path: String,
+    pub(crate) path: String,
 }
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
@@ -86,6 +93,17 @@ pub enum PathError {
     ResolveRelative(PathBuf),
     #[error("path is not absolute")]
     NotAbsolute,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("cannot normalize path: too many parent components")]
+pub struct TooManyParents;
+
+impl From<TooManyParents> for PathError {
+    #[inline(always)]
+    fn from(_: TooManyParents) -> Self {
+        PathError::TooManyParents
+    }
 }
 
 impl Path {
@@ -247,7 +265,7 @@ impl Path {
         self.try_join(rhs).expect("invalid path component")
     }
 
-    pub fn try_join(&self, rhs: impl AsPath) -> Result<PathBuf, PathError> {
+    pub fn try_join<P: AsPath>(&self, rhs: P) -> Result<PathBuf, PathError> {
         let mut buf = self.to_path_buf();
         buf.try_push(rhs)?;
         Ok(buf)
@@ -271,10 +289,10 @@ impl Path {
         std::path::Path::new(&self.path)
     }
 
-    pub fn from_components<I>(iter: I) -> Result<PathBuf, PathError>
+    pub fn from_components<I, P>(iter: I) -> Result<PathBuf, PathError>
     where
-        I: IntoIterator,
-        I::Item: AsPath,
+        I: IntoIterator<Item = P>,
+        P: AsPath,
     {
         let mut buf = PathBuf::new(String::new())?;
         buf.extend(iter);
@@ -350,94 +368,14 @@ impl Path {
     /// This does not access the filesystem.
     pub fn resolve(
         &self,
-        working_dir: &Absolute<Path>,
         root: &Absolute<std::path::Path>,
     ) -> Result<Absolute<std::path::PathBuf>, PathError> {
-        if !working_dir.is_absolute() {
-            return Err(PathError::ResolveRelative(working_dir.to_path_buf()));
-        }
-        let in_buf;
-        let path = if self.is_absolute() {
-            self
-        } else {
-            in_buf = working_dir.join(self);
-            &*in_buf
-        };
-        debug_assert!(path.is_absolute());
-
-        let mut buf = root.to_path_buf().into_inner();
-        for component in path.components() {
-            match component {
-                Component::Current | Component::Root => {}
-                Component::Parent => {
-                    if !buf.pop() {
-                        return Err(PathError::TooManyParents);
-                    }
-                }
-                Component::Component(s) => {
-                    buf.push(s.as_str());
-                }
-            }
+        if self.is_root() {
+            return Ok(root.to_owned());
         }
 
-        Ok(Absolute::new_unchecked(buf))
-    }
-
-    /// Get the workspace-relative path from an OS path. If `path` is absolute,
-    /// it will be resolved relative to `root`. Otherwise, this function returns
-    /// a relative `PathBuf`.
-    ///
-    /// If `path` is absolute, and does not have `root` as a prefix, an error
-    /// will be returned.
-    ///
-    /// `root` must be an absolute path.
-    pub fn unresolve(
-        path: &std::path::Path,
-        root: &Absolute<std::path::Path>,
-    ) -> Result<Absolute<PathBuf>, PathError> {
-        // Resolve `..` and `.` so strip_prefix is reliable.
-        fn resolve_cur_and_parent(
-            input: &std::path::Path,
-        ) -> Result<std::path::PathBuf, PathError> {
-            let mut abs_buf = std::path::PathBuf::new();
-            for component in input.components() {
-                match component {
-                    std::path::Component::Prefix(_)
-                    | std::path::Component::RootDir
-                    | std::path::Component::Normal(_) => abs_buf.push(component.as_os_str()),
-                    std::path::Component::CurDir => {}
-                    std::path::Component::ParentDir => {
-                        if !abs_buf.pop() {
-                            return Err(PathError::TooManyParents);
-                        }
-                    }
-                }
-            }
-            Ok(abs_buf)
-        }
-
-        let root = resolve_cur_and_parent(root)?;
-        let absolute_path = root.join(path);
-        let absolute_path = resolve_cur_and_parent(&absolute_path)?;
-        let relative_to_root = absolute_path
-            .strip_prefix(root)
-            .map_err(|_| PathError::UnresolveBeyondRoot)?;
-
-        let mut buf: PathBuf = Path::ROOT.to_owned().into_inner();
-        for component in relative_to_root.components() {
-            match component {
-                std::path::Component::Prefix(_) => return Err(PathError::UnresolveBeyondRoot),
-                std::path::Component::RootDir => {}
-                std::path::Component::CurDir => unreachable!(". in rerooted path"),
-                std::path::Component::ParentDir => unreachable!(".. in rerooted path"),
-                std::path::Component::Normal(s) => {
-                    let s = Path::from_utf8(s.as_encoded_bytes())?;
-                    buf.push(s);
-                }
-            }
-        }
-
-        Ok(Absolute::new_unchecked(buf))
+        // This ensures that the path does not go above `root`.
+        self.normalize().map(|path| path.resolve(root))
     }
 
     #[inline]
@@ -463,31 +401,28 @@ impl Path {
             Box::from_raw(Box::into_raw(s) as *mut Self)
         }
     }
-}
 
-impl IsAbsolute for Path {
-    #[inline(always)]
-    fn is_absolute(&self) -> bool {
-        Path::is_absolute(self)
+    #[inline]
+    #[must_use]
+    pub fn is_normalized(&self) -> bool {
+        self.is_absolute()
+            && !self
+                .components()
+                .any(|c| matches!(c, crate::Component::Current | crate::Component::Parent))
+    }
+
+    #[inline]
+    pub fn normalize(&self) -> Result<Cow<Absolute<Self>>, PathError> {
+        Normalize::normalize(self).map_err(Into::into)
     }
 }
 
-impl IsAbsolute for PathBuf {
-    #[inline(always)]
-    fn is_absolute(&self) -> bool {
-        Path::is_absolute(self)
-    }
-}
+impl ToOwned for Path {
+    type Owned = PathBuf;
 
-impl Absolutize for Path {
-    type Err = PathError;
-
-    #[inline(always)]
-    fn absolutize<'a>(
-        &'a self,
-        base: &Absolute<Self>,
-    ) -> Result<Cow<'a, Absolute<Self>>, Self::Err> {
-        Path::absolutize(self, base)
+    #[inline]
+    fn to_owned(&self) -> Self::Owned {
+        self.to_path_buf()
     }
 }
 
@@ -646,12 +581,19 @@ impl PathBuf {
     /// Extends `self` with `path`.
     ///
     /// If `path` is absolute, it replaces the current path.
-    pub fn push(&mut self, path: impl AsPath) -> &mut Self {
+    pub fn push<P: AsPath>(&mut self, path: P) -> &mut Self {
         self.try_push(path).expect("invalid path component")
     }
 
+    #[inline]
+    pub(crate) fn push_raw_component(&mut self, component: &str) -> &mut Self {
+        self.path.push(Path::SEPARATOR);
+        self.path.push_str(component);
+        self
+    }
+
     #[expect(clippy::needless_pass_by_value)]
-    pub fn try_push(&mut self, path: impl AsPath) -> Result<&mut Self, PathError> {
+    pub fn try_push<P: AsPath>(&mut self, path: P) -> Result<&mut Self, PathError> {
         let path = path.as_path()?;
         if path.is_absolute() {
             self.path.clear();
@@ -720,39 +662,6 @@ impl From<&Path> for PathBuf {
     }
 }
 
-/// Fallible conversion to `Path`.
-pub trait AsPath {
-    fn as_path(&self) -> Result<&Path, PathError>;
-}
-
-impl AsPath for Path {
-    #[inline(always)]
-    fn as_path(&self) -> Result<&Path, PathError> {
-        Ok(self)
-    }
-}
-
-impl AsPath for PathBuf {
-    #[inline(always)]
-    fn as_path(&self) -> Result<&Path, PathError> {
-        Ok(self)
-    }
-}
-
-impl AsPath for &Path {
-    #[inline(always)]
-    fn as_path(&self) -> Result<&Path, PathError> {
-        Ok(*self)
-    }
-}
-
-impl AsPath for &PathBuf {
-    #[inline(always)]
-    fn as_path(&self) -> Result<&Path, PathError> {
-        Ok(*self)
-    }
-}
-
 impl AsPath for str {
     #[inline(always)]
     fn as_path(&self) -> Result<&Path, PathError> {
@@ -771,6 +680,22 @@ impl AsPath for &str {
     #[inline(always)]
     fn as_path(&self) -> Result<&Path, PathError> {
         Path::new(self)
+    }
+}
+
+impl AsPath for std::ffi::OsStr {
+    #[inline]
+    fn as_path(&self) -> Result<&Path, PathError> {
+        self.to_str()
+            .ok_or(PathError::InvalidUtf8(0))
+            .and_then(Path::new)
+    }
+}
+
+impl AsPath for &std::ffi::OsStr {
+    #[inline]
+    fn as_path(&self) -> Result<&Path, PathError> {
+        (*self).as_path()
     }
 }
 
@@ -909,5 +834,24 @@ impl From<PathBuf> for Box<str> {
     #[inline(always)]
     fn from(path: PathBuf) -> Self {
         path.path.into_boxed_str()
+    }
+}
+
+impl traits::Parent for Path {
+    type Parent = Self;
+
+    #[inline]
+    fn parent(&self) -> Option<&Self::Parent> {
+        self.parent()
+    }
+}
+
+impl traits::Parent for PathBuf {
+    type Parent = Path;
+
+    #[inline]
+    fn parent(&self) -> Option<&Self::Parent> {
+        let path: &Path = self;
+        path.parent()
     }
 }

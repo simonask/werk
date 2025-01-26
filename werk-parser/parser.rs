@@ -504,9 +504,11 @@ fn run_expression<'a>(input: &mut Input<'a>) -> PResult<ast::RunExpr<'a>> {
         kw_expr(string_expr).map(ast::RunExpr::Warn),
         write_expr.map(ast::RunExpr::Write),
         copy_expr.map(ast::RunExpr::Copy),
+        kw_expr(expression_chain).map(ast::RunExpr::Delete),
         kw_expr(string_expr).map(ast::RunExpr::EnvRemove),
         env_stmt.map(ast::RunExpr::Env),
         body(run_expression).map(ast::RunExpr::Block),
+        fail.context(Expected::Expected(&"a run expression; one of `shell`, `info`, `warn`, `write`, `copy`, `delete`, `env`, `env-remove`, a string literal, a list, or a block"))
     ))
     .parse_next(input)
 }
