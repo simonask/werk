@@ -9,7 +9,7 @@ use futures::future::Either;
 use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
 use render::AutoStream;
-use werk_fs::{traits::Normalize, Absolute, PathError};
+use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_parser::parser::Spanned as _;
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
 

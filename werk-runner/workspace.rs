@@ -2,7 +2,7 @@ use ahash::HashMap;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::{borrow::Cow, collections::hash_map};
-use werk_fs::{traits::Normalize as _, Absolute, PathError};
+use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_parser::ast;
 
 use crate::{

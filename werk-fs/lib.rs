@@ -1,7 +1,8 @@
 mod absolute;
 mod path;
-pub mod resolve;
-pub mod traits;
+mod traits;
 
 pub use absolute::*;
 pub use path::*;
+
+pub use traits::Normalize;

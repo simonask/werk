@@ -14,6 +14,7 @@ pub trait Normalize<'a> {
     /// True if the path is absolute and does not contain any relative path
     /// components `..` or `.`. It may still contain symlinks.
     fn is_normalized(&self) -> bool;
+
     /// Normalize the path by resolving relative path components, producing an
     /// absolute path with no `..` or `.` components. Symlinks are not resolved.
     ///

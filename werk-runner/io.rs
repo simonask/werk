@@ -5,7 +5,7 @@ use std::{
 
 pub use ignore::WalkState;
 use parking_lot::Mutex;
-use werk_fs::{traits::Normalize, Absolute};
+use werk_fs::{Absolute, Normalize as _};
 
 use crate::{Env, Error, GlobSettings, ShellCommandLine};
 

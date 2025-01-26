@@ -3,7 +3,7 @@ use std::{future::Future, sync::Arc, time::SystemTime};
 use futures::{channel::oneshot, StreamExt};
 use indexmap::{map::Entry, IndexMap};
 use parking_lot::Mutex;
-use werk_fs::{traits::Normalize, Absolute, Path};
+use werk_fs::{Absolute, Normalize as _, Path};
 
 use crate::{
     depfile::Depfile,
