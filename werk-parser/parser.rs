@@ -149,9 +149,8 @@ fn root_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::RootStmt<'a>> {
         let_stmt.map(ast::RootStmt::Let),
         task_recipe.map(ast::RootStmt::Task),
         build_recipe.map(ast::RootStmt::Build),
-        fatal(Failure::Expected(
-            &"`config`, `let`, `task`, or `build` statement",
-        )),
+        fatal(Failure::Expected(&"statement"))
+            .error_context("expected one of `config`, `let`, `task`, or `build` statement"),
     ))
     .parse_next(input)
 }
@@ -161,7 +160,7 @@ fn config_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::ConfigStmt<'a>> {
         span: default,
         token_config: keyword::<token::Config>,
         ws_1: whitespace,
-        ident: cut_err(identifier).help("`config` must be followed by an identifier"),
+        ident: cut_err(identifier).error_context("`config` must be followed by an identifier"),
         ws_2: whitespace,
         token_eq: cut_err(token).help("`config` statements look like this: config ident = ..."),
         ws_3: whitespace,
@@ -253,9 +252,11 @@ fn task_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::CommandRecipe<'a>> {
             warn_expr.map(ast::TaskRecipeStmt::Warn),
             kw_expr(config_bool).map(ast::TaskRecipeStmt::SetCapture),
             kw_expr(config_bool).map(ast::TaskRecipeStmt::SetNoCapture),
-            fatal(Failure::Expected(
-                &"`let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
-            )),
+            fatal(Failure::Expected(&"task recipe statement"))
+                .error_context("invalid task recipe statement")
+                .help(
+                    "could be one of `let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
+                ),
         ))
         .parse_next(input)
     }
@@ -264,7 +265,7 @@ fn task_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::CommandRecipe<'a>> {
         span: default,
         token_task: keyword::<token::Task>,
         ws_1: whitespace,
-        name: cut_err(identifier).help(
+        name: cut_err(identifier).error_context(
             "`task` must be followed by an identifier",
         ),
         ws_2: whitespace,
@@ -290,9 +291,11 @@ fn build_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::BuildRecipe<'a>> {
             warn_expr.map(ast::BuildRecipeStmt::Warn),
             kw_expr(config_bool).map(ast::BuildRecipeStmt::SetCapture),
             kw_expr(config_bool).map(ast::BuildRecipeStmt::SetNoCapture),
-            fatal(Failure::Expected(
-                &"`let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
-            )),
+            fatal(Failure::Expected(&"build recipe statement"))
+                .error_context("invalid build recipe statement")
+                .help(
+                    "could be one of `let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
+                ),
         ))
         .parse_next(input)
     }
@@ -303,7 +306,7 @@ fn build_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::BuildRecipe<'a>> {
         ws_1: whitespace,
         pattern: cut_err(pattern_expr).error_context(
             "`build` must be followed by a pattern literal",
-        ),
+        ).help("use string interpolation to use variables in recipe names"),
         ws_2: whitespace,
         body: body(build_recipe_stmt),
     }}
@@ -467,7 +470,8 @@ fn expression_head<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
         kw_expr(string_expr).map(ast::Expr::Env),
         kw_expr(string_expr).map(ast::Expr::Error),
         identifier.map(ast::Expr::Ident),
-        fatal(Failure::Expected(&"expression start"))
+        fatal(Failure::Expected(&"expression"))
+            .error_context("expected an expression")
             .help("expression chains must start with a value, or an `env`, `glob`, `which`, or `shell` operation")
     ))
     .parse_next(input)
@@ -490,7 +494,8 @@ fn expression_chain_op<'a>(input: &mut Input<'a>) -> PResult<ast::ExprOp<'a>> {
         kw_expr(string_expr).map(ast::ExprOp::Error),
         kw_expr(expression_head.map(Box::new)).map(ast::ExprOp::AssertEq),
         kw_expr(pattern_expr.map(Box::new)).map(ast::ExprOp::AssertMatch),
-        fatal(Failure::Expected(&"a chaining operation"))
+        fatal(Failure::Expected(&"a chaining expression"))
+            .error_context("pipe `|` must be followed by a chaining operation")
             .help("one of `join`, `flatten`, `map`, `match`, `env`, `glob`, `which`, `shell`, or a string expression")
     ))
     .parse_next(input)
@@ -517,6 +522,7 @@ fn run_expression<'a>(input: &mut Input<'a>) -> PResult<ast::RunExpr<'a>> {
         env_stmt.map(ast::RunExpr::Env),
         body(run_expression).map(ast::RunExpr::Block),
         fatal(Failure::Expected(&"a run expression"))
+            .error_context("invalid `run` expression")
             .help("one of `shell`, `info`, `warn`, `write`, `copy`, `delete`, `env`, `env-remove`, a string literal, a list, or a block")
     ))
     .parse_next(input)
@@ -560,11 +566,11 @@ fn match_body<'a>(input: &mut Input<'a>) -> PResult<ast::MatchBody<'a>> {
     fn match_arm_braced<'a>(input: &mut Input<'a>) -> PResult<ast::MatchArm<'a>> {
         let (mut arm, span) = seq! {ast::MatchArm {
             span: default,
-            pattern: cut_err(pattern_expr),
+            pattern: cut_err(pattern_expr).error_context("expected pattern in `match`"),
             ws_1: whitespace,
-            token_fat_arrow: cut_err(keyword),
+            token_fat_arrow: cut_err(keyword).error_context("pattern must be followed by `=>` in `match`"),
             ws_2: whitespace,
-            expr: cut_err(expression_chain),
+            expr: cut_err(expression_chain).error_context("`=>` must be followed by an expression in `match`"),
         }}
         .with_token_span()
         .parse_next(input)?;
@@ -575,11 +581,13 @@ fn match_body<'a>(input: &mut Input<'a>) -> PResult<ast::MatchBody<'a>> {
     fn match_arm_single<'a>(input: &mut Input<'a>) -> PResult<ast::MatchArm<'a>> {
         let (mut arm, span) = seq! {ast::MatchArm {
             span: default,
-            pattern: cut_err(pattern_expr),
+            pattern: cut_err(pattern_expr).error_context("expected pattern or `{...}` block after `match`"),
             ws_1: whitespace,
-            token_fat_arrow: cut_err(keyword),
+            token_fat_arrow: cut_err(keyword).error_context("pattern must be followed by `=>` in `match`"),
             ws_2: whitespace,
-            expr: cut_err(string_expr).map(ast::Expr::StringExpr),
+            expr: cut_err(string_expr)
+                .error_context("`=>` must be followed by a string literal in inline `match`")
+                .map(ast::Expr::StringExpr),
         }}
         .with_token_span()
         .parse_next(input)?;

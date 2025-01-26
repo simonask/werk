@@ -58,4 +58,11 @@ macro_rules! error_case {
 
 error_case!(let_no_ident);
 error_case!(let_no_eq);
+error_case!(let_no_value);
 error_case!(invalid_escape);
+error_case!(root_invalid);
+error_case!(expr_trailing_pipe);
+error_case!(task_string_name);
+error_case!(build_ident_name);
+error_case!(match_unterminated);
+error_case!(match_no_arrow);

@@ -1,0 +1,9 @@
+error: expected keyword `=>`
+ --> INPUT:1:31
+  |
+1 | let foo = bar | match { "foo" }
+  | -               -             ^ pattern must be followed by `=>` in `match`
+  | |               |
+  | |               info: while parsing match
+  | info: while parsing `let` statement
+  |

@@ -1,0 +1,6 @@
+error: expected statement
+ --> INPUT:2:1
+  |
+2 | foo
+  | ^ expected one of `config`, `let`, `task`, or `build` statement
+  |
