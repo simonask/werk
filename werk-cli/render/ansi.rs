@@ -258,7 +258,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 
         if print_something {
             _ = self.render_lines(|out, _status| {
-                write!(
+                writeln!(
                     out,
                     "{} {task_id}: {}",
                     Bracketed(Step(step + 1, num_steps)).dimmed(),

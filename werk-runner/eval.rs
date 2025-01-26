@@ -141,16 +141,22 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
                 .which(&string)
                 .map_err(|e| EvalError::CommandNotFound(expr.span, string.clone(), e))?;
 
-            let which = String::from_utf8(which.into_inner().into_os_string().into_encoded_bytes())
-                .map_err(|err| {
-                    EvalError::NonUtf8Which(
-                        expr.span,
-                        std::path::PathBuf::from(unsafe {
-                            // SAFETY: These are the bytes we just got from `into_os_string()`.
-                            std::ffi::OsString::from_encoded_bytes_unchecked(err.into_bytes())
-                        }),
-                    )
-                })?;
+            let which = String::from_utf8(
+                which
+                    .into_owned()
+                    .into_inner()
+                    .into_os_string()
+                    .into_encoded_bytes(),
+            )
+            .map_err(|err| {
+                EvalError::NonUtf8Which(
+                    expr.span,
+                    std::path::PathBuf::from(unsafe {
+                        // SAFETY: These are the bytes we just got from `into_os_string()`.
+                        std::ffi::OsString::from_encoded_bytes_unchecked(err.into_bytes())
+                    }),
+                )
+            })?;
 
             if let Some(hash) = hash {
                 used.insert(UsedVariable::Which(string, hash));
@@ -736,12 +742,20 @@ pub(crate) fn eval_run_exprs<S: Scope>(
                 commands.push(RunCommand::Copy(from_path, to_path));
             }
             ast::RunExpr::Delete(expr) => {
-                let path = eval_string_expr(scope, &expr.param)?;
-                let delete_path = werk_fs::Path::new(&path.value)
-                    .and_then(|path| scope.workspace().get_output_file_path(path))
-                    .map_err(|err| EvalError::Path(expr.param.span, err))?;
-                *used |= path.used;
-                commands.push(RunCommand::Delete(delete_path));
+                let evaluated_paths = eval(scope, &expr.param)?;
+                let mut paths = Vec::new();
+                evaluated_paths
+                    .value
+                    .try_collect_strings_recursive(|path| {
+                        let path = werk_fs::PathBuf::new(path)?;
+                        let path = path.absolutize(werk_fs::Path::ROOT)?;
+                        let path = scope.workspace().get_output_file_path(&path)?;
+                        paths.push(path);
+                        Ok(())
+                    })
+                    .map_err(|err| EvalError::Path(expr.param.span(), err))?;
+                *used |= evaluated_paths.used;
+                commands.push(RunCommand::Delete(paths));
             }
             ast::RunExpr::Env(expr) => {
                 let key = eval_string_expr(scope, &expr.key)?;
@@ -1046,7 +1060,7 @@ pub fn eval_read<P: Scope + ?Sized>(
 
     let contents = scope
         .io()
-        .read_file(fs_entry.path.as_deref())
+        .read_file(&fs_entry.path)
         .map_err(|err| EvalError::Io(expr.span, err.into()))?;
 
     let Ok(string) = String::from_utf8(contents) else {
@@ -1342,7 +1356,7 @@ fn recursive_resolve_path(
     value.try_recursive_modify(|string| {
         let path = werk_fs::Path::new(string)?;
         let path = path.absolutize(working_dir)?;
-        let path = workspace.resolve_path(&path)?;
+        let path = workspace.resolve_path(&path);
         match path.to_str() {
             Some(path) => path.clone_into(string),
             None => panic!("Path resolution produced a non-UTF8 path; probably the project root path is non-UTF8"),

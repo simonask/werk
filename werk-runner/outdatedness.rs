@@ -3,6 +3,8 @@ use std::{
     ops::{BitOr, BitOrAssign},
 };
 
+use werk_fs::Absolute;
+
 use crate::{
     cache::TargetOutdatednessCache,
     eval::{Used, UsedVariable},
@@ -13,9 +15,9 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Reason {
     /// The output file of a recipe does not exist.
-    Missing(werk_fs::PathBuf),
+    Missing(Absolute<werk_fs::PathBuf>),
     /// A source file was newer than its output.
-    Modified(werk_fs::PathBuf, std::time::SystemTime),
+    Modified(Absolute<werk_fs::PathBuf>, std::time::SystemTime),
     /// The result of a glob operation changed between runs.
     Glob(String),
     /// The value of a used environment variable changed between runs.
@@ -234,8 +236,7 @@ impl<'a> OutdatednessTracker<'a> {
                 UsedVariable::WorkspaceFile(path, mtime) => {
                     if let Some(target_mtime) = self.target_mtime {
                         if mtime > target_mtime {
-                            self.outdatedness
-                                .insert(Reason::Modified(path.into_inner(), mtime));
+                            self.outdatedness.insert(Reason::Modified(path, mtime));
                         }
                     }
                 }
@@ -243,7 +244,7 @@ impl<'a> OutdatednessTracker<'a> {
         }
     }
 
-    pub fn target_does_not_exist(&mut self, target: werk_fs::PathBuf) {
+    pub fn target_does_not_exist(&mut self, target: Absolute<werk_fs::PathBuf>) {
         self.outdatedness.insert(Reason::Missing(target));
     }
 

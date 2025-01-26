@@ -187,8 +187,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    use werk_fs::{Absolute, PathBuf};
-
     use super::*;
 
     #[test]
@@ -197,9 +195,7 @@ mod tests {
         progress.set_progress(0, 1);
 
         let one_task = [(
-            &TaskId::build(Absolute::new_unchecked(PathBuf::new_unchecked(
-                String::from("/target_name.o"),
-            ))),
+            &TaskId::try_build("/target_name.o").unwrap(),
             &TaskStatus {
                 progress: 0,
                 num_steps: 1,
@@ -258,9 +254,7 @@ mod tests {
 
         let two = [
             (
-                &TaskId::build(Absolute::new_unchecked(PathBuf::new_unchecked(
-                    String::from("/target1.o"),
-                ))),
+                &TaskId::try_build("/target1.o").unwrap(),
                 &TaskStatus {
                     progress: 0,
                     num_steps: 1,
@@ -268,9 +262,7 @@ mod tests {
                 },
             ),
             (
-                &TaskId::build(Absolute::new_unchecked(PathBuf::new_unchecked(
-                    String::from("/target2.o"),
-                ))),
+                &TaskId::try_build("/target2.o").unwrap(),
                 &TaskStatus {
                     progress: 0,
                     num_steps: 1,

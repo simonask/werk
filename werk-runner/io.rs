@@ -5,7 +5,7 @@ use std::{
 
 pub use ignore::WalkState;
 use parking_lot::Mutex;
-use werk_fs::Absolute;
+use werk_fs::{traits::Normalize, Absolute};
 
 use crate::{Env, Error, GlobSettings, ShellCommandLine};
 
@@ -97,7 +97,7 @@ impl TryFrom<ignore::DirEntry> for DirEntry {
 
         // `ignore` claims that this is always true.
         assert!(path.is_absolute());
-        let path = Absolute::new_unchecked(path);
+        let path = path.normalize()?;
 
         Ok(DirEntry { path, metadata })
     }
@@ -112,7 +112,7 @@ impl TryFrom<std::fs::DirEntry> for DirEntry {
         let path = entry.path();
 
         assert!(path.is_absolute());
-        let path = Absolute::new_unchecked(path);
+        let path = path.normalize()?;
 
         Ok(DirEntry { path, metadata })
     }
@@ -164,7 +164,7 @@ impl Io for RealSystem {
         env: &Env,
         forward_stdout: bool,
     ) -> Result<Box<dyn Child>, std::io::Error> {
-        let mut command = smol::process::Command::new(&*command_line.program);
+        let mut command = smol::process::Command::new(&command_line.program);
         command
             .args(
                 command_line
@@ -226,7 +226,9 @@ impl Io for RealSystem {
     }
 
     fn which(&self, program: &str) -> Result<Absolute<PathBuf>, which::Error> {
-        which::which(program).map(Absolute::new_unchecked)
+        let path = which::which(program)?;
+        let normalized = path.normalize().expect("could not normalize program path");
+        Ok(normalized)
     }
 
     fn glob_workspace(

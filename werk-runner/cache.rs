@@ -1,10 +1,12 @@
 use std::collections::BTreeMap;
 
+use werk_fs::Absolute;
+
 /// The contents of `.werk-cache`.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct WerkCache {
     /// Per-build-target caches.
-    pub build: BTreeMap<werk_fs::PathBuf, TargetOutdatednessCache>,
+    pub build: BTreeMap<Absolute<werk_fs::PathBuf>, TargetOutdatednessCache>,
 }
 
 /// Per-target cache of used outdatedness information.

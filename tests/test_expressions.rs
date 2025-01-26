@@ -273,7 +273,8 @@ fn evaluate_global(source: &str, global_variable_name_to_check: &str) -> Value {
         .map_err(|err| anyhow::Error::msg(err.with_location(path, source).to_string()))
         .unwrap();
     let render = Arc::new(MockRender::default());
-    let io = Arc::new(MockIo::default().with_default_workspace_dir());
+    let io = Arc::new(MockIo::default());
+    io.with_default_workspace_dir();
     let workspace = werk_runner::Workspace::new(
         &ast,
         &*io,
