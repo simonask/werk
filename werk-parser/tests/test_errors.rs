@@ -9,6 +9,10 @@ fn strip_colors(s: &str) -> String {
     String::from_utf8(buf).unwrap()
 }
 
+fn fix_newlines(s: &str) -> String {
+    s.replace('\r', "")
+}
+
 macro_rules! error_case {
     ($t:ident) => {
         #[test]
@@ -39,9 +43,10 @@ macro_rules! error_case {
             }
             .to_string();
 
-            let rendered_stripped = strip_colors(&rendered);
+            let rendered_stripped = fix_newlines(&strip_colors(&rendered));
+            let expected_lf = fix_newlines(&expected);
 
-            if rendered_stripped.trim() != expected.trim() {
+            if rendered_stripped.trim() != expected_lf.trim() {
                 eprintln!("Error message mismatch!");
                 eprintln!("Got:\n{rendered}\n");
                 eprintln!("Expected:\n{expected}");
@@ -53,3 +58,4 @@ macro_rules! error_case {
 
 error_case!(let_no_ident);
 error_case!(let_no_eq);
+error_case!(invalid_escape);

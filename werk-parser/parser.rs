@@ -271,6 +271,7 @@ fn task_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::CommandRecipe<'a>> {
         body: body(task_recipe_stmt),
     }}
     .with_token_span()
+    .while_parsing("task recipe")
     .parse_next(input)?;
     recipe.span = span;
     Ok(recipe)
@@ -307,6 +308,7 @@ fn build_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::BuildRecipe<'a>> {
         body: body(build_recipe_stmt),
     }}
     .with_token_span()
+    .while_parsing("build recipe")
     .parse_next(input)?;
     recipe.span = span;
     Ok(recipe)
@@ -700,7 +702,7 @@ fn escaped_char(input: &mut Input) -> PResult<char> {
         'r' => empty.value('\r'),
         't' => empty.value('\t'),
         '0' => empty.value('\0'),
-        otherwise => fatal(Failure::InvalidEscapeChar(otherwise)),
+        otherwise => fatal(Failure::InvalidEscapeChar(otherwise)).error_context("invalid escape sequence"),
     };
 
     preceded('\\', escape_seq_char).parse_next(input)
