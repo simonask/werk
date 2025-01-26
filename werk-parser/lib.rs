@@ -1,3 +1,5 @@
+#![allow(clippy::cast_possible_truncation)]
+
 pub mod ast;
 mod document;
 mod error;

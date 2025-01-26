@@ -228,7 +228,9 @@ async fn try_main(args: Args) -> Result<(), Error> {
             toml_document = toml_edit::ImDocument::parse(&*source_code)
                 .map_err(Into::into)
                 .map_err(display_parse_error)?;
-            werk_parser::parse_toml_document(&toml_document).map_err(display_parse_error)?
+            werk_parser::parse_toml_document(&toml_document)
+                .map_err(Into::into)
+                .map_err(display_parse_error)?
         }
     };
 
@@ -419,7 +421,7 @@ async fn autowatch_loop(
                         continue;
                     }
                 };
-                werk_parser::parse_toml_document(&toml_document)
+                werk_parser::parse_toml_document(&toml_document).map_err(Into::into)
             }
         };
 

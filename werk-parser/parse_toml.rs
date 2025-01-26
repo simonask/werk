@@ -2,15 +2,13 @@ use crate::{
     ast::{self, kw_ignore, token_ignore, ws_ignore},
     parse_string,
     parser::{Span, Spanned as _, SpannedValue},
-    Error, LocatedError,
+    TomlError,
 };
 
 pub fn parse_toml<'a>(
-    file_name: &'a std::path::Path,
-    source: &'a str,
     document: &'a toml_edit::ImDocument<&'a str>,
-) -> Result<crate::Document<'a>, LocatedError<'a, Error>> {
-    parse_toml_document(document).map_err(|error| error.with_location(file_name, source))
+) -> Result<crate::Document<'a>, TomlError> {
+    parse_toml_document(document)
 }
 
 #[derive(Default)]
@@ -30,7 +28,7 @@ impl SmuggledWhitespace {
 
 pub fn parse_toml_document<'a>(
     toml: &'a toml_edit::ImDocument<&'a str>,
-) -> Result<crate::Document<'a>, Error> {
+) -> Result<crate::Document<'a>, TomlError> {
     let mut smuggled_whitespace = SmuggledWhitespace::default();
 
     let root = toml.as_table();
@@ -42,11 +40,11 @@ pub fn parse_toml_document<'a>(
 
         match key {
             "config" => {
-                let config_table = value.as_table().ok_or_else(|| Error::ExpectedTable(span))?;
+                let config_table = value.as_table().ok_or(TomlError::ExpectedTable(span))?;
                 parse_config_table(config_table, &mut statements, &mut smuggled_whitespace)?;
             }
             "global" => {
-                let global_table = value.as_table().ok_or_else(|| Error::ExpectedTable(span))?;
+                let global_table = value.as_table().ok_or(TomlError::ExpectedTable(span))?;
                 for (key, value) in global_table {
                     let key_span = global_table
                         .key(key)
@@ -72,7 +70,7 @@ pub fn parse_toml_document<'a>(
                 }
             }
             "command" => {
-                let command = value.as_table().ok_or_else(|| Error::ExpectedTable(span))?;
+                let command = value.as_table().ok_or(TomlError::ExpectedTable(span))?;
                 for (key, value) in command {
                     let key_span = command
                         .key(key)
@@ -89,7 +87,7 @@ pub fn parse_toml_document<'a>(
                 }
             }
             "build" => {
-                let out = value.as_table().ok_or_else(|| Error::ExpectedTable(span))?;
+                let out = value.as_table().ok_or(TomlError::ExpectedTable(span))?;
                 for (key, value) in out {
                     let key_span = out
                         .key(key)
@@ -110,7 +108,7 @@ pub fn parse_toml_document<'a>(
                     .key(key)
                     .and_then(toml_edit::Key::span)
                     .unwrap_or_default();
-                return Err(Error::InvalidKey(span.into()));
+                return Err(TomlError::InvalidKey(span.into()));
             }
         }
     }
@@ -129,19 +127,19 @@ fn parse_config_table<'a>(
     table: &'a toml_edit::Table,
     config: &mut Vec<ast::BodyStmt<ast::RootStmt<'a>>>,
     smuggled_whitespace: &mut SmuggledWhitespace,
-) -> Result<(), Error> {
+) -> Result<(), TomlError> {
     for (key, item) in table {
         let span = item.span().unwrap_or_default().into();
         let value = match key {
             "out-dir" | "edition" | "default" => {
                 let Some(value) = item.as_str() else {
-                    return Err(Error::ExpectedString(span));
+                    return Err(TomlError::ExpectedString(span));
                 };
                 ast::ConfigValue::String(ast::ConfigString(span, value.into()))
             }
             "print-commands" => {
                 let Some(value) = item.as_bool() else {
-                    return Err(Error::ExpectedString(span));
+                    return Err(TomlError::ExpectedString(span));
                 };
                 ast::ConfigValue::Bool(ast::ConfigBool(span, value))
             }
@@ -150,7 +148,7 @@ fn parse_config_table<'a>(
                     .key(key)
                     .and_then(toml_edit::Key::span)
                     .map_or(span, Into::into);
-                return Err(Error::UnknownConfigKey(span));
+                return Err(TomlError::UnknownConfigKey(span));
             }
         };
 
@@ -173,22 +171,22 @@ fn parse_config_table<'a>(
     Ok(())
 }
 
-fn parse_ident(span: Span, s: &str) -> Result<ast::Ident, Error> {
+fn parse_ident(span: Span, s: &str) -> Result<ast::Ident, TomlError> {
     parse_string::parse_ident(s)
         .map(|ident| ast::Ident { span, ident })
-        .map_err(|e| Error::InvalidIdent(span, e))
+        .map_err(|e| TomlError::InvalidIdent(span, e))
 }
 
-fn parse_string_expr(span: Span, s: &str) -> Result<ast::StringExpr, Error> {
+fn parse_string_expr(span: Span, s: &str) -> Result<ast::StringExpr, TomlError> {
     let mut expr =
-        parse_string::parse_string_expr(s).map_err(|e| Error::InvalidStringExpr(span, e))?;
+        parse_string::parse_string_expr(s).map_err(|e| TomlError::InvalidStringExpr(span, e))?;
     expr.span = span;
     Ok(expr)
 }
 
-fn parse_pattern_expr(span: Span, s: &str) -> Result<ast::PatternExpr, Error> {
+fn parse_pattern_expr(span: Span, s: &str) -> Result<ast::PatternExpr, TomlError> {
     let mut expr =
-        parse_string::parse_pattern_expr(s).map_err(|e| Error::InvalidPatternExpr(span, e))?;
+        parse_string::parse_pattern_expr(s).map_err(|e| TomlError::InvalidPatternExpr(span, e))?;
     expr.span = span;
     Ok(expr)
 }
@@ -275,7 +273,7 @@ impl std::fmt::Display for RunExprType {
 fn find_main_expr_type<T: toml_edit::TableLike + ?Sized>(
     span: Span,
     table: &T,
-) -> Result<(SpannedValue<ExprType>, &toml_edit::Item), Error> {
+) -> Result<(SpannedValue<ExprType>, &toml_edit::Item), TomlError> {
     let mut found = None;
     let mut iter = table.iter();
     for (key, item) in iter.by_ref() {
@@ -287,13 +285,13 @@ fn find_main_expr_type<T: toml_edit::TableLike + ?Sized>(
     }
 
     let Some(found) = found else {
-        return Err(Error::ExpectedMainExpression(span));
+        return Err(TomlError::ExpectedMainExpression(span));
     };
 
     for (tail, _) in iter {
         if let Some(duplicate) = ExprType::from_str(tail) {
             let key_span = table.key(tail).and_then(toml_edit::Key::span);
-            return Err(Error::AmbiguousMainExpression(
+            return Err(TomlError::AmbiguousMainExpression(
                 found.0,
                 SpannedValue::new(key_span, duplicate),
             ));
@@ -306,7 +304,7 @@ fn find_main_expr_type<T: toml_edit::TableLike + ?Sized>(
 fn find_main_run_expr_type<T: toml_edit::TableLike + ?Sized>(
     span: Span,
     table: &T,
-) -> Result<(SpannedValue<RunExprType>, &toml_edit::Item), Error> {
+) -> Result<(SpannedValue<RunExprType>, &toml_edit::Item), TomlError> {
     let mut found = None;
     let mut iter = table.iter();
     for (key, item) in iter.by_ref() {
@@ -318,13 +316,13 @@ fn find_main_run_expr_type<T: toml_edit::TableLike + ?Sized>(
     }
 
     let Some(found) = found else {
-        return Err(Error::ExpectedMainExpression(span));
+        return Err(TomlError::ExpectedMainExpression(span));
     };
 
     for (tail, _) in iter {
         if let Some(duplicate) = RunExprType::from_str(tail) {
             let key_span = table.key(tail).and_then(toml_edit::Key::span);
-            return Err(Error::AmbiguousRunExpression(
+            return Err(TomlError::AmbiguousRunExpression(
                 found.0,
                 SpannedValue::new(key_span, duplicate),
             ));
@@ -338,7 +336,7 @@ fn find_main_run_expr_type<T: toml_edit::TableLike + ?Sized>(
 fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
     span: Span,
     table: &T,
-) -> Result<ast::Expr, Error> {
+) -> Result<ast::Expr, TomlError> {
     let (expr_ty, item) = find_main_expr_type(span, table)?;
     let mut expr = match expr_ty.value {
         ExprType::String => parse_item_string_expr(item).map(ast::Expr::StringExpr)?,
@@ -411,7 +409,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
             }),
             "match" => {
                 let Some(table) = item.as_table_like() else {
-                    return Err(Error::ExpectedTable(span));
+                    return Err(TomlError::ExpectedTable(span));
                 };
 
                 let mut arms = Vec::with_capacity(table.len());
@@ -483,7 +481,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
             }
             "patsubst" => {
                 let Some(table) = item.as_table_like() else {
-                    return Err(Error::ExpectedTable(span));
+                    return Err(TomlError::ExpectedTable(span));
                 };
 
                 let mut pattern = None;
@@ -494,7 +492,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                         "pattern" => pattern = Some(parse_item_pattern_expr(item)?),
                         "replacement" => replacement = Some(parse_item_string_expr(item)?),
                         _ => {
-                            return Err(Error::InvalidKey(
+                            return Err(TomlError::InvalidKey(
                                 table.key(key).and_then(toml_edit::Key::span).into(),
                             ))
                         }
@@ -502,10 +500,10 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                 }
 
                 let Some(pattern) = pattern else {
-                    return Err(Error::ExpectedKey(span, &"pattern"));
+                    return Err(TomlError::ExpectedKey(span, &"pattern"));
                 };
                 let Some(replacement) = replacement else {
-                    return Err(Error::ExpectedKey(span, &"replacement"));
+                    return Err(TomlError::ExpectedKey(span, &"replacement"));
                 };
 
                 ast::ExprOp::Match(ast::MatchExpr {
@@ -532,7 +530,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                 })
             }
             _ => {
-                return Err(Error::UnknownExpressionChain(
+                return Err(TomlError::UnknownExpressionChain(
                     table.key(key).and_then(toml_edit::Key::span).into(),
                 ))
             }
@@ -564,7 +562,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
     Ok(expr)
 }
 
-fn parse_value_expr(toml: &toml_edit::Value) -> Result<ast::Expr, Error> {
+fn parse_value_expr(toml: &toml_edit::Value) -> Result<ast::Expr, TomlError> {
     let span = toml.span().unwrap_or_default().into();
     match toml {
         toml_edit::Value::String(formatted) => {
@@ -573,7 +571,7 @@ fn parse_value_expr(toml: &toml_edit::Value) -> Result<ast::Expr, Error> {
         toml_edit::Value::Integer(_)
         | toml_edit::Value::Float(_)
         | toml_edit::Value::Boolean(_)
-        | toml_edit::Value::Datetime(_) => Err(Error::ExpectedStringOrTable(span)),
+        | toml_edit::Value::Datetime(_) => Err(TomlError::ExpectedStringOrTable(span)),
         toml_edit::Value::Array(array) => {
             let mut items = Vec::with_capacity(array.len());
             for value in array {
@@ -596,9 +594,9 @@ fn parse_value_expr(toml: &toml_edit::Value) -> Result<ast::Expr, Error> {
     }
 }
 
-fn parse_item_expr(toml: &toml_edit::Item) -> Result<ast::Expr, Error> {
+fn parse_item_expr(toml: &toml_edit::Item) -> Result<ast::Expr, TomlError> {
     match toml {
-        toml_edit::Item::None => Err(Error::ExpectedString(toml.span().into())),
+        toml_edit::Item::None => Err(TomlError::ExpectedString(toml.span().into())),
         toml_edit::Item::Value(value) => parse_value_expr(value),
         toml_edit::Item::Table(table) => {
             parse_table_expr(table.span().unwrap_or_default().into(), table)
@@ -636,13 +634,13 @@ fn get_item_decor(toml: &toml_edit::Item) -> &str {
     prefix.and_then(|decor| decor.as_str()).unwrap_or_default()
 }
 
-fn parse_commented_item_expr(toml: &toml_edit::Item) -> Result<(&str, ast::Expr<'_>), Error> {
+fn parse_commented_item_expr(toml: &toml_edit::Item) -> Result<(&str, ast::Expr<'_>), TomlError> {
     let pre = get_item_decor(toml);
     let expr = parse_item_expr(toml)?;
     Ok((pre, expr))
 }
 
-fn parse_item_run_expr(toml: &toml_edit::Item) -> Result<Vec<ast::RunExpr<'_>>, Error> {
+fn parse_item_run_expr(toml: &toml_edit::Item) -> Result<Vec<ast::RunExpr<'_>>, TomlError> {
     let mut vec = Vec::new();
     parse_item_run_exprs_into(toml, &mut vec)?;
     Ok(vec)
@@ -651,7 +649,7 @@ fn parse_item_run_expr(toml: &toml_edit::Item) -> Result<Vec<ast::RunExpr<'_>>, 
 fn parse_item_run_exprs_into<'a>(
     toml: &'a toml_edit::Item,
     exprs: &mut Vec<ast::RunExpr<'a>>,
-) -> Result<(), Error> {
+) -> Result<(), TomlError> {
     match toml {
         toml_edit::Item::None => Ok(()),
         toml_edit::Item::Value(value) => parse_value_run_exprs_into(value, exprs),
@@ -676,7 +674,7 @@ fn parse_item_run_exprs_into<'a>(
 fn parse_value_run_exprs_into<'a>(
     value: &'a toml_edit::Value,
     exprs: &mut Vec<ast::RunExpr<'a>>,
-) -> Result<(), Error> {
+) -> Result<(), TomlError> {
     let span = value.span().unwrap_or_default().into();
 
     match value {
@@ -693,7 +691,7 @@ fn parse_value_run_exprs_into<'a>(
         toml_edit::Value::Integer(_)
         | toml_edit::Value::Float(_)
         | toml_edit::Value::Boolean(_)
-        | toml_edit::Value::Datetime(_) => Err(Error::ExpectedStringOrArray(span)),
+        | toml_edit::Value::Datetime(_) => Err(TomlError::ExpectedStringOrArray(span)),
         toml_edit::Value::Array(array) => {
             for element in array {
                 parse_value_run_exprs_into(element, exprs)?;
@@ -710,7 +708,7 @@ fn parse_value_run_exprs_into<'a>(
 fn parse_table_run_expr<T: toml_edit::TableLike>(
     span: Span,
     table: &T,
-) -> Result<ast::RunExpr<'_>, Error> {
+) -> Result<ast::RunExpr<'_>, TomlError> {
     let (run_expr_ty, item) = find_main_run_expr_type(span, table)?;
     match run_expr_ty.value {
         RunExprType::Shell => {
@@ -739,7 +737,7 @@ fn parse_table_run_expr<T: toml_edit::TableLike>(
                     value: data,
                 }))
             } else {
-                Err(Error::ExpectedKey(span, &"data"))
+                Err(TomlError::ExpectedKey(span, &"data"))
             }
         }
         RunExprType::Copy => {
@@ -757,7 +755,7 @@ fn parse_table_run_expr<T: toml_edit::TableLike>(
                     dest: to,
                 }))
             } else {
-                Err(Error::ExpectedKey(span, &"to"))
+                Err(TomlError::ExpectedKey(span, &"to"))
             }
         }
         RunExprType::Echo => {
@@ -772,19 +770,19 @@ fn parse_table_run_expr<T: toml_edit::TableLike>(
     }
 }
 
-fn parse_item_string_expr(toml: &toml_edit::Item) -> Result<ast::StringExpr<'_>, Error> {
+fn parse_item_string_expr(toml: &toml_edit::Item) -> Result<ast::StringExpr<'_>, TomlError> {
     let span = toml.span().into();
     match toml {
         toml_edit::Item::Value(toml_edit::Value::String(s)) => parse_string_expr(span, s.value()),
-        _ => Err(Error::ExpectedString(span)),
+        _ => Err(TomlError::ExpectedString(span)),
     }
 }
 
-fn parse_item_pattern_expr(toml: &toml_edit::Item) -> Result<ast::PatternExpr<'_>, Error> {
+fn parse_item_pattern_expr(toml: &toml_edit::Item) -> Result<ast::PatternExpr<'_>, TomlError> {
     let span = toml.span().unwrap_or_default().into();
     match toml {
         toml_edit::Item::Value(toml_edit::Value::String(s)) => parse_pattern_expr(span, s.value()),
-        _ => Err(Error::ExpectedString(span)),
+        _ => Err(TomlError::ExpectedString(span)),
     }
 }
 
@@ -792,11 +790,11 @@ fn parse_item_pattern_expr(toml: &toml_edit::Item) -> Result<ast::PatternExpr<'_
 fn parse_command_recipe<'a>(
     name: ast::Ident<'a>,
     toml: &'a toml_edit::Item,
-) -> Result<(&'a str, ast::CommandRecipe<'a>), Error> {
+) -> Result<(&'a str, ast::CommandRecipe<'a>), TomlError> {
     let span = toml.span().unwrap_or_default().into();
 
     let Some(table) = toml.as_table_like() else {
-        return Err(Error::ExpectedTable(span));
+        return Err(TomlError::ExpectedTable(span));
     };
 
     let decor_pre = get_item_decor(toml);
@@ -817,25 +815,25 @@ fn parse_command_recipe<'a>(
             }
             "pre-message" => {
                 let Some(value) = value.as_str() else {
-                    return Err(Error::ExpectedString(span));
+                    return Err(TomlError::ExpectedString(span));
                 };
                 pre_message = Some(parse_string_expr(span, value)?);
             }
             "post-message" => {
                 let Some(value) = value.as_str() else {
-                    return Err(Error::ExpectedString(span));
+                    return Err(TomlError::ExpectedString(span));
                 };
                 post_message = Some(parse_string_expr(span, value)?);
             }
             "capture" => {
                 let Some(value) = value.as_bool() else {
-                    return Err(Error::ExpectedBool(span));
+                    return Err(TomlError::ExpectedBool(span));
                 };
                 capture = Some(value);
             }
             _ => {
                 let key_span = table.key(key).and_then(toml_edit::Key::span);
-                return Err(Error::InvalidKey(key_span.into()));
+                return Err(TomlError::InvalidKey(key_span.into()));
             }
         }
     }
@@ -926,9 +924,9 @@ fn parse_command_recipe<'a>(
 fn parse_build_recipe<'a>(
     pattern: ast::PatternExpr<'a>,
     toml: &'a toml_edit::Item,
-) -> Result<(&'a str, ast::BuildRecipe<'a>), Error> {
+) -> Result<(&'a str, ast::BuildRecipe<'a>), TomlError> {
     let Some(table) = toml.as_table_like() else {
-        return Err(Error::ExpectedTable(
+        return Err(TomlError::ExpectedTable(
             toml.span().map(Into::into).unwrap_or_default(),
         ));
     };
@@ -953,14 +951,14 @@ fn parse_build_recipe<'a>(
             "pre-message" => {
                 let span = value.span().unwrap_or_default().into();
                 let Some(value) = value.as_str() else {
-                    return Err(Error::ExpectedString(span));
+                    return Err(TomlError::ExpectedString(span));
                 };
                 pre_message = Some(parse_string_expr(span, value)?);
             }
             "post-message" => {
                 let span = value.span().unwrap_or_default().into();
                 let Some(value) = value.as_str() else {
-                    return Err(Error::ExpectedString(span));
+                    return Err(TomlError::ExpectedString(span));
                 };
                 post_message = Some(parse_string_expr(span, value)?);
             }
@@ -969,7 +967,7 @@ fn parse_build_recipe<'a>(
             }
             _ => {
                 let key_span = table.key(key).and_then(toml_edit::Key::span).into();
-                return Err(Error::InvalidKey(key_span));
+                return Err(TomlError::InvalidKey(key_span));
             }
         }
     }

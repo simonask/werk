@@ -88,10 +88,7 @@ impl<'a> TestBuilder<'a> {
     pub fn build(&self) -> Result<Test<'a>, werk_parser::Error> {
         let ast = match self.werkfile {
             Some(TestSource::Werk(source)) => Some(werk_parser::parse_werk(source)?),
-            Some(TestSource::Toml(toml)) => Some(
-                werk_parser::parse_toml(std::path::Path::new("werk.toml"), toml.raw(), toml)
-                    .map_err(|err| err.error)?,
-            ),
+            Some(TestSource::Toml(toml)) => Some(werk_parser::parse_toml(toml)?),
             None => None,
         };
 
@@ -150,10 +147,7 @@ impl<'a> Test<'a> {
     ) -> Result<(), werk_parser::Error> {
         self.ast = match werkfile.into() {
             TestSource::Werk(source) => Some(werk_parser::parse_werk(source)?),
-            TestSource::Toml(toml) => Some(
-                werk_parser::parse_toml(std::path::Path::new("werk.toml"), toml.raw(), toml)
-                    .map_err(|err| err.error)?,
-            ),
+            TestSource::Toml(toml) => Some(werk_parser::parse_toml(toml)?),
         };
         Ok(())
     }

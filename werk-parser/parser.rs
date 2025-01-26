@@ -3,21 +3,22 @@ use std::marker::PhantomData;
 use winnow::{
     ascii::{line_ending, multispace1, till_line_ending},
     combinator::{
-        alt, cut_err, delimited, empty, eof, fail, opt, peek, preceded, repeat, seq, terminated,
+        alt, cut_err, delimited, empty, eof, opt, peek, preceded, repeat, seq, terminated,
     },
     error::ErrMode,
-    stream::Stream as _,
+    stream::{Location as _, Stream as _},
     token::{any, none_of, one_of, take_till, take_while},
     Parser,
 };
 
 use crate::{
     ast::{self, token, ws_ignore},
+    fatal,
     parse_string::{
         path_interpolation, pattern_one_of, push_pattern_fragment, push_string_fragment,
         string_interpolation, StringFragment,
     },
-    ErrContext, Expected, ParseError,
+    ErrContext, Failure, ParseError,
 };
 
 mod span;
@@ -29,9 +30,9 @@ pub type PError = crate::error::ParseError;
 pub type PResult<T> = winnow::PResult<T, PError>;
 
 pub fn parse_werk(source_code: &str) -> Result<crate::Document<'_>, crate::Error> {
-    let root = root.parse(Input::new(source_code)).map_err(|err| {
-        crate::Error::Werk(Span::from(err.offset()..err.offset()), err.into_inner())
-    })?;
+    let root = root
+        .parse(Input::new(source_code))
+        .map_err(|err| crate::Error::Werk(err.into_inner()))?;
     Ok(crate::Document::new(root, source_code, None))
 }
 
@@ -91,7 +92,7 @@ where
             }
 
             if !has_separator {
-                return Err(ErrMode::Cut(ParseError::new(Expected::Expected(&"semicolon or newline before next statement"))));
+                return Err(ErrMode::Cut(ParseError::new(Offset(input.location() as u32),Failure::Expected(&"semicolon or newline before next statement"))));
             }
 
             let item = parse_next.parse_next(input)?;
@@ -148,7 +149,7 @@ fn root_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::RootStmt<'a>> {
         let_stmt.map(ast::RootStmt::Let),
         task_recipe.map(ast::RootStmt::Task),
         build_recipe.map(ast::RootStmt::Build),
-        cut_err(fail).context(Expected::Expected(
+        fatal(Failure::Expected(
             &"`config`, `let`, `task`, or `build` statement",
         )),
     ))
@@ -160,54 +161,59 @@ fn config_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::ConfigStmt<'a>> {
         span: default,
         token_config: keyword::<token::Config>,
         ws_1: whitespace,
-        ident: cut_err(identifier.context(Expected::Expected(
-            &"`config` must be followed by an identifier",
-        ))),
+        ident: cut_err(identifier).help("`config` must be followed by an identifier"),
         ws_2: whitespace,
-        token_eq: cut_err(token),
+        token_eq: cut_err(token).help("`config` statements look like this: config ident = ..."),
         ws_3: whitespace,
         value: cut_err(config_value),
     }}
     .with_token_span()
+    .while_parsing("`config` statement")
     .parse_next(input)?;
     config.span = span;
+
+    let value_start = config.value.span().start;
 
     match config.ident.ident {
         "print-commands" => {
             if !matches!(config.value, ast::ConfigValue::Bool(_)) {
-                return Err(ErrMode::Cut(
-                    Expected::Expected(&"boolean value for `print-commands`").into(),
-                ));
+                return Err(ErrMode::Cut(ParseError::new(
+                    value_start,
+                    Failure::Expected(&"boolean value for `print-commands`"),
+                )));
             }
         }
         "edition" => {
             if !matches!(config.value, ast::ConfigValue::String(_)) {
-                return Err(ErrMode::Cut(
-                    Expected::Expected(&"string literal for `edition`").into(),
-                ));
+                return Err(ErrMode::Cut(ParseError::new(
+                    value_start,
+                    Failure::Expected(&"string literal for `edition`"),
+                )));
             }
         }
         "out-dir" | "output-directory" => {
             if !matches!(config.value, ast::ConfigValue::String(_)) {
-                return Err(ErrMode::Cut(
-                    Expected::Expected(&"string literal for `out-dir`").into(),
-                ));
+                return Err(ErrMode::Cut(ParseError::new(
+                    value_start,
+                    Failure::Expected(&"string literal for `out-dir`"),
+                )));
             }
         }
         "default" | "default-target" => {
             if !matches!(config.value, ast::ConfigValue::String(_)) {
-                return Err(ErrMode::Cut(
-                    Expected::Expected(&"string literal for `default`").into(),
-                ));
+                return Err(ErrMode::Cut(ParseError::new(
+                    value_start,
+                    Failure::Expected(&"string literal for `default`"),
+                )));
             }
         }
         _ => {
-            return Err(ErrMode::Cut(
-                Expected::Expected(
+            return Err(ErrMode::Cut(ParseError::new(
+                config.ident.span.start,
+                Failure::Expected(
                     &"config key, one of `out-dir`, `edition`, `print-commands`, or `default`",
-                )
-                .into(),
-            ))
+                ),
+            )))
         }
     }
 
@@ -231,7 +237,7 @@ fn config_value<'a>(input: &mut Input<'a>) -> PResult<ast::ConfigValue<'a>> {
             .with_token_span()
             .map(|(string, span)| ast::ConfigValue::String(ast::ConfigString(span, string.into()))),
     ))
-    .context(Expected::Expected(&"string literal or boolean value"))
+    .expect(&"string literal or boolean value")
     .parse_next(input)
 }
 
@@ -247,7 +253,7 @@ fn task_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::CommandRecipe<'a>> {
             warn_expr.map(ast::TaskRecipeStmt::Warn),
             kw_expr(config_bool).map(ast::TaskRecipeStmt::SetCapture),
             kw_expr(config_bool).map(ast::TaskRecipeStmt::SetNoCapture),
-            fail.context(Expected::Expected(
+            fatal(Failure::Expected(
                 &"`let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
             )),
         ))
@@ -258,9 +264,9 @@ fn task_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::CommandRecipe<'a>> {
         span: default,
         token_task: keyword::<token::Task>,
         ws_1: whitespace,
-        name: cut_err(identifier.context(Expected::Expected(
-            &"`task` must be followed by an identifier",
-        ))),
+        name: cut_err(identifier).help(
+            "`task` must be followed by an identifier",
+        ),
         ws_2: whitespace,
         body: body(task_recipe_stmt),
     }}
@@ -283,7 +289,7 @@ fn build_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::BuildRecipe<'a>> {
             warn_expr.map(ast::BuildRecipeStmt::Warn),
             kw_expr(config_bool).map(ast::BuildRecipeStmt::SetCapture),
             kw_expr(config_bool).map(ast::BuildRecipeStmt::SetNoCapture),
-            cut_err(fail).context(Expected::Expected(
+            fatal(Failure::Expected(
                 &"`let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
             )),
         ))
@@ -294,9 +300,9 @@ fn build_recipe<'a>(input: &mut Input<'a>) -> PResult<ast::BuildRecipe<'a>> {
         span: default,
         token_build: keyword::<token::Build>,
         ws_1: whitespace,
-        pattern: cut_err(pattern_expr.context(Expected::Expected(
-            &"`build` must be followed by a string literal",
-        ))),
+        pattern: cut_err(pattern_expr).error_context(
+            "`build` must be followed by a pattern literal",
+        ),
         ws_2: whitespace,
         body: body(build_recipe_stmt),
     }}
@@ -310,15 +316,14 @@ fn let_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::LetStmt<'a>> {
     fn let_stmt_inner<'a>(input: &mut Input<'a>) -> PResult<ast::LetStmt<'a>> {
         let (token_let, ws_1, ident, ws_2, token_eq, ws_3, value) = seq! {(
             keyword::<token::Let>,
-            cut_err(whitespace_nonempty).context(Expected::Expected(&"whitespace after `let`")),
-            cut_err(identifier.context(Expected::Expected(
-                &"`let` must be followed by an identifier",
-            ))),
+            cut_err(whitespace_nonempty).expect(&"whitespace after `let`"),
+            cut_err(identifier).error_context("`let` must be followed by an identifier"),
             whitespace,
-            cut_err(token), // `=`
+            cut_err(token).error_context("`let <identifier>` must be followed by a `=`"),
             whitespace,
             cut_err(expression_chain),
         )}
+        .while_parsing("`let` statement")
         .parse_next(input)?;
 
         Ok(ast::LetStmt {
@@ -342,15 +347,14 @@ fn env_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::EnvStmt<'a>> {
     fn env_stmt_inner<'a>(input: &mut Input<'a>) -> PResult<ast::EnvStmt<'a>> {
         let (token, ws_1, key, ws_2, token_eq, ws_3, value) = seq! {(
             keyword::<token::Env>,
-            cut_err(whitespace_nonempty).context(Expected::Expected(&"whitespace after `env`")),
-            cut_err(string_expr.context(Expected::Expected(
-                &"`env` must be followed by a string",
-            ))),
+            cut_err(whitespace_nonempty).expect(&"whitespace after `env`"),
+            cut_err(string_expr).error_context("`env` must be followed by a string"),
             whitespace,
             cut_err(token), // `=`
             whitespace,
             cut_err(string_expr),
         )}
+        .while_parsing("`env` statement")
         .parse_next(input)?;
 
         Ok(ast::EnvStmt {
@@ -381,7 +385,7 @@ where
     PParser: Parser<Input<'a>, P, PError>,
 {
     (keyword::<T>, whitespace_nonempty, cut_err(param))
-        .context(ErrContext::KwExpr(T::TOKEN))
+        .while_parsing(T::TOKEN)
         .with_token_span()
         .map(|((token, ws_1, value), span)| ast::KwExpr {
             span,
@@ -461,7 +465,8 @@ fn expression_head<'a>(input: &mut Input<'a>) -> PResult<ast::Expr<'a>> {
         kw_expr(string_expr).map(ast::Expr::Env),
         kw_expr(string_expr).map(ast::Expr::Error),
         identifier.map(ast::Expr::Ident),
-        fail.context(Expected::Expected(&"expression start; expression chains must start with a value, or an `env`, `glob`, `which`, or `shell` operation"))
+        fatal(Failure::Expected(&"expression start"))
+            .help("expression chains must start with a value, or an `env`, `glob`, `which`, or `shell` operation")
     ))
     .parse_next(input)
 }
@@ -483,7 +488,8 @@ fn expression_chain_op<'a>(input: &mut Input<'a>) -> PResult<ast::ExprOp<'a>> {
         kw_expr(string_expr).map(ast::ExprOp::Error),
         kw_expr(expression_head.map(Box::new)).map(ast::ExprOp::AssertEq),
         kw_expr(pattern_expr.map(Box::new)).map(ast::ExprOp::AssertMatch),
-        fail.context(Expected::Expected(&"a chaining operation; one of `join`, `flatten`, `map`, `match`, `env`, `glob`, `which`, `shell`, or a string expression"))
+        fatal(Failure::Expected(&"a chaining operation"))
+            .help("one of `join`, `flatten`, `map`, `match`, `env`, `glob`, `which`, `shell`, or a string expression")
     ))
     .parse_next(input)
 }
@@ -508,7 +514,8 @@ fn run_expression<'a>(input: &mut Input<'a>) -> PResult<ast::RunExpr<'a>> {
         kw_expr(string_expr).map(ast::RunExpr::EnvRemove),
         env_stmt.map(ast::RunExpr::Env),
         body(run_expression).map(ast::RunExpr::Block),
-        fail.context(Expected::Expected(&"a run expression; one of `shell`, `info`, `warn`, `write`, `copy`, `delete`, `env`, `env-remove`, a string literal, a list, or a block"))
+        fatal(Failure::Expected(&"a run expression"))
+            .help("one of `shell`, `info`, `warn`, `write`, `copy`, `delete`, `env`, `env-remove`, a string literal, a list, or a block")
     ))
     .parse_next(input)
 }
@@ -585,20 +592,18 @@ fn match_body<'a>(input: &mut Input<'a>) -> PResult<ast::MatchBody<'a>> {
         ),
         match_arm_single.map(Box::new).map(ast::MatchBody::Single),
     ))
-    .context(Expected::Expected(
-        &"match body { ... } or a single match arm",
-    ))
+    .expect(&"match body { ... } or a single match arm")
     .parse_next(input)
 }
 
 fn string_expr<'a>(input: &mut Input<'a>) -> PResult<ast::StringExpr<'a>> {
     let (mut expr, span) = delimited(
-        '"'.context(Expected::Expected(&"string literal")),
+        '"'.expect(&"string literal"),
         string_expr_inside_quotes,
-        cut_err('"').context(Expected::ExpectedChar('"')),
+        '"'.or_cut(Failure::ExpectedChar('"')),
     )
     .with_token_span()
-    .context(Expected::Expected(&"string literal"))
+    .while_parsing("string literal")
     .parse_next(input)?;
     expr.span = span;
     Ok(expr)
@@ -606,11 +611,12 @@ fn string_expr<'a>(input: &mut Input<'a>) -> PResult<ast::StringExpr<'a>> {
 
 fn pattern_expr<'a>(input: &mut Input<'a>) -> PResult<ast::PatternExpr<'a>> {
     let (mut expr, span) = delimited(
-        '"'.context(Expected::Expected(&"pattern literal")),
+        '"'.expect(&"pattern literal"),
         pattern_expr_inside_quotes,
-        cut_err('"').context(Expected::ExpectedChar('"')),
+        '"'.or_cut(Failure::ExpectedChar('"')),
     )
     .with_token_span()
+    .while_parsing("pattern literal")
     .parse_next(input)?;
     expr.span = span;
     Ok(expr)
@@ -694,7 +700,7 @@ fn escaped_char(input: &mut Input) -> PResult<char> {
         'r' => empty.value('\r'),
         't' => empty.value('\t'),
         '0' => empty.value('\0'),
-        _ => fail.context(Expected::Expected(&"valid escape sequence")),
+        otherwise => fatal(Failure::InvalidEscapeChar(otherwise)),
     };
 
     preceded('\\', escape_seq_char).parse_next(input)
@@ -733,7 +739,10 @@ where
 
             if !has_separator {
                 input.reset(&end_of_last_item);
-                return Err(ErrMode::Cut(ParseError::new(Expected::ExpectedChar(','))));
+                return Err(ErrMode::Cut(ParseError::new(
+                    Offset(input.location() as u32),
+                    Failure::ExpectedChar(','),
+                )));
             }
 
             let item = parse_item.parse_next(input)?;
@@ -783,9 +792,9 @@ fn identifier<'a>(input: &mut Input<'a>) -> PResult<ast::Ident<'a>> {
             take_while(1, is_identifier_start),
             take_while(0.., is_identifier_continue),
         )
-            .context(Expected::Expected(&"identifier"))
             .take()
             .verify(|s| !KEYWORDS.contains(s))
+            .expect(&"identifier")
             .parse_next(input)
     }
 
@@ -800,7 +809,7 @@ fn keyword<T: ast::token::Keyword>(input: &mut Input) -> PResult<T> {
     ));
 
     terminated(T::TOKEN, peek(end_of_keyword))
-        .context(Expected::ExpectedKeyword(&T::TOKEN))
+        .or_backtrack(Failure::ExpectedKeyword(&T::TOKEN))
         .token_span()
         .map(T::with_span)
         .parse_next(input)
@@ -808,6 +817,7 @@ fn keyword<T: ast::token::Keyword>(input: &mut Input) -> PResult<T> {
 
 fn token<const CHAR: char>(input: &mut Input) -> PResult<ast::token::Token<CHAR>> {
     CHAR.token_span()
+        .or_backtrack(Failure::ExpectedChar(CHAR))
         .map(ast::token::Token::with_span)
         .parse_next(input)
 }
@@ -818,9 +828,9 @@ fn escaped_string<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
     }
 
     delimited(
-        '"'.context(Expected::Expected(&"string literal")),
+        '"'.expect(&"string literal"),
         repeat::<_, (), (), _, _>(0.., escaped_string_char).take(),
-        '"'.context(Expected::ExpectedChar('"')),
+        '"'.or_cut(Failure::ExpectedChar('"')),
     )
     .parse_next(input)
 }
@@ -874,7 +884,7 @@ fn whitespace_parsed(input: &mut Input) -> PResult<ParsedWhitespace> {
 fn whitespace_parsed_nonempty(input: &mut Input) -> PResult<ParsedWhitespace> {
     whitespace_parsed
         .verify(|ws| !ws.span.is_empty())
-        .context(Expected::Expected(&"whitespace"))
+        .expect(&"whitespace")
         .parse_next(input)
 }
 
@@ -907,33 +917,87 @@ impl ParsedWhitespace {
     }
 }
 
-pub(crate) trait TokenParserExt<'a, I, O, E>: winnow::Parser<I, O, E> {
-    fn with_token_span(self) -> SpannedTokenParser<Self, I, O, E>
+pub(crate) trait TokenParserExt<'a, O>: winnow::Parser<Input<'a>, O, ParseError> {
+    fn with_token_span(self) -> SpannedTokenParser<Self, O>
     where
         Self: Sized,
-        I: winnow::stream::Stream + winnow::stream::Location,
     {
         SpannedTokenParser(self, std::marker::PhantomData)
     }
 
-    fn token_span(self) -> TokenSpanParser<Self, I, O, E>
+    fn token_span(self) -> TokenSpanParser<Self, O>
     where
         Self: Sized,
-        I: winnow::stream::Stream + winnow::stream::Location,
     {
         TokenSpanParser(self, std::marker::PhantomData)
     }
+
+    fn while_parsing(self, thing: &'static str) -> WhileParsing<Self>
+    where
+        Self: Sized,
+    {
+        WhileParsing(self, thing)
+    }
+
+    fn or_cut(self, failure: Failure) -> OrCut<Self, O>
+    where
+        Self: Sized,
+    {
+        OrCut(self, Some(failure), PhantomData)
+    }
+
+    fn or_backtrack(self, failure: Failure) -> OrBacktrack<Self, O>
+    where
+        Self: Sized,
+    {
+        OrBacktrack(self, Some(failure), PhantomData)
+    }
+
+    fn expect(self, thing: &'static &'static str) -> OrBacktrack<Self, O>
+    where
+        Self: Sized,
+    {
+        self.or_backtrack(Failure::Expected(thing))
+    }
+
+    fn help(self, text: &'static str) -> Help<Self, O>
+    where
+        Self: Sized,
+    {
+        Help(self, text, PhantomData)
+    }
+
+    fn error_context(self, text: &'static str) -> AddErrorContext<Self, O>
+    where
+        Self: Sized,
+    {
+        AddErrorContext(self, text, PhantomData)
+    }
 }
 
-impl<I, O, E, T> TokenParserExt<'_, I, O, E> for T where T: winnow::Parser<I, O, E> {}
+impl<'a, O, T> TokenParserExt<'a, O> for T where T: winnow::Parser<Input<'a>, O, ParseError> {}
 
-pub(crate) struct SpannedTokenParser<P, I, O, E>(P, PhantomData<(I, O, E)>);
-impl<I, P, O, E> winnow::Parser<I, (O, Span), E> for SpannedTokenParser<P, I, O, E>
+pub(crate) struct WhileParsing<P>(P, &'static str);
+impl<'a, P, O> winnow::Parser<Input<'a>, O, ParseError> for WhileParsing<P>
 where
-    P: winnow::Parser<I, O, E>,
-    I: winnow::stream::Location,
+    P: winnow::Parser<Input<'a>, O, ParseError>,
 {
-    fn parse_next(&mut self, input: &mut I) -> winnow::PResult<(O, Span), E> {
+    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<O, ParseError> {
+        let offset = input.location();
+        let mut result = self.0.parse_next(input);
+        if let Err(ErrMode::Cut(ref mut err)) = result {
+            err.push(ErrContext::WhileParsing(Offset(offset as u32), self.1));
+        }
+        result
+    }
+}
+
+pub(crate) struct SpannedTokenParser<P, O>(P, PhantomData<O>);
+impl<'a, P, O> winnow::Parser<Input<'a>, (O, Span), ParseError> for SpannedTokenParser<P, O>
+where
+    P: winnow::Parser<Input<'a>, O, ParseError>,
+{
+    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<(O, Span), ParseError> {
         let start = input.location();
         self.0.parse_next(input).map(|value| {
             let end = input.location();
@@ -942,18 +1006,82 @@ where
     }
 }
 
-pub(crate) struct TokenSpanParser<P, I, O, E>(P, std::marker::PhantomData<(I, O, E)>);
-impl<I, P, O, E> winnow::Parser<I, Span, E> for TokenSpanParser<P, I, O, E>
+pub(crate) struct TokenSpanParser<P, O>(P, std::marker::PhantomData<O>);
+impl<'a, P, O> winnow::Parser<Input<'a>, Span, ParseError> for TokenSpanParser<P, O>
 where
-    P: winnow::Parser<I, O, E>,
-    I: winnow::stream::Location,
+    P: winnow::Parser<Input<'a>, O, ParseError>,
 {
-    fn parse_next(&mut self, input: &mut I) -> winnow::PResult<Span, E> {
+    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<Span, ParseError> {
         let start = input.location();
         self.0.parse_next(input).map(|_| {
             let end = input.location();
             Span::from(start..end)
         })
+    }
+}
+
+pub(crate) struct OrCut<P, O>(P, Option<Failure>, PhantomData<O>);
+impl<'a, P, O> winnow::Parser<Input<'a>, O, ParseError> for OrCut<P, O>
+where
+    P: winnow::Parser<Input<'a>, O, ParseError>,
+{
+    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<O, ParseError> {
+        let location = input.location();
+        let mut result = self.0.parse_next(input);
+        if let Err(ErrMode::Backtrack(_)) = result {
+            let err = self.1.take().expect("or_cut parser called twice");
+            result = Err(ErrMode::Cut(ParseError::new(Offset(location as u32), err)));
+        }
+        result
+    }
+}
+
+pub(crate) struct OrBacktrack<P, O>(P, Option<Failure>, PhantomData<O>);
+impl<'a, P, O> winnow::Parser<Input<'a>, O, ParseError> for OrBacktrack<P, O>
+where
+    P: winnow::Parser<Input<'a>, O, ParseError>,
+{
+    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<O, ParseError> {
+        let location = input.location();
+        let mut result = self.0.parse_next(input);
+        if let Err(ErrMode::Backtrack(_)) = result {
+            let err = self.1.take().expect("or_cut parser called twice");
+            result = Err(ErrMode::Backtrack(ParseError::new(
+                Offset(location as u32),
+                err,
+            )));
+        }
+        result
+    }
+}
+
+pub(crate) struct Help<P, O>(P, &'static str, PhantomData<O>);
+impl<'a, P, O> winnow::Parser<Input<'a>, O, ParseError> for Help<P, O>
+where
+    P: winnow::Parser<Input<'a>, O, ParseError>,
+{
+    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<O, ParseError> {
+        let offset = input.location();
+        let mut result = self.0.parse_next(input);
+        if let Err(ErrMode::Backtrack(ref mut err) | ErrMode::Cut(ref mut err)) = result {
+            err.push(ErrContext::Hint(Offset(offset as u32), self.1));
+        }
+        result
+    }
+}
+
+pub(crate) struct AddErrorContext<P, O>(P, &'static str, PhantomData<O>);
+impl<'a, P, O> winnow::Parser<Input<'a>, O, ParseError> for AddErrorContext<P, O>
+where
+    P: winnow::Parser<Input<'a>, O, ParseError>,
+{
+    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<O, ParseError> {
+        let offset = input.location();
+        let mut result = self.0.parse_next(input);
+        if let Err(ErrMode::Backtrack(ref mut err) | ErrMode::Cut(ref mut err)) = result {
+            err.push(ErrContext::Error(Offset(offset as u32), self.1));
+        }
+        result
     }
 }
 
