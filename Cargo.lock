@@ -1987,6 +1987,7 @@ dependencies = [
  "anstream",
  "indexmap",
  "regex",
+ "serde",
  "thiserror",
  "toml_edit",
  "unicode-ident",

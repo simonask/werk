@@ -40,10 +40,12 @@ pub fn token_ignore<const CHAR: char>() -> token::Token<CHAR> {
     token::Token::ignore()
 }
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct Root<'a> {
     pub statements: Vec<BodyStmt<RootStmt<'a>>>,
     /// Comment at the end of the document, not associated with any item.
+    #[serde(skip)]
     pub ws_trailing: Whitespace,
 }
 
@@ -71,7 +73,7 @@ impl Root<'_> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum RootStmt<'a> {
     Config(ConfigStmt<'a>),
     Let(LetStmt<'a>),
@@ -79,19 +81,25 @@ pub enum RootStmt<'a> {
     Build(BuildRecipe<'a>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ConfigStmt<'a> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub token_config: token::Config,
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub ident: Ident<'a>,
+    #[serde(skip, default)]
     pub ws_2: Whitespace,
+    #[serde(skip, default)]
     pub token_eq: token::Eq,
+    #[serde(skip, default)]
     pub ws_3: Whitespace,
     pub value: ConfigValue<'a>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ConfigValue<'a> {
     String(ConfigString<'a>),
     Bool(ConfigBool),
@@ -106,23 +114,27 @@ impl Spanned for ConfigValue<'_> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct ConfigString<'a>(pub Span, pub Cow<'a, str>);
+#[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct ConfigString<'a>(#[serde(skip, default)] pub Span, pub Cow<'a, str>);
 
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub struct ConfigBool(pub Span, pub bool);
+#[derive(Debug, PartialEq, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct ConfigBool(#[serde(skip, default)] pub Span, pub bool);
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct Ident<'a> {
+    #[serde(skip, default)]
     pub span: Span,
-    pub ident: &'a str,
+    pub ident: Cow<'a, str>,
 }
 
 impl<'a> Ident<'a> {
     pub fn new(span: impl Into<Span>, ident: &'a str) -> Self {
         Self {
             span: span.into(),
-            ident,
+            ident: ident.into(),
         }
     }
 }
@@ -136,7 +148,7 @@ impl std::fmt::Debug for Ident<'_> {
 impl std::fmt::Display for Ident<'_> {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.ident)
+        f.write_str(&self.ident)
     }
 }
 
@@ -168,12 +180,16 @@ pub enum MessageType {
 
 hash_is_semantic!(MessageType);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CommandRecipe<'a> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub token_task: token::Task,
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub name: Ident<'a>,
+    #[serde(skip, default)]
     pub ws_2: Whitespace,
     pub body: Body<TaskRecipeStmt<'a>>,
 }
@@ -185,13 +201,17 @@ impl SemanticHash for CommandRecipe<'_> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BuildRecipe<'a> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub token_build: token::Build,
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub pattern: PatternExpr<'a>,
     /// Comment between the pattern and the opening brace.
+    #[serde(skip, default)]
     pub ws_2: Whitespace,
     pub body: Body<BuildRecipeStmt<'a>>,
 }
@@ -204,12 +224,16 @@ impl SemanticHash for BuildRecipe<'_> {
 }
 
 /// A `{...}` block.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct Body<T> {
+    #[serde(skip, default)]
     pub token_open: token::BraceOpen,
     pub statements: Vec<BodyStmt<T>>,
     /// After the last statement.
+    #[serde(skip, default)]
     pub ws_trailing: Whitespace,
+    #[serde(skip, default)]
     pub token_close: token::BraceClose,
 }
 
@@ -225,10 +249,13 @@ impl<T: SemanticHash> SemanticHash for Body<T> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct BodyStmt<T> {
+    #[serde(skip, default)]
     pub ws_pre: Whitespace,
     pub statement: T,
+    #[serde(skip, default)]
     pub ws_trailing: Option<(Whitespace, token::Semicolon)>,
 }
 
@@ -238,7 +265,7 @@ impl<T: SemanticHash> SemanticHash for BodyStmt<T> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum BuildRecipeStmt<'a> {
     Let(LetStmt<'a>),
     From(FromStmt<'a>),
@@ -271,7 +298,7 @@ impl SemanticHash for BuildRecipeStmt<'_> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TaskRecipeStmt<'a> {
     Let(LetStmt<'a>),
     Build(BuildStmt<'a>),
@@ -302,14 +329,20 @@ impl SemanticHash for TaskRecipeStmt<'_> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LetStmt<'a> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub token_let: token::Let,
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub ident: Ident<'a>,
+    #[serde(skip, default)]
     pub ws_2: Whitespace,
+    #[serde(skip, default)]
     pub token_eq: token::Eq,
+    #[serde(skip, default)]
     pub ws_3: Whitespace,
     pub value: Expr<'a>,
 }
@@ -321,14 +354,20 @@ impl SemanticHash for LetStmt<'_> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EnvStmt<'a> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub token: token::Env,
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub key: StringExpr<'a>,
+    #[serde(skip, default)]
     pub ws_2: Whitespace,
+    #[serde(skip, default)]
     pub token_eq: token::Eq,
+    #[serde(skip, default)]
     pub ws_3: Whitespace,
     pub value: StringExpr<'a>,
 }
@@ -349,7 +388,7 @@ pub type DeleteExpr<'a> = KwExpr<token::Delete, Expr<'a>>;
 pub type EnvRemoveStmt<'a> = KwExpr<token::RemoveEnv, StringExpr<'a>>;
 
 /// Things that can appear in the `command` part of recipes.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum RunExpr<'a> {
     /// Run shell command.
     Shell(ShellExpr<'a>),
@@ -408,14 +447,20 @@ impl SemanticHash for RunExpr<'_> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CopyExpr<'a> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub token_copy: token::Copy,
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub src: StringExpr<'a>,
+    #[serde(skip, default)]
     pub ws_2: Whitespace,
+    #[serde(skip, default)]
     pub token_to: token::To,
+    #[serde(skip, default)]
     pub ws_3: Whitespace,
     pub dest: StringExpr<'a>,
 }
@@ -427,14 +472,20 @@ impl SemanticHash for CopyExpr<'_> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WriteExpr<'a> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub token_write: token::Write,
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub value: Expr<'a>,
+    #[serde(skip, default)]
     pub ws_2: Whitespace,
+    #[serde(skip, default)]
     pub token_to: token::To,
+    #[serde(skip, default)]
     pub ws_3: Whitespace,
     pub path: Expr<'a>,
 }

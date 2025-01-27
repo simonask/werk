@@ -193,8 +193,8 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             })
         }
         ast::Expr::Ident(ident) => scope
-            .get(Lookup::Ident(ident.ident))
-            .ok_or_else(|| EvalError::NoSuchIdentifier(ident.span, ident.ident.to_owned()))
+            .get(Lookup::Ident(&ident.ident))
+            .ok_or_else(|| EvalError::NoSuchIdentifier(ident.span, ident.ident.to_string()))
             .map(LookupValue::into_owned),
         ast::Expr::Chain(chain) => {
             let mut value = eval(scope, &chain.head)?;

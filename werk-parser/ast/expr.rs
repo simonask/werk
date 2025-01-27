@@ -7,7 +7,7 @@ use crate::{
 
 use super::{token, Body, BodyStmt, Ident, PatternExpr, StringExpr, Whitespace};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Expr<'a> {
     // Look up variable in scope.
     Ident(Ident<'a>),
@@ -72,17 +72,17 @@ impl SemanticHash for Expr<'_> {
 /// These are expressions that take an input (left-hand side of the pipe symbol)
 /// and produce an output, which will be passed to any subsequent operations, or
 /// returned as the value.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ExprOp<'a> {
     Match(MatchExpr<'a>),
     Map(MapExpr<'a>),
-    Flatten(FlattenExpr<'a>),
+    Flatten(#[serde(skip, default)] FlattenExpr<'a>),
     Filter(FilterExpr<'a>),
     FilterMatch(FilterMatchExpr<'a>),
     Discard(DiscardExpr<'a>),
     Join(JoinExpr<'a>),
     Split(SplitExpr<'a>),
-    Lines(LinesExpr<'a>),
+    Lines(#[serde(skip, default)] LinesExpr<'a>),
     Info(InfoExpr<'a>),
     Warn(WarnExpr<'a>),
     Error(ErrorExpr<'a>),
@@ -136,12 +136,17 @@ impl SemanticHash for ExprOp<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct ListExpr<E> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub token_open: token::BracketOpen,
     pub items: Vec<ListItem<E>>,
+    #[serde(skip, default)]
     pub ws_trailing: Whitespace,
+    #[serde(skip, default)]
     pub token_close: token::BracketClose,
 }
 
@@ -151,10 +156,13 @@ impl<E: SemanticHash> SemanticHash for ListExpr<E> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct ListItem<E> {
+    #[serde(skip, default)]
     pub ws_pre: Whitespace,
     pub item: E,
+    #[serde(skip, default)]
     pub ws_trailing: Option<(Whitespace, token::Comma)>,
 }
 
@@ -164,7 +172,7 @@ impl<E: SemanticHash> SemanticHash for ListItem<E> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MatchBody<'a> {
     Single(Box<MatchArm<'a>>),
     Braced(Body<MatchArm<'a>>),
@@ -240,14 +248,18 @@ impl SemanticHash for MatchBody<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MatchArm<'a> {
+    #[serde(skip, default)]
     pub span: Span,
     pub pattern: PatternExpr<'a>,
     /// Whitespace between the pattern and the fat arrow.
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
+    #[serde(skip, default)]
     pub token_fat_arrow: token::FatArrow,
     /// Whitespace between the fat arrow and the expression.
+    #[serde(skip, default)]
     pub ws_2: Whitespace,
     pub expr: Expr<'a>,
 }
@@ -259,8 +271,9 @@ impl SemanticHash for MatchArm<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ChainExpr<'a> {
+    #[serde(skip, default)]
     pub span: Span,
     /// The initial expression of the chain.
     pub head: Box<Expr<'a>>,
@@ -276,11 +289,16 @@ impl SemanticHash for ChainExpr<'_> {
 }
 
 /// Entry in an expression chain `| expr`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct ChainSubExpr<'a> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
+    #[serde(skip, default)]
     pub token_pipe: token::Pipe,
+    #[serde(skip, default)]
     pub ws_2: Whitespace,
     pub expr: ExprOp<'a>,
 }
@@ -313,10 +331,14 @@ pub type DiscardExpr<'a> = KwExpr<token::Discard, PatternExpr<'a>>;
 
 /// Expression that is a pair of a token and a parameter, such as `<keyword>
 /// <expr>`. Example: `join ","`
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct KwExpr<Token, Param> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub token: Token,
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub param: Param,
 }

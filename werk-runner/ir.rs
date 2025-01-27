@@ -166,7 +166,7 @@ impl Config {
                 continue;
             };
 
-            match config_stmt.ident.ident {
+            match &*config_stmt.ident.ident {
                 "edition" => {
                     let edition = match config_stmt.value {
                         ast::ConfigValue::String(ast::ConfigString(_, ref edition))

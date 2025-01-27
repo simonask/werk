@@ -173,7 +173,10 @@ fn parse_config_table<'a>(
 
 fn parse_ident(span: Span, s: &str) -> Result<ast::Ident, TomlError> {
     parse_string::parse_ident(s)
-        .map(|ident| ast::Ident { span, ident })
+        .map(|ident| ast::Ident {
+            span,
+            ident: ident.into(),
+        })
         .map_err(|e| TomlError::InvalidIdent(span, e))
 }
 

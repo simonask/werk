@@ -2,8 +2,10 @@ use std::{borrow::Cow, hash::Hash as _};
 
 use crate::{parser::Span, SemanticHash};
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct StringExpr<'a> {
+    #[serde(skip, default)]
     pub span: Span,
     pub fragments: Vec<StringFragment<'a>>,
 }
@@ -24,7 +26,7 @@ impl<'a> StringExpr<'a> {
 }
 
 /// Interpolated string fragment.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum StringFragment<'a> {
     Literal(Cow<'a, str>),
     /// `{...}`
@@ -48,8 +50,10 @@ impl Default for StringFragment<'_> {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct PatternExpr<'a> {
+    #[serde(skip, default)]
     pub span: Span,
     pub fragments: Vec<PatternFragment<'a>>,
 }
@@ -61,7 +65,7 @@ impl SemanticHash for PatternExpr<'_> {
 }
 
 /// Interpolated pattern fragment (i.e., can have capture patterns like `%` and `(a|b|c)`).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PatternFragment<'a> {
     Literal(Cow<'a, str>),
     /// `%`
@@ -84,7 +88,7 @@ impl SemanticHash for PatternFragment<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Interpolation<'a> {
     pub stem: InterpolationStem<'a>,
     pub options: Option<Box<InterpolationOptions<'a>>>,
@@ -97,7 +101,7 @@ impl SemanticHash for Interpolation<'_> {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct InterpolationOptions<'a> {
     /// `{stem:operation}`
     pub ops: Vec<InterpolationOp<'a>>,
@@ -106,7 +110,7 @@ pub struct InterpolationOptions<'a> {
     pub join: Option<Cow<'a, str>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum InterpolationStem<'a> {
     /// Empty stem; inherit output type from the interpolated value.
     Implied,
@@ -129,7 +133,7 @@ impl SemanticHash for InterpolationStem<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum InterpolationOp<'a> {
     /// Replace extension - input must be path.
     ReplaceExtension(Cow<'a, str>, Cow<'a, str>),
@@ -156,8 +160,12 @@ impl SemanticHash for InterpolationOp<'_> {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct RegexInterpolationOp<'a> {
+    #[serde(
+        serialize_with = "serialize_regex",
+        deserialize_with = "deserialize_regex"
+    )]
     pub regex: regex::Regex,
     pub replacer: Cow<'a, str>,
 }
@@ -175,4 +183,13 @@ impl std::hash::Hash for RegexInterpolationOp<'_> {
         self.regex.as_str().hash(state);
         self.replacer.hash(state);
     }
+}
+
+fn serialize_regex<S: serde::Serializer>(regex: &regex::Regex, ser: S) -> Result<S::Ok, S::Error> {
+    ser.serialize_str(regex.as_str())
+}
+
+fn deserialize_regex<'de, D: serde::Deserializer<'de>>(de: D) -> Result<regex::Regex, D::Error> {
+    let string: String = serde::Deserialize::deserialize(de)?;
+    regex::Regex::new(&string).map_err(serde::de::Error::custom)
 }

@@ -173,7 +173,7 @@ fn config_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::ConfigStmt<'a>> {
 
     let value_start = config.value.span().start;
 
-    match config.ident.ident {
+    match &*config.ident.ident {
         "print-commands" => {
             if !matches!(config.value, ast::ConfigValue::Bool(_)) {
                 return Err(ErrMode::Cut(ParseError::new(
@@ -809,7 +809,7 @@ fn identifier<'a>(input: &mut Input<'a>) -> PResult<ast::Ident<'a>> {
     }
 
     let (ident, span) = identifier_chars.with_token_span().parse_next(input)?;
-    Ok(ast::Ident { span, ident })
+    Ok(ast::Ident::new(span, ident))
 }
 
 fn keyword<T: ast::token::Keyword>(input: &mut Input) -> PResult<T> {
@@ -1138,7 +1138,7 @@ mod tests {
                             ws_1: ws_ignore(),
                             ident: ast::Ident {
                                 span: span(7..14),
-                                ident: "out-dir",
+                                ident: "out-dir".into(),
                             },
                             ws_2: ws_ignore(),
                             token_eq: ast::token::Token(Offset(15)),
@@ -1158,7 +1158,7 @@ mod tests {
                             ws_1: ws_ignore(),
                             ident: ast::Ident {
                                 span: span(34..36),
-                                ident: "cc",
+                                ident: "cc".into(),
                             },
                             ws_2: ws_ignore(),
                             token_eq: ast::token::Token(Offset(37)),
@@ -1183,14 +1183,14 @@ mod tests {
                             ws_1: ws_ignore(),
                             ident: ast::Ident {
                                 span: span(57..59),
-                                ident: "ld",
+                                ident: "ld".into(),
                             },
                             ws_2: ws_ignore(),
                             token_eq: ast::token::Token(Offset(60)),
                             ws_3: ws_ignore(),
                             value: ast::Expr::Ident(ast::Ident {
                                 span: span(62..64),
-                                ident: "cc",
+                                ident: "cc".into(),
                             }),
                         }),
                         ws_trailing: None,
@@ -1212,7 +1212,7 @@ mod tests {
                 ws_1: ws(3..4),
                 ident: ast::Ident {
                     span: span(4..6),
-                    ident: "cc"
+                    ident: "cc".into()
                 },
                 ws_2: ws(6..7),
                 token_eq: ast::token::Token(Offset(7)),
@@ -1356,7 +1356,7 @@ mod tests {
             super::identifier.parse(input).unwrap(),
             ast::Ident {
                 span: span(0..5),
-                ident: "hello"
+                ident: "hello".into()
             }
         );
 
@@ -1365,7 +1365,7 @@ mod tests {
             super::identifier.parse(input).unwrap(),
             ast::Ident {
                 span: span(0..11),
-                ident: "hello-world"
+                ident: "hello-world".into()
             }
         );
 
@@ -1375,7 +1375,7 @@ mod tests {
             (
                 ast::Ident {
                     span: span(0..5),
-                    ident: "hello"
+                    ident: "hello".into()
                 },
                 " world"
             )
