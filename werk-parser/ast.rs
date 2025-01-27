@@ -97,6 +97,15 @@ pub enum ConfigValue<'a> {
     Bool(ConfigBool),
 }
 
+impl Spanned for ConfigValue<'_> {
+    fn span(&self) -> Span {
+        match self {
+            ConfigValue::String(s) => s.0,
+            ConfigValue::Bool(b) => b.0,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct ConfigString<'a>(pub Span, pub Cow<'a, str>);
 

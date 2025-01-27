@@ -35,6 +35,11 @@ impl Span {
         self.start.is_ignored()
     }
 
+    #[must_use]
+    pub const fn is_offset(&self) -> bool {
+        !self.is_ignored() && self.start.0 == self.end.0
+    }
+
     #[inline]
     #[must_use]
     pub fn merge(self, other: Span) -> Span {

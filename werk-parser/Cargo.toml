@@ -6,6 +6,9 @@ edition = "2021"
 [lib]
 path = "lib.rs"
 
+[[test]]
+name = "test_errors"
+
 [dependencies]
 indexmap.workspace = true
 toml_edit.workspace = true
@@ -14,6 +17,9 @@ unicode-ident = "1.0.13"
 winnow.workspace = true
 regex.workspace = true
 annotate-snippets = "0.11.5"
+
+[dev-dependencies]
+anstream = "0.6.18"
 
 [lints]
 workspace = true

@@ -2,14 +2,15 @@ use std::{borrow::Cow, sync::Arc};
 
 use crate::{
     ast,
-    parser::{Input, TokenParserExt as _},
-    Expected, ParseError, TomlParseError,
+    parser::{Input, Offset, TokenParserExt as _},
+    Failure, ParseError, TomlParseError,
 };
 use winnow::{
     ascii::{digit1, multispace1, space0},
     combinator::{
         alt, cut_err, delimited, opt, peek, preceded, repeat, separated, separated_pair, terminated,
     },
+    stream::Location as _,
     token::{one_of, take_till, take_while},
     Parser,
 };
@@ -61,6 +62,7 @@ fn ident<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
         take_while(1, is_identifier_start),
         take_while(0.., is_identifier_continue),
     )
+        .expect(&"identifier")
         .take()
         .parse_next(input)
 }
@@ -216,29 +218,32 @@ fn escaped_whitespace<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
 
 pub(crate) fn pattern_one_of<'a>(input: &mut Input<'a>) -> PResult<Vec<Cow<'a, str>>> {
     delimited(
-        '(',
+        '('.expect(&"start of pattern one-of group"),
         // TODO: Allow more than just identifiers here.
         separated(1.., cut_err(ident).map(Cow::Borrowed), '|'),
-        cut_err(')').context(Expected::ExpectedChar(')')),
+        ')'.or_cut(Failure::ExpectedChar(')')),
     )
+    .while_parsing("pattern capture group")
     .parse_next(input)
 }
 
 pub(crate) fn string_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation<'a>> {
     delimited(
-        '{',
+        '{'.expect(&"string interpolation block"),
         cut_err(interpolation_inner::<'}'>),
-        cut_err('}').context(Expected::ExpectedChar('}')),
+        '}'.or_cut(Failure::ExpectedChar('}')),
     )
+    .while_parsing("string interpolation block")
     .parse_next(input)
 }
 
 pub(crate) fn path_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation<'a>> {
     let mut interp = delimited(
-        '<'.context(Expected::Expected(&"path interpolation block")),
+        '<'.expect(&"path interpolation block"),
         cut_err(interpolation_inner::<'>'>),
-        cut_err('>').context(Expected::ExpectedChar('>')),
+        '>'.or_cut(Failure::ExpectedChar('>')),
     )
+    .while_parsing("path interpolation block")
     .parse_next(input)?;
 
     interp
@@ -274,16 +279,14 @@ fn interpolation_inner_with_stem<'a, const TERMINATE: char>(
     input: &mut Input<'a>,
 ) -> PResult<ast::Interpolation<'a>> {
     (
-        interpolation_stem.context(Expected::Expected(&"interpolation stem")),
+        interpolation_stem.expect(&"interpolation stem"),
         alt((
             // {stem*}, {stem:...}, or {stem*:...}
             interpolation_options.map(|options| options.map(Box::new)),
             // No options
             preceded(space0, peek(TERMINATE)).value(None),
         ))
-        .context(Expected::Expected(
-            &"interpolation options or end of interpolation",
-        )),
+        .expect(&"interpolation options or end of interpolation"),
     )
         .map(|(stem, options)| ast::Interpolation { stem, options })
         .parse_next(input)
@@ -297,9 +300,7 @@ fn interpolation_stem<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationSt
             .map(ast::InterpolationStem::CaptureGroup),
         ident.map(Cow::Borrowed).map(ast::InterpolationStem::Ident),
     ))
-    .context(Expected::Expected(
-        &"one of %, a capture group number, or an identifier",
-    ))
+    .expect(&"one of %, a capture group number, or an identifier")
     .parse_next(input)
 }
 
@@ -328,7 +329,7 @@ fn interpolation_options<'a>(
 fn interpolation_join<'a>(input: &mut Input<'a>) -> PResult<Cow<'a, str>> {
     const VALID_JOIN_SEPARATORS: &[char] = &['+', ',', '.', '|', '/', '\\', ':', ';', ' '];
     let sep: String = terminated(repeat(0.., one_of(VALID_JOIN_SEPARATORS)), '*')
-        .context(Expected::Expected(&"join separator"))
+        .expect(&"join separator")
         .parse_next(input)?;
     if sep.is_empty() {
         return Ok(Cow::Borrowed(" "));
@@ -339,7 +340,7 @@ fn interpolation_join<'a>(input: &mut Input<'a>) -> PResult<Cow<'a, str>> {
 // At least one interpolation option
 fn interpolation_ops<'a>(input: &mut Input<'a>) -> PResult<Vec<ast::InterpolationOp<'a>>> {
     preceded(':', separated(0.., interpolation_op, ','))
-        .context(Expected::Expected(&"interpolation options"))
+        .expect(&"interpolation options")
         .parse_next(input)
 }
 
@@ -355,9 +356,7 @@ fn interpolation_op<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationOp<'
 
 fn interpolation_op_replace_ext<'a>(input: &mut Input<'a>) -> PResult<(&'a str, &'a str)> {
     separated_pair(file_extension, '=', file_extension)
-        .context(Expected::Expected(
-            &"replace extension operation in the form of '.ext1=.ext2' (periods required)",
-        ))
+        .expect(&"replace extension operation in the form of '.ext1=.ext2' (periods required)")
         .parse_next(input)
 }
 
@@ -375,12 +374,16 @@ fn interpolation_op_regex_replace<'a>(
 }
 
 fn regex_replace_pattern(input: &mut Input) -> PResult<regex::Regex> {
+    // TODO: Properly handle regex patterns containing slashes. Need to skip
+    // ahead in the stream, skipping escaped slashes.
+    let location = input.location();
     let regex_pattern = take_till(1.., ['/']).parse_next(input)?;
 
     regex::Regex::new(regex_pattern).map_err(|err| {
         winnow::error::ErrMode::Backtrack(ParseError {
-            stack: None,
-            expected: Expected::ValidRegex(Arc::new(err)),
+            context: None,
+            fail: Failure::ValidRegex(Arc::new(err)),
+            offset: Offset(location as u32),
         })
     })
 }
@@ -392,7 +395,7 @@ fn file_extension<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
             ch.is_alphanumeric() || ch == '.' || ch == '-' || ch.is_whitespace() || ch == '_'
         }),
     )
-    .context(Expected::Expected(&"file extension"))
+    .expect(&"file extension")
     .take()
     .parse_next(input)
 }

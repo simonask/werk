@@ -28,7 +28,7 @@ fn parse_string_expr_ignore_span(s: &str) -> Result<ast::StringExpr, TomlParseEr
 #[allow(clippy::too_many_lines)]
 fn parse_as_expected() -> anyhow::Result<()> {
     let toml = toml_edit::ImDocument::parse(EXPRESSIONS_TOML)?;
-    let ast = werk_parser::parse_toml("input".as_ref(), EXPRESSIONS_TOML, &toml)
+    let ast = werk_parser::parse_toml(&toml)
         .map_err(|err| err.to_string())
         .map_err(anyhow::Error::msg)?;
     assert_eq!(ast.num_task_recipes(), 0);
