@@ -5,9 +5,10 @@ use crate::{
     SemanticHash,
 };
 
-use super::{token, Body, BodyStmt, Ident, PatternExpr, StringExpr, Whitespace};
+use super::{token, Body, BodyStmt, Ident, PatternExpr, StringExpr, Trailing, Whitespace};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum Expr<'a> {
     // Look up variable in scope.
     Ident(Ident<'a>),
@@ -76,13 +77,13 @@ impl SemanticHash for Expr<'_> {
 pub enum ExprOp<'a> {
     Match(MatchExpr<'a>),
     Map(MapExpr<'a>),
-    Flatten(#[serde(skip, default)] FlattenExpr<'a>),
+    Flatten(FlattenExpr<'a>),
     Filter(FilterExpr<'a>),
     FilterMatch(FilterMatchExpr<'a>),
     Discard(DiscardExpr<'a>),
     Join(JoinExpr<'a>),
     Split(SplitExpr<'a>),
-    Lines(#[serde(skip, default)] LinesExpr<'a>),
+    Lines(LinesExpr<'a>),
     Info(InfoExpr<'a>),
     Warn(WarnExpr<'a>),
     Error(ErrorExpr<'a>),
@@ -137,7 +138,6 @@ impl SemanticHash for ExprOp<'_> {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
 pub struct ListExpr<E> {
     #[serde(skip, default)]
     pub span: Span,
@@ -163,7 +163,7 @@ pub struct ListItem<E> {
     pub ws_pre: Whitespace,
     pub item: E,
     #[serde(skip, default)]
-    pub ws_trailing: Option<(Whitespace, token::Comma)>,
+    pub trailing: Trailing<token::Comma>,
 }
 
 impl<E: SemanticHash> SemanticHash for ListItem<E> {

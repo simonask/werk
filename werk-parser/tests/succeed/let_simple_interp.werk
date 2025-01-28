@@ -1,0 +1,1 @@
+let executable = "{profile}/example{EXE_SUFFIX}"

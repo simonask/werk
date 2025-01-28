@@ -1,0 +1,2 @@
+config out-dir = "../../target/examples/c"
+config default = "build"

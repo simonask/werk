@@ -7,7 +7,7 @@ edition = "2021"
 path = "lib.rs"
 
 [[test]]
-name = "test_errors"
+name = "test_cases"
 
 [dependencies]
 indexmap.workspace = true
@@ -21,6 +21,7 @@ serde.workspace = true
 
 [dev-dependencies]
 anstream = "0.6.18"
+serde_json = "1.0.137"
 
 [lints]
 workspace = true

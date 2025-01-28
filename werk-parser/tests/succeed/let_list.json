@@ -1,0 +1,26 @@
+[
+    {
+        "Let": {
+            "ident": "list",
+            "value": {
+                "type": "List",
+                "value": {
+                    "items": [
+                        {
+                            "type": "StringExpr",
+                            "value": "a"
+                        },
+                        {
+                            "type": "StringExpr",
+                            "value": "b"
+                        },
+                        {
+                            "type": "StringExpr",
+                            "value": "c"
+                        }
+                    ]
+                }
+            }
+        }
+    }
+]

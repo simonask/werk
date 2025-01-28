@@ -1,0 +1,31 @@
+[
+    {
+        "Let": {
+            "ident": "foo",
+            "value": {
+                "type": "Chain",
+                "value": {
+                    "head": {
+                        "type": "Ident",
+                        "value": "bar"
+                    },
+                    "tail": [
+                        {
+                            "Match": {
+                                "Single": {
+                                    "pattern": [
+                                        "PatternStem"
+                                    ],
+                                    "expr": {
+                                        "type": "StringExpr",
+                                        "value": "hello"
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    }
+]

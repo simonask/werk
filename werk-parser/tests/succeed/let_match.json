@@ -1,0 +1,105 @@
+[
+    {
+        "Let": {
+            "ident": "cflags",
+            "value": {
+                "type": "Chain",
+                "value": {
+                    "head": {
+                        "type": "Ident",
+                        "value": "profile"
+                    },
+                    "tail": [
+                        {
+                            "Match": {
+                                "Braced": [
+                                    {
+                                        "pattern": [
+                                            {
+                                                "Literal": "debug"
+                                            }
+                                        ],
+                                        "expr": {
+                                            "type": "List",
+                                            "value": {
+                                                "items": [
+                                                    {
+                                                        "type": "StringExpr",
+                                                        "value": "-g"
+                                                    },
+                                                    {
+                                                        "type": "StringExpr",
+                                                        "value": "-O0"
+                                                    },
+                                                    {
+                                                        "type": "StringExpr",
+                                                        "value": "-fdiagnostics-color=always"
+                                                    },
+                                                    {
+                                                        "type": "StringExpr",
+                                                        "value": "-fcolor-diagnostics"
+                                                    },
+                                                    {
+                                                        "type": "StringExpr",
+                                                        "value": "-fansi-escape-codes"
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "pattern": [
+                                            {
+                                                "Literal": "release"
+                                            }
+                                        ],
+                                        "expr": {
+                                            "type": "List",
+                                            "value": {
+                                                "items": [
+                                                    {
+                                                        "type": "StringExpr",
+                                                        "value": "-O3"
+                                                    },
+                                                    {
+                                                        "type": "StringExpr",
+                                                        "value": "-fdiagnostics-color=always"
+                                                    },
+                                                    {
+                                                        "type": "StringExpr",
+                                                        "value": "-fcolor-diagnostics"
+                                                    },
+                                                    {
+                                                        "type": "StringExpr",
+                                                        "value": "-fansi-escape-codes"
+                                                    }
+                                                ]
+                                            }
+                                        }
+                                    },
+                                    {
+                                        "pattern": [
+                                            "PatternStem"
+                                        ],
+                                        "expr": {
+                                            "type": "Error",
+                                            "value": [
+                                                "Unknown profile '",
+                                                {
+                                                    "stem": {
+                                                        "type": "Implied"
+                                                    }
+                                                },
+                                                "'; valid options are 'debug' and 'release'"
+                                            ]
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    }
+]

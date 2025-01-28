@@ -97,30 +97,34 @@ where
 
             let item = parse_next.parse_next(input)?;
             let preceding_whitespace = last_decor;
-            let trailing_whitespace;
+            let trailing;
 
             let whitespace_before_semicolon = whitespace_parsed.parse_next(input)?;
             let semicolon_and_whitespace = opt((token, whitespace_parsed)).parse_next(input)?;
 
             if let Some((semicolon, whitespace_after_semicolon)) = semicolon_and_whitespace {
                 // All whitespace before the semicolon is trailing for the item we just found.
-                trailing_whitespace = Some((whitespace_before_semicolon.into_whitespace(), semicolon));
+                trailing = ast::Trailing { ws: whitespace_before_semicolon.into_whitespace(), token: Some(semicolon) };
                 // Whitespace after the semicolon is the comment for the next item.
                 last_decor = whitespace_after_semicolon;
                 // Semicolon is a separator.
                 has_separator = true;
             } else {
+                trailing = ast::Trailing {
+                    // Attribute the whitespace to the next item.
+                    ws: ast::Whitespace(Span::from_offset_and_len(whitespace_before_semicolon.span.start, 0)),
+                    token: None,
+                };
+                has_separator = whitespace_before_semicolon.is_statement_separator();
                 // No semicolon, so the whitespace between the statements is the
                 // comment for the next item.
-                trailing_whitespace = None;
-                has_separator = whitespace_before_semicolon.is_statement_separator();
                 last_decor = whitespace_before_semicolon;
             };
 
             accum.push(ast::BodyStmt {
                 ws_pre: preceding_whitespace.into_whitespace(),
                 statement: item,
-                ws_trailing: trailing_whitespace,
+                trailing,
             });
         }
     }
@@ -762,15 +766,25 @@ where
             let comma_and_whitespace = opt((token, whitespace)).parse_next(input)?;
 
             let preceding_whitespace;
-            let trailing_whitespace;
+            let trailing;
 
             if let Some((token_comma, whitespace_after_comma)) = comma_and_whitespace {
-                trailing_whitespace = Some((whitespace_before_comma, token_comma));
+                trailing = ast::Trailing {
+                    ws: whitespace_before_comma,
+                    token: Some(token_comma),
+                };
                 preceding_whitespace = last_decor;
                 has_separator = true;
                 last_decor = whitespace_after_comma;
             } else {
-                trailing_whitespace = None;
+                trailing = ast::Trailing {
+                    // Attribute the whitespace to the next item.
+                    ws: ast::Whitespace(Span::from_offset_and_len(
+                        whitespace_before_comma.0.start,
+                        0,
+                    )),
+                    token: None,
+                };
                 preceding_whitespace = last_decor;
                 has_separator = false;
                 last_decor = whitespace_before_comma;
@@ -779,7 +793,7 @@ where
             accum.push(ast::ListItem {
                 ws_pre: preceding_whitespace,
                 item,
-                ws_trailing: trailing_whitespace,
+                trailing,
             });
         }
     }
@@ -1099,7 +1113,7 @@ where
 mod tests {
     use super::Input;
     use crate::{
-        ast::{self, token::Keyword as _, ws, ws_ignore},
+        ast::{self, token::Keyword as _, trailing_ignore, ws, ws_ignore},
         parser::{span, Offset, ParsedWhitespace, Span},
     };
     use winnow::Parser as _;
@@ -1148,7 +1162,7 @@ mod tests {
                                 "../target".into()
                             )),
                         }),
-                        ws_trailing: None,
+                        trailing: trailing_ignore(),
                     },
                     ast::BodyStmt {
                         ws_pre: ws_ignore(),
@@ -1173,7 +1187,7 @@ mod tests {
                                 },
                             }),
                         }),
-                        ws_trailing: None
+                        trailing: trailing_ignore()
                     },
                     ast::BodyStmt {
                         ws_pre: ws_ignore(),
@@ -1193,7 +1207,7 @@ mod tests {
                                 ident: "cc".into(),
                             }),
                         }),
-                        ws_trailing: None,
+                        trailing: trailing_ignore(),
                     }
                 ],
                 ws_trailing: ws_ignore(),
@@ -1286,7 +1300,10 @@ mod tests {
                     stem: ast::InterpolationStem::CaptureGroup(1),
                     options: Some(Box::new(ast::InterpolationOptions {
                         ops: vec![
-                            ast::InterpolationOp::ReplaceExtension(".ext1".into(), ".ext2".into()),
+                            ast::InterpolationOp::ReplaceExtension {
+                                from: ".ext1".into(),
+                                to: ".ext2".into(),
+                            },
                             ast::InterpolationOp::ResolveOsPath,
                         ],
                         join: None,

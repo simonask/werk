@@ -971,7 +971,7 @@ fn eval_string_interpolation_ops(
 ) -> Result<(), EvalError> {
     for op in ops {
         match op {
-            ast::InterpolationOp::ReplaceExtension(from, to) => {
+            ast::InterpolationOp::ReplaceExtension { from, to } => {
                 recursive_replace_extension(value, from, to);
             }
             ast::InterpolationOp::PrependEach(prefix) => recursive_prepend_each(value, prefix),

@@ -61,6 +61,34 @@ macro_rules! def_keyword {
                 }
             }
         }
+        impl serde::Serialize for $t {
+            fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+                ser.serialize_unit()
+            }
+        }
+        impl<'de> serde::Deserialize<'de> for $t {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                struct Visitor;
+                impl<'de> serde::de::Visitor<'de> for Visitor {
+                    type Value = $t;
+
+                    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                        write!(formatter, "unit")
+                    }
+
+                    fn visit_unit<E>(self) -> Result<Self::Value, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        Ok($t::default())
+                    }
+                }
+                deserializer.deserialize_unit(Visitor)
+            }
+        }
     };
 }
 

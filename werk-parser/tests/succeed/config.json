@@ -1,0 +1,14 @@
+[
+    {
+        "Config": {
+            "ident": "out-dir",
+            "value": "../../target/examples/c"
+        }
+    },
+    {
+        "Config": {
+            "ident": "default",
+            "value": "build"
+        }
+    }
+]

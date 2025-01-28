@@ -1,13 +1,80 @@
-use std::{borrow::Cow, hash::Hash as _};
+use std::{borrow::Cow, hash::Hash as _, marker::PhantomData};
+
+use serde::Deserialize;
 
 use crate::{parser::Span, SemanticHash};
 
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct StringExpr<'a> {
-    #[serde(skip, default)]
     pub span: Span,
     pub fragments: Vec<StringFragment<'a>>,
+}
+
+impl serde::Serialize for StringExpr<'_> {
+    fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq as _;
+        if self.fragments.len() == 1 {
+            self.fragments[0].serialize(ser)
+        } else {
+            let mut seq = ser.serialize_seq(Some(self.fragments.len()))?;
+            for fragment in &self.fragments {
+                seq.serialize_element(fragment)?;
+            }
+            seq.end()
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for StringExpr<'_> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor<'a>(PhantomData<&'a ()>);
+        impl<'a, 'de> serde::de::Visitor<'de> for Visitor<'a> {
+            type Value = StringExpr<'a>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(formatter, "string literal, list of fragments, or map")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(StringExpr {
+                    span: Span::ignore(),
+                    fragments: vec![StringFragment::Literal(Cow::Owned(v.into()))],
+                })
+            }
+
+            fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let fragments =
+                    Vec::deserialize(serde::de::value::SeqAccessDeserializer::new(seq))?;
+                Ok(StringExpr {
+                    span: Span::ignore(),
+                    fragments,
+                })
+            }
+
+            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let fragment =
+                    StringFragment::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(StringExpr {
+                    span: Span::ignore(),
+                    fragments: vec![fragment],
+                })
+            }
+        }
+
+        deserializer.deserialize_any(Visitor(PhantomData))
+    }
 }
 
 impl SemanticHash for StringExpr<'_> {
@@ -27,6 +94,7 @@ impl<'a> StringExpr<'a> {
 
 /// Interpolated string fragment.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
 pub enum StringFragment<'a> {
     Literal(Cow<'a, str>),
     /// `{...}`
@@ -91,6 +159,7 @@ impl SemanticHash for PatternFragment<'_> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Interpolation<'a> {
     pub stem: InterpolationStem<'a>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub options: Option<Box<InterpolationOptions<'a>>>,
 }
 
@@ -111,6 +180,7 @@ pub struct InterpolationOptions<'a> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum InterpolationStem<'a> {
     /// Empty stem; inherit output type from the interpolated value.
     Implied,
@@ -134,9 +204,13 @@ impl SemanticHash for InterpolationStem<'_> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type")]
 pub enum InterpolationOp<'a> {
     /// Replace extension - input must be path.
-    ReplaceExtension(Cow<'a, str>, Cow<'a, str>),
+    ReplaceExtension {
+        from: Cow<'a, str>,
+        to: Cow<'a, str>,
+    },
     PrependEach(Cow<'a, str>),
     AppendEach(Cow<'a, str>),
     RegexReplace(RegexInterpolationOp<'a>),
@@ -149,9 +223,9 @@ impl SemanticHash for InterpolationOp<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
-            InterpolationOp::ReplaceExtension(a, b) => {
-                a.hash(state);
-                b.hash(state);
+            InterpolationOp::ReplaceExtension { from, to } => {
+                from.hash(state);
+                to.hash(state);
             }
             InterpolationOp::PrependEach(s) | InterpolationOp::AppendEach(s) => s.hash(state),
             InterpolationOp::RegexReplace(r) => r.hash(state),

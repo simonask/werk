@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use werk_parser::{
-    ast::{self, kw_ignore, token_ignore, ws_ignore},
+    ast::{self, kw_ignore, token_ignore, trailing_ignore, ws_ignore},
     parse_string::{parse_pattern_expr, parse_string_expr},
     parser::Span,
     TomlParseError,
@@ -99,7 +99,7 @@ fn parse_as_expected() -> anyhow::Result<()> {
                                     parse_string_expr_ignore_span("{%}.o").unwrap()
                                 )
                             },
-                            ws_trailing: None
+                            trailing: trailing_ignore()
                         }],
                         ws_trailing: ws_ignore(),
                         token_close: token_ignore()
@@ -135,7 +135,7 @@ fn parse_as_expected() -> anyhow::Result<()> {
                                     ws_2: ws_ignore(),
                                     expr: ast::Expr::literal(Span::ignore(), "dev")
                                 },
-                                ws_trailing: None
+                                trailing: trailing_ignore()
                             },
                             ast::BodyStmt {
                                 ws_pre: ws_ignore(),
@@ -147,7 +147,7 @@ fn parse_as_expected() -> anyhow::Result<()> {
                                     ws_2: ws_ignore(),
                                     expr: ast::Expr::literal(Span::ignore(), "release")
                                 },
-                                ws_trailing: None
+                                trailing: trailing_ignore()
                             },
                             ast::BodyStmt {
                                 ws_pre: ws_ignore(),
@@ -168,7 +168,7 @@ fn parse_as_expected() -> anyhow::Result<()> {
                                     }
                                     )
                                 },
-                                ws_trailing: None
+                                trailing: trailing_ignore()
                             }
                             ],
                             ws_trailing: ws_ignore(),

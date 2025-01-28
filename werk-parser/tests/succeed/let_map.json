@@ -1,0 +1,25 @@
+[
+    {
+        "Let": {
+            "ident": "foo",
+            "value": {
+                "type": "Chain",
+                "value": {
+                    "head": {
+                        "type": "StringExpr",
+                        "value": "bar"
+                    },
+                    "tail": [
+                        {
+                            "Map": {
+                                "stem": {
+                                    "type": "Implied"
+                                }
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    }
+]

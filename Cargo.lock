@@ -1988,6 +1988,7 @@ dependencies = [
  "indexmap",
  "regex",
  "serde",
+ "serde_json",
  "thiserror",
  "toml_edit",
  "unicode-ident",

@@ -1,0 +1,25 @@
+[
+    {
+        "Let": {
+            "ident": "executable",
+            "value": {
+                "type": "StringExpr",
+                "value": [
+                    {
+                        "stem": {
+                            "type": "Ident",
+                            "value": "profile"
+                        }
+                    },
+                    "/example",
+                    {
+                        "stem": {
+                            "type": "Ident",
+                            "value": "EXE_SUFFIX"
+                        }
+                    }
+                ]
+            }
+        }
+    }
+]

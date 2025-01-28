@@ -19,6 +19,32 @@ pub use string::*;
 #[must_use]
 pub struct Whitespace(pub Span);
 
+/// Trailing whitespace and comments in a block after each statement.
+#[derive(Default, Clone, Copy, Debug)]
+#[must_use]
+pub struct Trailing<T> {
+    /// Whitespace before comma or semicolon.
+    pub ws: Whitespace,
+    /// Comma or semicolon at the end of the item.
+    pub token: Option<T>,
+}
+
+impl<const CHAR: char> PartialEq for Trailing<token::Token<CHAR>> {
+    fn eq(&self, other: &Self) -> bool {
+        self.ws == other.ws
+            && match (self.token, other.token) {
+                (None, None) => true,
+                // If the left-hand side does not have a token, but the
+                // whitespace is ignored, consider self.token as ignored also.
+                (None, Some(rhs)) => self.ws.0.is_ignored() || rhs.0.is_ignored(),
+                // If the right-hand side does not have a token, but the
+                // whitespace is ignored, consider other.token as ignored also.
+                (Some(lhs), None) => other.ws.0.is_ignored() || lhs.0.is_ignored(),
+                (Some(lhs), Some(rhs)) => lhs == rhs,
+            }
+    }
+}
+
 #[inline]
 pub fn ws(span: std::ops::Range<u32>) -> Whitespace {
     Whitespace(crate::parser::span(span))
@@ -40,12 +66,20 @@ pub fn token_ignore<const CHAR: char>() -> token::Token<CHAR> {
     token::Token::ignore()
 }
 
+#[inline]
+pub const fn trailing_ignore<const CHAR: char>() -> Trailing<token::Token<CHAR>> {
+    Trailing {
+        ws: ws_ignore(),
+        token: None,
+    }
+}
+
 #[derive(Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct Root<'a> {
     pub statements: Vec<BodyStmt<RootStmt<'a>>>,
     /// Comment at the end of the document, not associated with any item.
-    #[serde(skip)]
+    #[serde(skip, default)]
     pub ws_trailing: Whitespace,
 }
 
@@ -100,6 +134,7 @@ pub struct ConfigStmt<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
 pub enum ConfigValue<'a> {
     String(ConfigString<'a>),
     Bool(ConfigBool),
@@ -256,7 +291,7 @@ pub struct BodyStmt<T> {
     pub ws_pre: Whitespace,
     pub statement: T,
     #[serde(skip, default)]
-    pub ws_trailing: Option<(Whitespace, token::Semicolon)>,
+    pub trailing: Trailing<token::Semicolon>,
 }
 
 impl<T: SemanticHash> SemanticHash for BodyStmt<T> {
@@ -389,6 +424,7 @@ pub type EnvRemoveStmt<'a> = KwExpr<token::RemoveEnv, StringExpr<'a>>;
 
 /// Things that can appear in the `command` part of recipes.
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum RunExpr<'a> {
     /// Run shell command.
     Shell(ShellExpr<'a>),

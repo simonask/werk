@@ -1,5 +1,5 @@
 use crate::{
-    ast::{self, kw_ignore, token_ignore, ws_ignore},
+    ast::{self, kw_ignore, token_ignore, trailing_ignore, ws_ignore},
     parse_string,
     parser::{Span, Spanned as _, SpannedValue},
     TomlError,
@@ -65,7 +65,7 @@ pub fn parse_toml_document<'a>(
                             ws_3: ws_ignore(),
                             value: item,
                         }),
-                        ws_trailing: None,
+                        trailing: trailing_ignore(),
                     });
                 }
             }
@@ -82,7 +82,7 @@ pub fn parse_toml_document<'a>(
                     statements.push(ast::BodyStmt {
                         ws_pre: smuggled_whitespace.smuggle_decor(decor),
                         statement: ast::RootStmt::Task(recipe),
-                        ws_trailing: None,
+                        trailing: trailing_ignore(),
                     });
                 }
             }
@@ -99,7 +99,7 @@ pub fn parse_toml_document<'a>(
                     statements.push(ast::BodyStmt {
                         ws_pre: smuggled_whitespace.smuggle_decor(decor),
                         statement: ast::RootStmt::Build(recipe),
-                        ws_trailing: None,
+                        trailing: trailing_ignore(),
                     });
                 }
             }
@@ -164,7 +164,7 @@ fn parse_config_table<'a>(
                 ws_3: ws_ignore(),
                 value,
             }),
-            ws_trailing: None,
+            trailing: trailing_ignore(),
         });
     }
 
@@ -430,7 +430,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                             ws_2: ws_ignore(),
                             expr: value,
                         },
-                        ws_trailing: None,
+                        trailing: trailing_ignore(),
                     });
                 }
 
@@ -525,7 +525,7 @@ fn parse_table_expr<T: toml_edit::TableLike + ?Sized>(
                                 ws_2: ws_ignore(),
                                 expr: ast::Expr::StringExpr(replacement),
                             },
-                            ws_trailing: None,
+                            trailing: trailing_ignore(),
                         }],
                         ws_trailing: ws_ignore(),
                         token_close: ast::token::Token(span.end),
@@ -582,7 +582,7 @@ fn parse_value_expr(toml: &toml_edit::Value) -> Result<ast::Expr, TomlError> {
                 items.push(ast::ListItem {
                     ws_pre: ws_ignore(),
                     item,
-                    ws_trailing: None,
+                    trailing: trailing_ignore(),
                 });
             }
             Ok(ast::Expr::List(ast::ListExpr {
@@ -611,7 +611,7 @@ fn parse_item_expr(toml: &toml_edit::Item) -> Result<ast::Expr, TomlError> {
                 items.push(ast::ListItem {
                     ws_pre: ws_ignore(),
                     item,
-                    ws_trailing: None,
+                    trailing: trailing_ignore(),
                 });
             }
             Ok(ast::Expr::List(ast::ListExpr {
@@ -851,7 +851,7 @@ fn parse_command_recipe<'a>(
                 ws_1: ws_ignore(),
                 param: build,
             }),
-            ws_trailing: None,
+            trailing: trailing_ignore(),
         });
     }
 
@@ -864,7 +864,7 @@ fn parse_command_recipe<'a>(
                 ws_1: ws_ignore(),
                 param: pre,
             }),
-            ws_trailing: None,
+            trailing: trailing_ignore(),
         });
     }
 
@@ -877,7 +877,7 @@ fn parse_command_recipe<'a>(
                 ws_1: ws_ignore(),
                 param: ast::ConfigBool(Span::ignore(), capture),
             }),
-            ws_trailing: None,
+            trailing: trailing_ignore(),
         });
     }
 
@@ -889,7 +889,7 @@ fn parse_command_recipe<'a>(
             ws_1: ws_ignore(),
             param: value,
         }),
-        ws_trailing: None,
+        trailing: trailing_ignore(),
     }));
 
     if let Some(post) = post_message {
@@ -901,7 +901,7 @@ fn parse_command_recipe<'a>(
                 ws_1: ws_ignore(),
                 param: post,
             }),
-            ws_trailing: None,
+            trailing: trailing_ignore(),
         });
     }
 
@@ -986,7 +986,7 @@ fn parse_build_recipe<'a>(
                 ws_1: ws_ignore(),
                 param: from,
             }),
-            ws_trailing: None,
+            trailing: trailing_ignore(),
         });
     }
 
@@ -999,7 +999,7 @@ fn parse_build_recipe<'a>(
                 ws_1: ws_ignore(),
                 param: depfile,
             }),
-            ws_trailing: None,
+            trailing: trailing_ignore(),
         });
     }
 
@@ -1012,7 +1012,7 @@ fn parse_build_recipe<'a>(
                 ws_1: ws_ignore(),
                 param: pre,
             }),
-            ws_trailing: None,
+            trailing: trailing_ignore(),
         });
     }
 
@@ -1024,7 +1024,7 @@ fn parse_build_recipe<'a>(
             ws_1: ws_ignore(),
             param: value,
         }),
-        ws_trailing: None,
+        trailing: trailing_ignore(),
     }));
 
     if let Some(post) = post_message {
@@ -1036,7 +1036,7 @@ fn parse_build_recipe<'a>(
                 ws_1: ws_ignore(),
                 param: post,
             }),
-            ws_trailing: None,
+            trailing: trailing_ignore(),
         });
     }
 

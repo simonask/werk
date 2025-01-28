@@ -346,8 +346,9 @@ fn interpolation_ops<'a>(input: &mut Input<'a>) -> PResult<Vec<ast::Interpolatio
 
 fn interpolation_op<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationOp<'a>> {
     alt((
-        interpolation_op_replace_ext.map(|(from, to)| {
-            ast::InterpolationOp::ReplaceExtension(Cow::from(from), Cow::from(to))
+        interpolation_op_replace_ext.map(|(from, to)| ast::InterpolationOp::ReplaceExtension {
+            from: Cow::from(from),
+            to: Cow::from(to),
         }),
         interpolation_op_regex_replace.map(ast::InterpolationOp::RegexReplace),
     ))
@@ -422,7 +423,10 @@ mod tests {
                     stem: ast::InterpolationStem::CaptureGroup(1),
                     options: Some(Box::new(ast::InterpolationOptions {
                         ops: vec![
-                            ast::InterpolationOp::ReplaceExtension(".ext1".into(), ".ext2".into()),
+                            ast::InterpolationOp::ReplaceExtension {
+                                from: ".ext1".into(),
+                                to: ".ext2".into(),
+                            },
                             ast::InterpolationOp::ResolveOsPath,
                         ],
                         join: None,
@@ -529,10 +533,10 @@ mod tests {
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
                 options: Some(Box::new(ast::InterpolationOptions {
-                    ops: vec![ast::InterpolationOp::ReplaceExtension(
-                        ".ext1".into(),
-                        ".ext2".into()
-                    )],
+                    ops: vec![ast::InterpolationOp::ReplaceExtension {
+                        from: ".ext1".into(),
+                        to: ".ext2".into()
+                    }],
                     join: None,
                 })),
             }
@@ -564,7 +568,10 @@ mod tests {
                 stem: ast::InterpolationStem::Implied,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![
-                        ast::InterpolationOp::ReplaceExtension(".ext1".into(), ".ext2".into()),
+                        ast::InterpolationOp::ReplaceExtension {
+                            from: ".ext1".into(),
+                            to: ".ext2".into()
+                        },
                         ast::InterpolationOp::RegexReplace(ast::RegexInterpolationOp {
                             regex: regex::Regex::new("regex").unwrap(),
                             replacer: "replacement".into(),
@@ -597,10 +604,10 @@ mod tests {
             ast::Interpolation {
                 stem: ast::InterpolationStem::Ident("name".into()),
                 options: Some(Box::new(ast::InterpolationOptions {
-                    ops: vec![ast::InterpolationOp::ReplaceExtension(
-                        ".ext1".into(),
-                        ".ext2".into()
-                    )],
+                    ops: vec![ast::InterpolationOp::ReplaceExtension {
+                        from: ".ext1".into(),
+                        to: ".ext2".into()
+                    }],
                     join: None,
                 })),
             }
@@ -632,7 +639,10 @@ mod tests {
                 stem: ast::InterpolationStem::Ident("name".into()),
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![
-                        ast::InterpolationOp::ReplaceExtension(".ext1".into(), ".ext2".into()),
+                        ast::InterpolationOp::ReplaceExtension {
+                            from: ".ext1".into(),
+                            to: ".ext2".into()
+                        },
                         ast::InterpolationOp::RegexReplace(ast::RegexInterpolationOp {
                             regex: regex::Regex::new("regex").unwrap(),
                             replacer: "replacement".into(),
