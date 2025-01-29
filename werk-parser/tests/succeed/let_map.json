@@ -1,0 +1,19 @@
+[
+    {
+        "Let": {
+            "ident": "foo",
+            "expr": {
+                "type": "StringExpr",
+                "value": "bar"
+            },
+            "ops": [
+                {
+                    "Map": {
+                        "type": "StringExpr",
+                        "value": "{}"
+                    }
+                }
+            ]
+        }
+    }
+]

@@ -10,9 +10,9 @@ use werk_parser::{
 };
 
 use crate::{
-    BuildRecipeScope, Env, Error, EvalError, Lookup, LookupValue, MatchScope, Pattern,
-    PatternBuilder, RunCommand, Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError,
-    SubexprScope, TaskRecipeScope, Value, Workspace,
+    BuildRecipeScope, Env, EvalError, Lookup, LookupValue, MatchScope, Pattern, PatternBuilder,
+    RunCommand, Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError, SubexprScope,
+    TaskRecipeScope, Value, Workspace,
 };
 
 /// Evaluated value, which keeps track of "outdatedness" with respect to cached
@@ -126,6 +126,7 @@ impl<T> std::ops::DerefMut for Eval<T> {
 
 pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, EvalError> {
     match expr {
+        ast::Expr::SubExpr(expr) => eval_chain(scope, &expr.expr),
         ast::Expr::StringExpr(expr) => Ok(eval_string_expr(scope, expr)?.map(Value::String)),
         ast::Expr::Shell(expr) => Ok(eval_shell(scope, &expr.param)?.map(Value::String)),
         ast::Expr::Read(expr) => Ok(eval_read(scope, &expr.param)?.map(Value::String)),
@@ -183,7 +184,7 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             let mut items = Vec::with_capacity(list_expr.items.len());
             let mut used = Used::none();
             for expr in &list_expr.items {
-                let eval_item = eval(scope, &expr.item)?;
+                let eval_item = eval_chain(scope, &expr.item)?;
                 used |= eval_item.used;
                 items.push(eval_item.value);
             }
@@ -193,21 +194,22 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             })
         }
         ast::Expr::Ident(ident) => scope
-            .get(Lookup::Ident(ident.ident))
-            .ok_or_else(|| EvalError::NoSuchIdentifier(ident.span, ident.ident.to_owned()))
+            .get(Lookup::Ident(&ident.ident))
+            .ok_or_else(|| EvalError::NoSuchIdentifier(ident.span, ident.ident.to_string()))
             .map(LookupValue::into_owned),
-        ast::Expr::Chain(chain) => {
-            let mut value = eval(scope, &chain.head)?;
-            for entry in &chain.tail {
-                value = eval_op(scope, &entry.expr, value)?;
-            }
-            Ok(value)
-        }
         ast::Expr::Error(expr) => {
             let message = eval_string_expr(scope, &expr.param)?;
             Err(EvalError::ErrorExpression(expr.span, message.value))
         }
     }
+}
+
+pub fn eval_chain(scope: &dyn Scope, expr: &ast::ExprChain<'_>) -> Result<Eval<Value>, EvalError> {
+    let mut value = eval(scope, &expr.expr)?;
+    for entry in &expr.ops {
+        value = eval_op(scope, &entry.expr, value)?;
+    }
+    Ok(value)
 }
 
 pub fn eval_op(
@@ -216,6 +218,10 @@ pub fn eval_op(
     param: Eval<Value>,
 ) -> Result<Eval<Value>, EvalError> {
     match expr {
+        ast::ExprOp::SubExpr(expr) => {
+            let subscope = SubexprScope::new(scope, &param);
+            eval_chain(&subscope, &expr.expr)
+        }
         ast::ExprOp::Match(match_expr) => eval_match_expr(scope, match_expr, param).map(Into::into),
         ast::ExprOp::Map(expr) => eval_map(scope, expr, param),
         ast::ExprOp::Flatten(_) => Ok(eval_flatten(scope, param)),
@@ -254,7 +260,7 @@ pub fn eval_match_expr(
     // Apply the match recursively to the input.
     fn apply_match_recursively(
         scope: &dyn Scope,
-        patterns: &[(Pattern<'_>, &ast::Expr<'_>)],
+        patterns: &[(Pattern<'_>, &ast::ExprChain<'_>)],
         value: Value,
         used: &mut Used,
     ) -> Result<Value, EvalError> {
@@ -276,7 +282,7 @@ pub fn eval_match_expr(
 
     fn apply_match(
         scope: &dyn Scope,
-        patterns: &[(Pattern<'_>, &ast::Expr<'_>)],
+        patterns: &[(Pattern<'_>, &ast::ExprChain<'_>)],
         input_string: String,
         used: &mut Used,
     ) -> Result<Value, EvalError> {
@@ -290,7 +296,7 @@ pub fn eval_match_expr(
             // we are manually collecting used variables
             let matched_string = Eval::inherent(Value::String(input_string));
             let scope = MatchScope::new(scope, &pattern_match, &matched_string);
-            let new_value = eval(&scope, replacement_expr)?;
+            let new_value = eval_chain(&scope, replacement_expr)?;
             *used |= new_value.used;
             return Ok(new_value.value);
         }
@@ -322,7 +328,7 @@ pub fn eval_filter_match(
     // Apply the match recursively to the input.
     fn apply_filter_match_recursively(
         scope: &dyn Scope,
-        patterns: &[(Pattern<'_>, &ast::Expr<'_>)],
+        patterns: &[(Pattern<'_>, &ast::ExprChain<'_>)],
         value: Value,
         used: &mut Used,
         result: &mut Vec<Value>,
@@ -340,7 +346,7 @@ pub fn eval_filter_match(
 
     fn apply_filter_match(
         scope: &dyn Scope,
-        patterns: &[(Pattern<'_>, &ast::Expr<'_>)],
+        patterns: &[(Pattern<'_>, &ast::ExprChain<'_>)],
         input_string: String,
         used: &mut Used,
         result: &mut Vec<Value>,
@@ -355,7 +361,7 @@ pub fn eval_filter_match(
             // we are manually collecting used variables
             let matched_string = Eval::inherent(Value::String(input_string));
             let scope = MatchScope::new(scope, &pattern_match, &matched_string);
-            let new_value = eval(&scope, replacement_expr)?;
+            let new_value = eval_chain(&scope, replacement_expr)?;
             *used |= new_value.used;
             result.push(new_value.value);
             break;
@@ -405,7 +411,7 @@ fn eval_map(
     fn apply_map_recursively(
         scope: &dyn Scope,
         value: Value,
-        map: &ast::StringExpr<'_>,
+        map: &ast::Expr<'_>,
         used: &mut Used,
     ) -> Result<Value, EvalError> {
         match value {
@@ -420,9 +426,9 @@ fn eval_map(
             value @ Value::String(_) => {
                 let input = Eval::inherent(value);
                 let subscope = SubexprScope::new(scope, &input);
-                let new_value = eval_string_expr(&subscope, map)?;
+                let new_value = eval(&subscope, map)?;
                 *used |= new_value.used;
-                Ok(Value::String(new_value.value))
+                Ok(new_value.value)
             }
         }
     }
@@ -876,71 +882,6 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
     })
 }
 
-fn eval_shell_commands_into<S: Scope>(
-    scope: &S,
-    expr: &ast::Expr,
-    cmds: &mut Vec<ShellCommandLine>,
-) -> Result<Used, Error> {
-    let span = expr.span();
-
-    match expr {
-        ast::Expr::StringExpr(string_expr)
-        | ast::Expr::Shell(ast::ShellExpr {
-            param: string_expr, ..
-        }) => {
-            let command = eval_shell_command(scope, string_expr)?;
-            cmds.push(command.value);
-            Ok(command.used)
-        }
-        ast::Expr::Read(_) => Err(EvalError::UnexpectedExpressionType(span, "read").into()),
-        ast::Expr::Glob(_) => Err(EvalError::UnexpectedExpressionType(span, "glob").into()),
-        ast::Expr::Which(_) => Err(EvalError::UnexpectedExpressionType(span, "which").into()),
-        ast::Expr::Env(_) => Err(EvalError::UnexpectedExpressionType(span, "env").into()),
-        ast::Expr::List(list) => {
-            let mut used = Used::none();
-            for item in &list.items {
-                used |= eval_shell_commands_into(scope, &item.item, cmds)?;
-            }
-            Ok(used)
-        }
-        ast::Expr::Ident(_) => Err(EvalError::UnexpectedExpressionType(
-            span,
-            "identifiers cannot be used when building commands",
-        )
-        .into()),
-        ast::Expr::Chain(_) => Err(EvalError::UnexpectedExpressionType(
-            span,
-            "chain expressions cannot be used to build commands",
-        )
-        .into()),
-        ast::Expr::Error(expr) => {
-            let message = eval_string_expr(scope, &expr.param)?;
-            Err(EvalError::ErrorExpression(expr.span, message.value).into())
-        }
-    }
-}
-
-pub fn eval_shell_commands<S: Scope>(
-    scope: &S,
-    expr: &ast::Expr,
-) -> Result<Vec<ShellCommandLine>, Error> {
-    let mut cmds = Vec::new();
-    eval_shell_commands_into(scope, expr, &mut cmds)?;
-    Ok(cmds)
-}
-
-/// Evaluate shell commands, run `which` on all of them (changing the `program`
-/// member of the returned `ShellCommandLine`), and detect if the resolved
-/// command is different from the cached path in .werk-cache.toml.
-pub fn eval_shell_commands_run_which_and_detect_outdated<S: Scope>(
-    scope: &S,
-    expr: &ast::Expr,
-) -> Result<Eval<Vec<ShellCommandLine>>, Error> {
-    let mut value = Vec::new();
-    let used = eval_shell_commands_into(scope, expr, &mut value)?;
-    Ok(Eval { value, used })
-}
-
 fn eval_string_interpolation_stem<'a, P: Scope + ?Sized>(
     scope: &'a P,
     span: Span,
@@ -971,7 +912,7 @@ fn eval_string_interpolation_ops(
 ) -> Result<(), EvalError> {
     for op in ops {
         match op {
-            ast::InterpolationOp::ReplaceExtension(from, to) => {
+            ast::InterpolationOp::ReplaceExtension { from, to } => {
                 recursive_replace_extension(value, from, to);
             }
             ast::InterpolationOp::PrependEach(prefix) => recursive_prepend_each(value, prefix),
@@ -1128,11 +1069,11 @@ pub(crate) fn eval_build_recipe_statements(
     for stmt in body {
         match stmt.statement {
             ast::BuildRecipeStmt::Let(ref let_stmt) => {
-                let value = eval(scope, &let_stmt.value)?;
+                let value = eval_chain(scope, &let_stmt.value)?;
                 scope.set(let_stmt.ident.ident.to_string(), value);
             }
             ast::BuildRecipeStmt::From(ref expr) => {
-                let value = eval(scope, &expr.param)?;
+                let value = eval_chain(scope, &expr.param)?;
                 used |= value.used;
                 let offset = evaluated.explicit_dependencies.len();
                 value
@@ -1143,7 +1084,7 @@ pub(crate) fn eval_build_recipe_statements(
                 scope.push_input_files(&evaluated.explicit_dependencies[offset..]);
             }
             ast::BuildRecipeStmt::Depfile(ref expr) => {
-                let value = eval(scope, &expr.param)?;
+                let value = eval_chain(scope, &expr.param)?;
                 used |= &value.used;
                 match value.value {
                     Value::String(ref depfile) => {
@@ -1216,14 +1157,14 @@ pub(crate) fn eval_task_recipe_statements(
     for stmt in body {
         match stmt.statement {
             ast::TaskRecipeStmt::Let(ref let_stmt) => {
-                let value = eval(scope, &let_stmt.value)?;
+                let value = eval_chain(scope, &let_stmt.value)?;
                 scope.set(
                     let_stmt.ident.ident.to_string(),
                     Eval::inherent(value.value),
                 );
             }
             ast::TaskRecipeStmt::Build(ref expr) => {
-                let value = eval(scope, &expr.param)?;
+                let value = eval_chain(scope, &expr.param)?;
                 value.value.collect_strings_into(&mut evaluated.build);
             }
             ast::TaskRecipeStmt::Env(ref expr) => {

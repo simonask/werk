@@ -1,7 +1,7 @@
 use std::sync::OnceLock;
 
 use tests::mock_io::*;
-use werk_parser::ast;
+use werk_parser::{ast, LocatedError};
 use werk_runner::{Metadata, Runner};
 
 struct PragmaRegexes {
@@ -30,7 +30,7 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
     let path = std::path::Path::new(file);
     let test = Test::new(&source)
         .map_err(|err| anyhow::Error::msg(err.with_location(path, &source).to_string()))?;
-    let ast = test.ast.as_ref().unwrap();
+    let ast = &test.ast;
 
     // Interpret pragmas in the trailing comment of the werkfile.
     let trailing_whitespace = ast.get_whitespace(ast.root.ws_trailing).trim().lines();
@@ -68,7 +68,21 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
         }
     }
 
-    let workspace = test.create_workspace(&[])?;
+    let workspace = match test.create_workspace(&[]) {
+        Ok(workspace) => workspace,
+        Err(werk_runner::Error::Eval(error)) => {
+            eprintln!(
+                "{}",
+                LocatedError {
+                    error,
+                    file_name: file,
+                    source_code: &source
+                }
+            );
+            panic!("evaluation failed")
+        }
+        Err(err) => panic!("unexpected error: {:?}", err),
+    };
 
     // Invoke the runner if there is a default target.
     if let Some(ast::ConfigStmt {

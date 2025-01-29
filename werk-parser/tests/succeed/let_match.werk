@@ -1,0 +1,5 @@
+let cflags = profile | match {
+    "debug" => ["-g", "-O0", "-fdiagnostics-color=always", "-fcolor-diagnostics", "-fansi-escape-codes"]
+    "release" => ["-O3", "-fdiagnostics-color=always", "-fcolor-diagnostics", "-fansi-escape-codes"]
+    "%" => error "Unknown profile '{}'; valid options are 'debug' and 'release'"
+}

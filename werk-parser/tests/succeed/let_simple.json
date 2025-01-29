@@ -1,0 +1,32 @@
+[
+    {
+        "Let": {
+            "ident": "cc",
+            "expr": {
+                "type": "Which",
+                "value": "clang"
+            },
+            "ops": []
+        }
+    },
+    {
+        "Let": {
+            "ident": "ld",
+            "expr": {
+                "type": "Ident",
+                "value": "cc"
+            },
+            "ops": []
+        }
+    },
+    {
+        "Let": {
+            "ident": "profile",
+            "expr": {
+                "type": "StringExpr",
+                "value": "debug"
+            },
+            "ops": []
+        }
+    }
+]

@@ -212,21 +212,24 @@ impl<'a> Workspace<'a> {
                 }
                 ast::RootStmt::Let(ref let_stmt) => {
                     let hash = compute_stable_semantic_hash(&let_stmt.value);
-                    if let Some(global_override) = self.defines.get(let_stmt.ident.ident) {
+                    if let Some(global_override) = self.defines.get(&*let_stmt.ident.ident) {
                         tracing::trace!(
                             "Overriding global variable `{}` with `{}`",
                             let_stmt.ident.ident,
                             global_override
                         );
                         self.manifest.globals.insert(
-                            let_stmt.ident.ident.to_owned(),
+                            let_stmt.ident.ident.to_string(),
                             GlobalVar {
                                 value: Eval::using_vars(
                                     global_override.clone().into(),
                                     [
-                                        UsedVariable::Global(let_stmt.ident.ident.to_owned(), hash),
+                                        UsedVariable::Global(
+                                            let_stmt.ident.ident.to_string(),
+                                            hash,
+                                        ),
                                         UsedVariable::Define(
-                                            let_stmt.ident.ident.to_owned(),
+                                            let_stmt.ident.ident.to_string(),
                                             compute_stable_hash(global_override),
                                         ),
                                     ],
@@ -236,13 +239,13 @@ impl<'a> Workspace<'a> {
                         );
                     } else {
                         let scope = RootScope::new(self);
-                        let mut value = eval::eval(&scope, &let_stmt.value)?;
+                        let mut value = eval::eval_chain(&scope, &let_stmt.value)?;
                         value
                             .used
-                            .insert(UsedVariable::Global(let_stmt.ident.ident.to_owned(), hash));
+                            .insert(UsedVariable::Global(let_stmt.ident.ident.to_string(), hash));
                         tracing::trace!("(global) let `{}` = {:?}", let_stmt.ident, value);
                         self.manifest.globals.insert(
-                            let_stmt.ident.ident.to_owned(),
+                            let_stmt.ident.ident.to_string(),
                             GlobalVar {
                                 value,
                                 comment: doc_comment,
@@ -253,10 +256,10 @@ impl<'a> Workspace<'a> {
                 ast::RootStmt::Task(ref command_recipe) => {
                     let hash = compute_stable_semantic_hash(command_recipe);
                     self.manifest.task_recipes.insert(
-                        command_recipe.name.ident,
+                        &command_recipe.name.ident,
                         TaskRecipe {
                             span: command_recipe.span,
-                            name: command_recipe.name.ident,
+                            name: &command_recipe.name.ident,
                             doc_comment,
                             body: &command_recipe.body.statements,
                             hash,

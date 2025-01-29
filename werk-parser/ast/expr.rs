@@ -5,9 +5,18 @@ use crate::{
     SemanticHash,
 };
 
-use super::{token, Body, BodyStmt, Ident, PatternExpr, StringExpr, Whitespace};
+use super::{keyword, token, Body, BodyStmt, Ident, PatternExpr, StringExpr, Trailing, Whitespace};
 
-#[derive(Clone, Debug, PartialEq)]
+/// "Atomic" expression (no pipe chaining).
+///
+/// Pipe chains always start with an atomic expression, optionally followed by a
+/// chain of `| op | ...`. A chained expression becomes "atomic" when it is in
+/// parentheses.
+///
+/// Most operations take an atomic expression as a parameter - in other words,
+/// passing the output of a pipe expression as a parameter to an operation requires that it is parenthesized.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum Expr<'a> {
     // Look up variable in scope.
     Ident(Ident<'a>),
@@ -17,10 +26,9 @@ pub enum Expr<'a> {
     Glob(GlobExpr<'a>),
     Which(WhichExpr<'a>),
     Env(EnvExpr<'a>),
-    List(ListExpr<Expr<'a>>),
-    /// `<expr> | ...`
-    Chain(ChainExpr<'a>),
-
+    List(ListExpr<ExprChain<'a>>),
+    /// `(<expr>)`
+    SubExpr(SubExpr<'a>),
     Error(ErrorExpr<'a>),
 }
 
@@ -42,7 +50,7 @@ impl Spanned for Expr<'_> {
             Expr::Which(expr) => expr.span,
             Expr::Env(expr) => expr.span,
             Expr::List(list) => list.span,
-            Expr::Chain(chain) => chain.span,
+            Expr::SubExpr(expr) => expr.span,
             Expr::Error(expr) => expr.span,
         }
     }
@@ -60,11 +68,28 @@ impl SemanticHash for Expr<'_> {
             Expr::Which(s) => s.semantic_hash(state),
             Expr::Env(s) => s.semantic_hash(state),
             Expr::List(list) => list.semantic_hash(state),
-            Expr::Chain(expr) => expr.semantic_hash(state),
+            Expr::SubExpr(expr) => expr.expr.semantic_hash(state),
             // The error message does not contribute to outdatedness.
             Expr::Error(_) => (),
         }
     }
+}
+
+/// Parenthesized sub-expression.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct SubExpr<'a> {
+    #[serde(skip, default)]
+    pub span: Span,
+    #[serde(skip, default)]
+    pub token_open: token::ParenOpen,
+    #[serde(skip, default)]
+    pub ws_1: Whitespace,
+    pub expr: Box<ExprChain<'a>>,
+    #[serde(skip, default)]
+    pub ws_2: Whitespace,
+    #[serde(skip, default)]
+    pub token_close: token::ParenClose,
 }
 
 /// An operation within an expression chain (`... | <op>`).
@@ -72,8 +97,9 @@ impl SemanticHash for Expr<'_> {
 /// These are expressions that take an input (left-hand side of the pipe symbol)
 /// and produce an output, which will be passed to any subsequent operations, or
 /// returned as the value.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ExprOp<'a> {
+    SubExpr(SubExpr<'a>),
     Match(MatchExpr<'a>),
     Map(MapExpr<'a>),
     Flatten(FlattenExpr<'a>),
@@ -94,6 +120,7 @@ impl Spanned for ExprOp<'_> {
     #[inline]
     fn span(&self) -> Span {
         match self {
+            ExprOp::SubExpr(expr) => expr.span,
             ExprOp::Match(expr) => expr.span,
             ExprOp::Map(expr) => expr.span,
             ExprOp::Flatten(expr) => expr.span(),
@@ -116,6 +143,7 @@ impl SemanticHash for ExprOp<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
+            ExprOp::SubExpr(expr) => expr.expr.semantic_hash(state),
             ExprOp::Match(expr) => expr.semantic_hash(state),
             ExprOp::Map(expr) => expr.semantic_hash(state),
             ExprOp::Filter(expr) => expr.semantic_hash(state),
@@ -136,12 +164,16 @@ impl SemanticHash for ExprOp<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ListExpr<E> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub token_open: token::BracketOpen,
     pub items: Vec<ListItem<E>>,
+    #[serde(skip, default)]
     pub ws_trailing: Whitespace,
+    #[serde(skip, default)]
     pub token_close: token::BracketClose,
 }
 
@@ -151,11 +183,14 @@ impl<E: SemanticHash> SemanticHash for ListExpr<E> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct ListItem<E> {
+    #[serde(skip, default)]
     pub ws_pre: Whitespace,
     pub item: E,
-    pub ws_trailing: Option<(Whitespace, token::Comma)>,
+    #[serde(skip, default)]
+    pub trailing: Trailing<token::Comma>,
 }
 
 impl<E: SemanticHash> SemanticHash for ListItem<E> {
@@ -164,7 +199,7 @@ impl<E: SemanticHash> SemanticHash for ListItem<E> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MatchBody<'a> {
     Single(Box<MatchArm<'a>>),
     Braced(Body<MatchArm<'a>>),
@@ -240,16 +275,20 @@ impl SemanticHash for MatchBody<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MatchArm<'a> {
+    #[serde(skip, default)]
     pub span: Span,
     pub pattern: PatternExpr<'a>,
     /// Whitespace between the pattern and the fat arrow.
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
-    pub token_fat_arrow: token::FatArrow,
+    #[serde(skip, default)]
+    pub token_fat_arrow: keyword::FatArrow,
     /// Whitespace between the fat arrow and the expression.
+    #[serde(skip, default)]
     pub ws_2: Whitespace,
-    pub expr: Expr<'a>,
+    pub expr: ExprChain<'a>,
 }
 
 impl SemanticHash for MatchArm<'_> {
@@ -259,28 +298,56 @@ impl SemanticHash for MatchArm<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ChainExpr<'a> {
+/// Expression with optional chain of operations. This is valid after `let =`,
+/// inside parentheses, as list elements, or the right-hand side of braced match arms.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ExprChain<'a> {
+    #[serde(skip, default)]
     pub span: Span,
     /// The initial expression of the chain.
-    pub head: Box<Expr<'a>>,
+    pub expr: Expr<'a>,
     /// All subsequent links, i.e. each `| expr` part.
-    pub tail: Vec<ChainSubExpr<'a>>,
+    pub ops: Vec<ChainSubExpr<'a>>,
 }
 
-impl SemanticHash for ChainExpr<'_> {
+impl<'a> From<Expr<'a>> for ExprChain<'a> {
+    fn from(expr: Expr<'a>) -> Self {
+        Self {
+            span: expr.span(),
+            expr,
+            ops: Vec::new(),
+        }
+    }
+}
+
+impl<'a> From<StringExpr<'a>> for ExprChain<'a> {
+    fn from(atom: StringExpr<'a>) -> Self {
+        Self {
+            span: atom.span,
+            expr: Expr::StringExpr(atom),
+            ops: Vec::new(),
+        }
+    }
+}
+
+impl SemanticHash for ExprChain<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.head.semantic_hash(state);
-        self.tail.as_slice().semantic_hash(state);
+        self.expr.semantic_hash(state);
+        self.ops.as_slice().semantic_hash(state);
     }
 }
 
 /// Entry in an expression chain `| expr`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct ChainSubExpr<'a> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
+    #[serde(skip, default)]
     pub token_pipe: token::Pipe,
+    #[serde(skip, default)]
     pub ws_2: Whitespace,
     pub expr: ExprOp<'a>,
 }
@@ -291,32 +358,36 @@ impl SemanticHash for ChainSubExpr<'_> {
     }
 }
 
-pub type JoinExpr<'a> = KwExpr<token::Join, StringExpr<'a>>;
-pub type MapExpr<'a> = KwExpr<token::Map, StringExpr<'a>>;
-pub type GlobExpr<'a> = KwExpr<token::Glob, StringExpr<'a>>;
-pub type WhichExpr<'a> = KwExpr<token::Which, StringExpr<'a>>;
-pub type EnvExpr<'a> = KwExpr<token::Env, StringExpr<'a>>;
-pub type ShellExpr<'a> = KwExpr<token::Shell, StringExpr<'a>>;
-pub type ReadExpr<'a> = KwExpr<token::Read, StringExpr<'a>>;
-pub type InfoExpr<'a> = KwExpr<token::Info, StringExpr<'a>>;
-pub type WarnExpr<'a> = KwExpr<token::Warn, StringExpr<'a>>;
-pub type ErrorExpr<'a> = KwExpr<token::Error, StringExpr<'a>>;
-pub type AssertEqExpr<'a> = KwExpr<token::AssertEq, Box<Expr<'a>>>;
-pub type AssertMatchExpr<'a> = KwExpr<token::AssertEq, Box<PatternExpr<'a>>>;
-pub type FlattenExpr<'a> = token::Flatten;
-pub type SplitExpr<'a> = KwExpr<token::Split, PatternExpr<'a>>;
-pub type LinesExpr<'a> = token::Lines;
-pub type FilterExpr<'a> = KwExpr<token::Filter, PatternExpr<'a>>;
-pub type FilterMatchExpr<'a> = KwExpr<token::FilterMatch, MatchBody<'a>>;
-pub type MatchExpr<'a> = KwExpr<token::Match, MatchBody<'a>>;
-pub type DiscardExpr<'a> = KwExpr<token::Discard, PatternExpr<'a>>;
+pub type JoinExpr<'a> = KwExpr<keyword::Join, StringExpr<'a>>;
+pub type MapExpr<'a> = KwExpr<keyword::Map, Expr<'a>>;
+pub type GlobExpr<'a> = KwExpr<keyword::Glob, StringExpr<'a>>;
+pub type WhichExpr<'a> = KwExpr<keyword::Which, StringExpr<'a>>;
+pub type EnvExpr<'a> = KwExpr<keyword::Env, StringExpr<'a>>;
+pub type ShellExpr<'a> = KwExpr<keyword::Shell, StringExpr<'a>>;
+pub type ReadExpr<'a> = KwExpr<keyword::Read, StringExpr<'a>>;
+pub type InfoExpr<'a> = KwExpr<keyword::Info, StringExpr<'a>>;
+pub type WarnExpr<'a> = KwExpr<keyword::Warn, StringExpr<'a>>;
+pub type ErrorExpr<'a> = KwExpr<keyword::Error, StringExpr<'a>>;
+pub type AssertEqExpr<'a> = KwExpr<keyword::AssertEq, Box<Expr<'a>>>;
+pub type AssertMatchExpr<'a> = KwExpr<keyword::AssertEq, Box<PatternExpr<'a>>>;
+pub type FlattenExpr<'a> = keyword::Flatten;
+pub type SplitExpr<'a> = KwExpr<keyword::Split, PatternExpr<'a>>;
+pub type LinesExpr<'a> = keyword::Lines;
+pub type FilterExpr<'a> = KwExpr<keyword::Filter, PatternExpr<'a>>;
+pub type FilterMatchExpr<'a> = KwExpr<keyword::FilterMatch, MatchBody<'a>>;
+pub type MatchExpr<'a> = KwExpr<keyword::Match, MatchBody<'a>>;
+pub type DiscardExpr<'a> = KwExpr<keyword::Discard, PatternExpr<'a>>;
 
 /// Expression that is a pair of a token and a parameter, such as `<keyword>
 /// <expr>`. Example: `join ","`
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct KwExpr<Token, Param> {
+    #[serde(skip, default)]
     pub span: Span,
+    #[serde(skip, default)]
     pub token: Token,
+    #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub param: Param,
 }

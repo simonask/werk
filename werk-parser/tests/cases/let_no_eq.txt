@@ -1,8 +1,0 @@
-error: expected character =
- --> INPUT:1:1
-  |
-1 | let hello
-  | -        ^ `let <identifier>` must be followed by a `=`
-  | |
-  | info: while parsing `let` statement
-  |

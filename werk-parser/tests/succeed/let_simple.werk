@@ -1,0 +1,5 @@
+# Path to the C compiler.
+let cc = which "clang"
+let ld = cc
+# "debug" or "release"
+let profile = "debug"

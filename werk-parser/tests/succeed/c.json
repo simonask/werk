@@ -1,0 +1,348 @@
+[
+    {
+        "Config": {
+            "ident": "out-dir",
+            "value": "../../target/examples/c"
+        }
+    },
+    {
+        "Config": {
+            "ident": "default",
+            "value": "build"
+        }
+    },
+    {
+        "Let": {
+            "ident": "cc",
+            "expr": {
+                "type": "Which",
+                "value": "clang"
+            },
+            "ops": []
+        }
+    },
+    {
+        "Let": {
+            "ident": "ld",
+            "expr": {
+                "type": "Ident",
+                "value": "cc"
+            },
+            "ops": []
+        }
+    },
+    {
+        "Let": {
+            "ident": "profile",
+            "expr": {
+                "type": "StringExpr",
+                "value": "debug"
+            },
+            "ops": []
+        }
+    },
+    {
+        "Let": {
+            "ident": "executable",
+            "expr": {
+                "type": "StringExpr",
+                "value": "{profile}/example{EXE_SUFFIX}"
+            },
+            "ops": []
+        }
+    },
+    {
+        "Let": {
+            "ident": "cflags",
+            "expr": {
+                "type": "Ident",
+                "value": "profile"
+            },
+            "ops": [
+                {
+                    "Match": {
+                        "Braced": [
+                            {
+                                "pattern": "debug",
+                                "expr": {
+                                    "expr": {
+                                        "type": "List",
+                                        "value": {
+                                            "items": [
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-g"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-O0"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-fdiagnostics-color=always"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-fcolor-diagnostics"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-fansi-escape-codes"
+                                                    },
+                                                    "ops": []
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "ops": []
+                                }
+                            },
+                            {
+                                "pattern": "release",
+                                "expr": {
+                                    "expr": {
+                                        "type": "List",
+                                        "value": {
+                                            "items": [
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-O3"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-fdiagnostics-color=always"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-fcolor-diagnostics"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-fansi-escape-codes"
+                                                    },
+                                                    "ops": []
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "ops": []
+                                }
+                            },
+                            {
+                                "pattern": "%",
+                                "expr": {
+                                    "expr": {
+                                        "type": "Error",
+                                        "value": "Unknown profile '{}'; valid options are 'debug' and 'release'"
+                                    },
+                                    "ops": []
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "Build": {
+            "pattern": "{profile}/%.o",
+            "body": [
+                {
+                    "From": {
+                        "expr": {
+                            "type": "StringExpr",
+                            "value": "{%}.c"
+                        },
+                        "ops": []
+                    }
+                },
+                {
+                    "Depfile": {
+                        "expr": {
+                            "type": "StringExpr",
+                            "value": "/{profile}/{%}.c.d"
+                        },
+                        "ops": []
+                    }
+                },
+                {
+                    "Run": {
+                        "type": "Shell",
+                        "value": "{cc} -c {cflags*} -o <out> <in>"
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "Build": {
+            "pattern": "{profile}/%.c.d",
+            "body": [
+                {
+                    "From": {
+                        "expr": {
+                            "type": "StringExpr",
+                            "value": "{%}.c"
+                        },
+                        "ops": []
+                    }
+                },
+                {
+                    "Run": {
+                        "type": "Shell",
+                        "value": "{cc} -MM -MT <in> -MF <out> <in>"
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "Build": {
+            "pattern": "{executable}",
+            "body": [
+                {
+                    "From": {
+                        "expr": {
+                            "type": "Glob",
+                            "value": "*.c"
+                        },
+                        "ops": [
+                            {
+                                "Match": {
+                                    "Braced": [
+                                        {
+                                            "pattern": "%.c",
+                                            "expr": {
+                                                "expr": {
+                                                    "type": "StringExpr",
+                                                    "value": "/{profile}{%}.o"
+                                                },
+                                                "ops": []
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "Run": {
+                        "type": "Shell",
+                        "value": "{ld} -o <out> <in*>"
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "Task": {
+            "name": "build",
+            "body": [
+                {
+                    "Build": {
+                        "expr": {
+                            "type": "Ident",
+                            "value": "executable"
+                        },
+                        "ops": []
+                    }
+                },
+                {
+                    "Info": "Build done for profile '{profile}'"
+                }
+            ]
+        }
+    },
+    {
+        "Task": {
+            "name": "run",
+            "body": [
+                {
+                    "Build": {
+                        "expr": {
+                            "type": "StringExpr",
+                            "value": "build"
+                        },
+                        "ops": []
+                    }
+                },
+                {
+                    "Run": {
+                        "type": "Shell",
+                        "value": "<executable>"
+                    }
+                }
+            ]
+        }
+    },
+    {
+        "Task": {
+            "name": "clean",
+            "body": [
+                {
+                    "Let": {
+                        "ident": "object-files",
+                        "expr": {
+                            "type": "Glob",
+                            "value": "*.c"
+                        },
+                        "ops": [
+                            {
+                                "Map": {
+                                    "type": "StringExpr",
+                                    "value": "{profile}{:.c=.o}"
+                                }
+                            }
+                        ]
+                    }
+                },
+                {
+                    "Run": {
+                        "type": "Block",
+                        "value": [
+                            {
+                                "type": "Delete",
+                                "value": {
+                                    "type": "Ident",
+                                    "value": "object-files"
+                                }
+                            },
+                            {
+                                "type": "Delete",
+                                "value": {
+                                    "type": "Ident",
+                                    "value": "executable"
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    }
+]

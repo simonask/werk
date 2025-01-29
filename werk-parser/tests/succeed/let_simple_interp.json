@@ -1,0 +1,12 @@
+[
+    {
+        "Let": {
+            "ident": "executable",
+            "expr": {
+                "type": "StringExpr",
+                "value": "{profile}/example{EXE_SUFFIX}"
+            },
+            "ops": []
+        }
+    }
+]

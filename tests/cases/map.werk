@@ -7,5 +7,5 @@ let result = input
 # map string
 let input = "a";
 let result = input
-    | map "hello {}"
+    | map ("hello {}" | assert-eq "hello a")
     | assert-eq "hello a"

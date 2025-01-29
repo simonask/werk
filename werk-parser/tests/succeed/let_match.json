@@ -1,0 +1,118 @@
+[
+    {
+        "Let": {
+            "ident": "cflags",
+            "expr": {
+                "type": "Ident",
+                "value": "profile"
+            },
+            "ops": [
+                {
+                    "Match": {
+                        "Braced": [
+                            {
+                                "pattern": "debug",
+                                "expr": {
+                                    "expr": {
+                                        "type": "List",
+                                        "value": {
+                                            "items": [
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-g"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-O0"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-fdiagnostics-color=always"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-fcolor-diagnostics"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-fansi-escape-codes"
+                                                    },
+                                                    "ops": []
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "ops": []
+                                }
+                            },
+                            {
+                                "pattern": "release",
+                                "expr": {
+                                    "expr": {
+                                        "type": "List",
+                                        "value": {
+                                            "items": [
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-O3"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-fdiagnostics-color=always"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-fcolor-diagnostics"
+                                                    },
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
+                                                        "type": "StringExpr",
+                                                        "value": "-fansi-escape-codes"
+                                                    },
+                                                    "ops": []
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "ops": []
+                                }
+                            },
+                            {
+                                "pattern": "%",
+                                "expr": {
+                                    "expr": {
+                                        "type": "Error",
+                                        "value": "Unknown profile '{}'; valid options are 'debug' and 'release'"
+                                    },
+                                    "ops": []
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    }
+]

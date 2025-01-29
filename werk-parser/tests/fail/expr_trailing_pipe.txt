@@ -1,0 +1,10 @@
+error: expected a chaining expression
+ --> INPUT:1:1
+  |
+1 | let foo = bar |
+  | -              ^
+  | |              |
+  | |              help: one of `join`, `flatten`, `map`, `match`, `env`, `glob`, `which`, `shell`, a string, or a sub-expression in parentheses
+  | |              expected a chaining expression
+  | info: while parsing `let` statement
+  |

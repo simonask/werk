@@ -2,7 +2,9 @@ error: expected identifier
  --> INPUT:1:5
   |
 1 | let = "hello"
-  | -   ^ `let` must be followed by an identifier
-  | |
+  | -   ^
+  | |   |
+  | |   help: `let` must be followed by an identifier
+  | |   expected identifier
   | info: while parsing `let` statement
   |

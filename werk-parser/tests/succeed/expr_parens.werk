@@ -1,0 +1,1 @@
+let paths = ["a", "b"] | map (env "{}")

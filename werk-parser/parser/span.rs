@@ -88,8 +88,22 @@ impl std::fmt::Debug for Span {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+impl From<Offset> for Span {
+    #[inline]
+    fn from(value: Offset) -> Self {
+        Self::from_offset_and_len(value, 0)
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct Offset(pub u32);
+
+impl Default for Offset {
+    #[inline]
+    fn default() -> Self {
+        Self::ignore()
+    }
+}
 
 impl std::fmt::Debug for Offset {
     #[inline]

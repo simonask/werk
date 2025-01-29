@@ -1,0 +1,10 @@
+error: expected identifier
+ --> INPUT:1:6
+  |
+1 | task "hello" {}
+  | -    ^
+  | |    |
+  | |    help: `task` must be followed by an identifier
+  | |    expected identifier
+  | info: while parsing task recipe
+  |

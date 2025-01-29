@@ -1,0 +1,27 @@
+[
+    {
+        "Let": {
+            "ident": "foo",
+            "expr": {
+                "type": "Ident",
+                "value": "bar"
+            },
+            "ops": [
+                {
+                    "Match": {
+                        "Single": {
+                            "pattern": "%",
+                            "expr": {
+                                "expr": {
+                                    "type": "StringExpr",
+                                    "value": "hello"
+                                },
+                                "ops": []
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    }
+]

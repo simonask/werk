@@ -1,0 +1,55 @@
+config out-dir = "../../target/examples/c"
+config default = "build"
+
+# Path to the C compiler.
+let cc = which "clang"
+let ld = cc
+# "debug" or "release"
+let profile = "debug"
+let executable = "{profile}/example{EXE_SUFFIX}"
+let cflags = profile | match {
+    "debug" => ["-g", "-O0", "-fdiagnostics-color=always", "-fcolor-diagnostics", "-fansi-escape-codes"]
+    "release" => ["-O3", "-fdiagnostics-color=always", "-fcolor-diagnostics", "-fansi-escape-codes"]
+    "%" => error "Unknown profile '{}'; valid options are 'debug' and 'release'"
+}
+
+# Build an object file from a C source file.
+build "{profile}/%.o" {
+    from "{%}.c"
+    depfile "/{profile}/{%}.c.d"
+    run "{cc} -c {cflags*} -o <out> <in>"
+}
+
+# Build the depfile for an object file.
+build "{profile}/%.c.d" {
+    from "{%}.c"
+    run "{cc} -MM -MT <in> -MF <out> <in>"
+}
+
+# Build the executable.
+build "{executable}" {
+    from glob "*.c" | match {
+        "%.c" => "/{profile}{%}.o"
+    }
+    run "{ld} -o <out> <in*>"
+}
+
+# Build the executable (shorthand).
+task build {
+    build executable
+    info "Build done for profile '{profile}'"
+}
+
+# Build and run the executable.
+task run {
+    build "build"
+    run "<executable>"
+}
+
+task clean {
+    let object-files = glob "*.c" | map "{profile}{:.c=.o}"
+    run {
+        delete object-files
+        delete executable
+    }
+}

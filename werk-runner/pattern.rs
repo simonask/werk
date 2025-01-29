@@ -174,8 +174,9 @@ impl<'a> PatternBuilder<'a> {
 }
 
 impl<'a> Pattern<'a> {
-    pub fn parse(pattern: &'a str) -> Result<Self, werk_parser::TomlParseError> {
-        let parsed = werk_parser::parse_string::parse_pattern_expr(pattern)?;
+    /// Parse a literal pattern with no context or scope. This is meant for testing.
+    pub fn parse(pattern: &'a str) -> Result<Self, werk_parser::Error> {
+        let parsed = werk_parser::parser::parse_pattern_expr_unquoted(pattern)?;
         let mut builder = PatternBuilder::default();
         for fragment in parsed.fragments {
             match fragment {
@@ -257,7 +258,7 @@ mod tests {
 
     #[test]
     fn match_stem() {
-        let pattern_expr = werk_parser::parse_string::parse_pattern_expr("%.c").unwrap();
+        let pattern_expr = werk_parser::parser::parse_pattern_expr_unquoted("%.c").unwrap();
         let mut builder = PatternBuilder::default();
         for fragment in pattern_expr.fragments {
             match fragment {
