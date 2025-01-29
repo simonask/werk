@@ -16,7 +16,7 @@ use winnow::{
     Parser,
 };
 
-use super::Parse;
+use super::{PResult, Parse};
 
 impl<'a> Parse<'a> for ast::StringExpr<'a> {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
@@ -212,8 +212,6 @@ fn escaped_char(input: &mut Input) -> PResult<char> {
 fn escaped_whitespace<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
     preceded('\\', multispace1).parse_next(input)
 }
-
-pub type PResult<T> = winnow::PResult<T, Error>;
 
 fn is_identifier_start(ch: char) -> bool {
     unicode_ident::is_xid_start(ch)

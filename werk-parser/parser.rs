@@ -22,7 +22,7 @@ pub use string::*;
 
 pub type Input<'a> = winnow::stream::LocatingSlice<&'a str>;
 pub type PError = crate::error::Error;
-pub type PResult<T> = winnow::PResult<T, PError>;
+pub type PResult<T> = winnow::ModalResult<T, PError>;
 
 /// Helper trait to parse the AST via type inference.
 ///
@@ -936,7 +936,7 @@ impl<'a, P, O> winnow::Parser<Input<'a>, O, Error> for WhileParsing<P>
 where
     P: winnow::Parser<Input<'a>, O, Error>,
 {
-    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<O, Error> {
+    fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<O> {
         let offset = input.location();
         let mut result = self.0.parse_next(input);
         if let Err(ErrMode::Cut(ref mut err)) = result {
@@ -951,7 +951,7 @@ impl<'a, P, O> winnow::Parser<Input<'a>, (O, Span), Error> for SpannedTokenParse
 where
     P: winnow::Parser<Input<'a>, O, Error>,
 {
-    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<(O, Span), Error> {
+    fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<(O, Span)> {
         let start = input.location();
         self.0.parse_next(input).map(|value| {
             let end = input.location();
@@ -965,7 +965,7 @@ impl<'a, P, O> winnow::Parser<Input<'a>, Span, Error> for TokenSpanParser<P, O>
 where
     P: winnow::Parser<Input<'a>, O, Error>,
 {
-    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<Span, Error> {
+    fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<Span> {
         let start = input.location();
         self.0.parse_next(input).map(|_| {
             let end = input.location();
@@ -979,7 +979,7 @@ impl<'a, P, O> winnow::Parser<Input<'a>, O, Error> for OrCut<P, O>
 where
     P: winnow::Parser<Input<'a>, O, Error>,
 {
-    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<O, Error> {
+    fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<O> {
         let location = input.location();
         let mut result = self.0.parse_next(input);
         if let Err(ErrMode::Backtrack(_)) = result {
@@ -995,7 +995,7 @@ impl<'a, P, O> winnow::Parser<Input<'a>, O, Error> for OrBacktrack<P, O>
 where
     P: winnow::Parser<Input<'a>, O, Error>,
 {
-    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<O, Error> {
+    fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<O> {
         let location = input.location();
         let mut result = self.0.parse_next(input);
         if let Err(ErrMode::Backtrack(_)) = result {
@@ -1011,7 +1011,7 @@ impl<'a, P, O> winnow::Parser<Input<'a>, O, Error> for Help<P, O>
 where
     P: winnow::Parser<Input<'a>, O, Error>,
 {
-    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<O, Error> {
+    fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<O> {
         let offset = input.location();
         let mut result = self.0.parse_next(input);
         if let Err(ErrMode::Backtrack(ref mut err) | ErrMode::Cut(ref mut err)) = result {
@@ -1026,7 +1026,7 @@ impl<'a, P, O> winnow::Parser<Input<'a>, O, Error> for AddErrorContext<P, O>
 where
     P: winnow::Parser<Input<'a>, O, Error>,
 {
-    fn parse_next(&mut self, input: &mut Input<'a>) -> winnow::PResult<O, Error> {
+    fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<O> {
         let offset = input.location();
         let mut result = self.0.parse_next(input);
         if let Err(ErrMode::Backtrack(ref mut err) | ErrMode::Cut(ref mut err)) = result {

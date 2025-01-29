@@ -7,8 +7,10 @@ use winnow::{
     },
     error::{StrContext, StrContextValue},
     token::{none_of, take_till},
-    PResult, Parser as _,
+    Parser as _,
 };
+
+type PResult<T> = winnow::ModalResult<T>;
 
 #[derive(Default, Clone, PartialEq)]
 pub struct Depfile {
