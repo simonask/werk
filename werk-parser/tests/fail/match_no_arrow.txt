@@ -2,8 +2,10 @@ error: expected keyword `=>`
  --> INPUT:1:31
   |
 1 | let foo = bar | match { "foo" }
-  | -               -             ^ pattern must be followed by `=>` in `match`
-  | |               |
+  | -               -             ^
+  | |               |             |
+  | |               |             help: pattern must be followed by `=>` in `match`
+  | |               |             expected keyword `=>`
   | |               info: while parsing match
   | info: while parsing `let` statement
   |

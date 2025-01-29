@@ -7,6 +7,7 @@ use crate::{
 };
 
 mod expr;
+pub mod keyword;
 mod string;
 pub mod token;
 
@@ -15,9 +16,16 @@ pub use string::*;
 
 /// Whitespace and comments within statements and expressions (not doc
 /// comments).
-#[derive(Default, PartialEq, Clone, Copy, Debug)]
+#[derive(Default, PartialEq, Clone, Copy)]
 #[must_use]
 pub struct Whitespace(pub Span);
+
+impl std::fmt::Debug for Whitespace {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// Trailing whitespace and comments in a block after each statement.
 #[derive(Default, Clone, Copy, Debug)]
@@ -56,7 +64,7 @@ pub const fn ws_ignore() -> Whitespace {
 }
 
 #[must_use]
-pub fn kw_ignore<K: token::Keyword>() -> K {
+pub fn kw_ignore<K: keyword::Keyword>() -> K {
     K::ignore()
 }
 
@@ -120,7 +128,7 @@ pub struct ConfigStmt<'a> {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
-    pub token_config: token::Config,
+    pub token_config: keyword::Config,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub ident: Ident<'a>,
@@ -220,7 +228,7 @@ pub struct CommandRecipe<'a> {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
-    pub token_task: token::Task,
+    pub token_task: keyword::Task,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub name: Ident<'a>,
@@ -241,7 +249,7 @@ pub struct BuildRecipe<'a> {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
-    pub token_build: token::Build,
+    pub token_build: keyword::Build,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub pattern: PatternExpr<'a>,
@@ -308,8 +316,8 @@ pub enum BuildRecipeStmt<'a> {
     Run(RunStmt<'a>),
     Info(InfoExpr<'a>),
     Warn(WarnExpr<'a>),
-    SetCapture(KwExpr<token::SetCapture, ConfigBool>),
-    SetNoCapture(KwExpr<token::SetNoCapture, ConfigBool>),
+    SetCapture(KwExpr<keyword::SetCapture, ConfigBool>),
+    SetNoCapture(KwExpr<keyword::SetNoCapture, ConfigBool>),
     Env(EnvStmt<'a>),
     EnvRemove(EnvRemoveStmt<'a>),
 }
@@ -340,8 +348,8 @@ pub enum TaskRecipeStmt<'a> {
     Run(RunStmt<'a>),
     Info(InfoExpr<'a>),
     Warn(WarnExpr<'a>),
-    SetCapture(KwExpr<token::SetCapture, ConfigBool>),
-    SetNoCapture(KwExpr<token::SetNoCapture, ConfigBool>),
+    SetCapture(KwExpr<keyword::SetCapture, ConfigBool>),
+    SetNoCapture(KwExpr<keyword::SetNoCapture, ConfigBool>),
     Env(EnvStmt<'a>),
     EnvRemove(EnvRemoveStmt<'a>),
 }
@@ -369,7 +377,7 @@ pub struct LetStmt<'a> {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
-    pub token_let: token::Let,
+    pub token_let: keyword::Let,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub ident: Ident<'a>,
@@ -379,7 +387,8 @@ pub struct LetStmt<'a> {
     pub token_eq: token::Eq,
     #[serde(skip, default)]
     pub ws_3: Whitespace,
-    pub value: Expr<'a>,
+    #[serde(flatten)]
+    pub value: ExprChain<'a>,
 }
 
 impl SemanticHash for LetStmt<'_> {
@@ -394,7 +403,7 @@ pub struct EnvStmt<'a> {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
-    pub token: token::Env,
+    pub token: keyword::Env,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub key: StringExpr<'a>,
@@ -414,13 +423,13 @@ impl SemanticHash for EnvStmt<'_> {
     }
 }
 
-pub type FromStmt<'a> = KwExpr<token::From, Expr<'a>>;
-pub type BuildStmt<'a> = KwExpr<token::Build, Expr<'a>>;
-pub type DepfileStmt<'a> = KwExpr<token::Depfile, Expr<'a>>;
-pub type RunStmt<'a> = KwExpr<token::Run, RunExpr<'a>>;
-pub type ErrorStmt<'a> = KwExpr<token::Error, StringExpr<'a>>;
-pub type DeleteExpr<'a> = KwExpr<token::Delete, Expr<'a>>;
-pub type EnvRemoveStmt<'a> = KwExpr<token::RemoveEnv, StringExpr<'a>>;
+pub type FromStmt<'a> = KwExpr<keyword::From, ExprChain<'a>>;
+pub type BuildStmt<'a> = KwExpr<keyword::Build, ExprChain<'a>>;
+pub type DepfileStmt<'a> = KwExpr<keyword::Depfile, ExprChain<'a>>;
+pub type RunStmt<'a> = KwExpr<keyword::Run, RunExpr<'a>>;
+pub type ErrorStmt<'a> = KwExpr<keyword::Error, StringExpr<'a>>;
+pub type DeleteExpr<'a> = KwExpr<keyword::Delete, Expr<'a>>;
+pub type EnvRemoveStmt<'a> = KwExpr<keyword::RemoveEnv, StringExpr<'a>>;
 
 /// Things that can appear in the `command` part of recipes.
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -488,14 +497,14 @@ pub struct CopyExpr<'a> {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
-    pub token_copy: token::Copy,
+    pub token_copy: keyword::Copy,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub src: StringExpr<'a>,
     #[serde(skip, default)]
     pub ws_2: Whitespace,
     #[serde(skip, default)]
-    pub token_to: token::To,
+    pub token_to: keyword::To,
     #[serde(skip, default)]
     pub ws_3: Whitespace,
     pub dest: StringExpr<'a>,
@@ -513,14 +522,14 @@ pub struct WriteExpr<'a> {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
-    pub token_write: token::Write,
+    pub token_write: keyword::Write,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
     pub value: Expr<'a>,
     #[serde(skip, default)]
     pub ws_2: Whitespace,
     #[serde(skip, default)]
-    pub token_to: token::To,
+    pub token_to: keyword::To,
     #[serde(skip, default)]
     pub ws_3: Whitespace,
     pub path: Expr<'a>,

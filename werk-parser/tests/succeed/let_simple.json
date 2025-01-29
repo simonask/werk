@@ -2,28 +2,31 @@
     {
         "Let": {
             "ident": "cc",
-            "value": {
+            "expr": {
                 "type": "Which",
                 "value": "clang"
-            }
+            },
+            "ops": []
         }
     },
     {
         "Let": {
             "ident": "ld",
-            "value": {
+            "expr": {
                 "type": "Ident",
                 "value": "cc"
-            }
+            },
+            "ops": []
         }
     },
     {
         "Let": {
             "ident": "profile",
-            "value": {
+            "expr": {
                 "type": "StringExpr",
                 "value": "debug"
-            }
+            },
+            "ops": []
         }
     }
 ]

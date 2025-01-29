@@ -2,24 +2,18 @@
     {
         "Let": {
             "ident": "foo",
-            "value": {
-                "type": "Chain",
-                "value": {
-                    "head": {
+            "expr": {
+                "type": "StringExpr",
+                "value": "bar"
+            },
+            "ops": [
+                {
+                    "Map": {
                         "type": "StringExpr",
-                        "value": "bar"
-                    },
-                    "tail": [
-                        {
-                            "Map": {
-                                "stem": {
-                                    "type": "Implied"
-                                }
-                            }
-                        }
-                    ]
+                        "value": "{}"
+                    }
                 }
-            }
+            ]
         }
     }
 ]

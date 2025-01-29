@@ -2,9 +2,9 @@ error: expected a chaining expression
  --> INPUT:1:1
   |
 1 | let foo = bar |
-  | -              -
+  | -              ^
   | |              |
-  | |              pipe `|` must be followed by a chaining operation
-  | |              help: one of `join`, `flatten`, `map`, `match`, `env`, `glob`, `which`, `shell`, or a string expression
+  | |              help: one of `join`, `flatten`, `map`, `match`, `env`, `glob`, `which`, `shell`, a string, or a sub-expression in parentheses
+  | |              expected a chaining expression
   | info: while parsing `let` statement
   |

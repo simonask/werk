@@ -14,262 +14,185 @@
     {
         "Let": {
             "ident": "cc",
-            "value": {
+            "expr": {
                 "type": "Which",
                 "value": "clang"
-            }
+            },
+            "ops": []
         }
     },
     {
         "Let": {
             "ident": "ld",
-            "value": {
+            "expr": {
                 "type": "Ident",
                 "value": "cc"
-            }
+            },
+            "ops": []
         }
     },
     {
         "Let": {
             "ident": "profile",
-            "value": {
+            "expr": {
                 "type": "StringExpr",
                 "value": "debug"
-            }
+            },
+            "ops": []
         }
     },
     {
         "Let": {
             "ident": "executable",
-            "value": {
+            "expr": {
                 "type": "StringExpr",
-                "value": [
-                    {
-                        "stem": {
-                            "type": "Ident",
-                            "value": "profile"
-                        }
-                    },
-                    "/example",
-                    {
-                        "stem": {
-                            "type": "Ident",
-                            "value": "EXE_SUFFIX"
-                        }
-                    }
-                ]
-            }
+                "value": "{profile}/example{EXE_SUFFIX}"
+            },
+            "ops": []
         }
     },
     {
         "Let": {
             "ident": "cflags",
-            "value": {
-                "type": "Chain",
-                "value": {
-                    "head": {
-                        "type": "Ident",
-                        "value": "profile"
-                    },
-                    "tail": [
-                        {
-                            "Match": {
-                                "Braced": [
-                                    {
-                                        "pattern": [
-                                            {
-                                                "Literal": "debug"
-                                            }
-                                        ],
-                                        "expr": {
-                                            "type": "List",
-                                            "value": {
-                                                "items": [
-                                                    {
+            "expr": {
+                "type": "Ident",
+                "value": "profile"
+            },
+            "ops": [
+                {
+                    "Match": {
+                        "Braced": [
+                            {
+                                "pattern": "debug",
+                                "expr": {
+                                    "expr": {
+                                        "type": "List",
+                                        "value": {
+                                            "items": [
+                                                {
+                                                    "expr": {
                                                         "type": "StringExpr",
                                                         "value": "-g"
                                                     },
-                                                    {
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
                                                         "type": "StringExpr",
                                                         "value": "-O0"
                                                     },
-                                                    {
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
                                                         "type": "StringExpr",
                                                         "value": "-fdiagnostics-color=always"
                                                     },
-                                                    {
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
                                                         "type": "StringExpr",
                                                         "value": "-fcolor-diagnostics"
                                                     },
-                                                    {
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
                                                         "type": "StringExpr",
                                                         "value": "-fansi-escape-codes"
-                                                    }
-                                                ]
-                                            }
+                                                    },
+                                                    "ops": []
+                                                }
+                                            ]
                                         }
                                     },
-                                    {
-                                        "pattern": [
-                                            {
-                                                "Literal": "release"
-                                            }
-                                        ],
-                                        "expr": {
-                                            "type": "List",
-                                            "value": {
-                                                "items": [
-                                                    {
+                                    "ops": []
+                                }
+                            },
+                            {
+                                "pattern": "release",
+                                "expr": {
+                                    "expr": {
+                                        "type": "List",
+                                        "value": {
+                                            "items": [
+                                                {
+                                                    "expr": {
                                                         "type": "StringExpr",
                                                         "value": "-O3"
                                                     },
-                                                    {
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
                                                         "type": "StringExpr",
                                                         "value": "-fdiagnostics-color=always"
                                                     },
-                                                    {
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
                                                         "type": "StringExpr",
                                                         "value": "-fcolor-diagnostics"
                                                     },
-                                                    {
+                                                    "ops": []
+                                                },
+                                                {
+                                                    "expr": {
                                                         "type": "StringExpr",
                                                         "value": "-fansi-escape-codes"
-                                                    }
-                                                ]
-                                            }
-                                        }
-                                    },
-                                    {
-                                        "pattern": [
-                                            "PatternStem"
-                                        ],
-                                        "expr": {
-                                            "type": "Error",
-                                            "value": [
-                                                "Unknown profile '",
-                                                {
-                                                    "stem": {
-                                                        "type": "Implied"
-                                                    }
-                                                },
-                                                "'; valid options are 'debug' and 'release'"
+                                                    },
+                                                    "ops": []
+                                                }
                                             ]
                                         }
-                                    }
-                                ]
+                                    },
+                                    "ops": []
+                                }
+                            },
+                            {
+                                "pattern": "%",
+                                "expr": {
+                                    "expr": {
+                                        "type": "Error",
+                                        "value": "Unknown profile '{}'; valid options are 'debug' and 'release'"
+                                    },
+                                    "ops": []
+                                }
                             }
-                        }
-                    ]
+                        ]
+                    }
                 }
-            }
+            ]
         }
     },
     {
         "Build": {
-            "pattern": [
-                {
-                    "Interpolation": {
-                        "stem": {
-                            "type": "Ident",
-                            "value": "profile"
-                        }
-                    }
-                },
-                {
-                    "Literal": "/"
-                },
-                "PatternStem",
-                {
-                    "Literal": ".o"
-                }
-            ],
+            "pattern": "{profile}/%.o",
             "body": [
                 {
                     "From": {
-                        "type": "StringExpr",
-                        "value": [
-                            {
-                                "stem": {
-                                    "type": "PatternCapture"
-                                }
-                            },
-                            ".c"
-                        ]
+                        "expr": {
+                            "type": "StringExpr",
+                            "value": "{%}.c"
+                        },
+                        "ops": []
                     }
                 },
                 {
                     "Depfile": {
-                        "type": "StringExpr",
-                        "value": [
-                            "/",
-                            {
-                                "stem": {
-                                    "type": "Ident",
-                                    "value": "profile"
-                                }
-                            },
-                            "/",
-                            {
-                                "stem": {
-                                    "type": "PatternCapture"
-                                }
-                            },
-                            ".c.d"
-                        ]
+                        "expr": {
+                            "type": "StringExpr",
+                            "value": "/{profile}/{%}.c.d"
+                        },
+                        "ops": []
                     }
                 },
                 {
                     "Run": {
                         "type": "Shell",
-                        "value": [
-                            {
-                                "stem": {
-                                    "type": "Ident",
-                                    "value": "cc"
-                                }
-                            },
-                            " -c ",
-                            {
-                                "stem": {
-                                    "type": "Ident",
-                                    "value": "cflags"
-                                },
-                                "options": {
-                                    "ops": [],
-                                    "join": " "
-                                }
-                            },
-                            " -o ",
-                            {
-                                "stem": {
-                                    "type": "Ident",
-                                    "value": "out"
-                                },
-                                "options": {
-                                    "ops": [
-                                        {
-                                            "type": "ResolveOsPath"
-                                        }
-                                    ],
-                                    "join": null
-                                }
-                            },
-                            " ",
-                            {
-                                "stem": {
-                                    "type": "Ident",
-                                    "value": "in"
-                                },
-                                "options": {
-                                    "ops": [
-                                        {
-                                            "type": "ResolveOsPath"
-                                        }
-                                    ],
-                                    "join": null
-                                }
-                            }
-                        ]
+                        "value": "{cc} -c {cflags*} -o <out> <in>"
                     }
                 }
             ]
@@ -277,93 +200,21 @@
     },
     {
         "Build": {
-            "pattern": [
-                {
-                    "Interpolation": {
-                        "stem": {
-                            "type": "Ident",
-                            "value": "profile"
-                        }
-                    }
-                },
-                {
-                    "Literal": "/"
-                },
-                "PatternStem",
-                {
-                    "Literal": ".c.d"
-                }
-            ],
+            "pattern": "{profile}/%.c.d",
             "body": [
                 {
                     "From": {
-                        "type": "StringExpr",
-                        "value": [
-                            {
-                                "stem": {
-                                    "type": "PatternCapture"
-                                }
-                            },
-                            ".c"
-                        ]
+                        "expr": {
+                            "type": "StringExpr",
+                            "value": "{%}.c"
+                        },
+                        "ops": []
                     }
                 },
                 {
                     "Run": {
                         "type": "Shell",
-                        "value": [
-                            {
-                                "stem": {
-                                    "type": "Ident",
-                                    "value": "cc"
-                                }
-                            },
-                            " -MM -MT ",
-                            {
-                                "stem": {
-                                    "type": "Ident",
-                                    "value": "in"
-                                },
-                                "options": {
-                                    "ops": [
-                                        {
-                                            "type": "ResolveOsPath"
-                                        }
-                                    ],
-                                    "join": null
-                                }
-                            },
-                            " -MF ",
-                            {
-                                "stem": {
-                                    "type": "Ident",
-                                    "value": "out"
-                                },
-                                "options": {
-                                    "ops": [
-                                        {
-                                            "type": "ResolveOsPath"
-                                        }
-                                    ],
-                                    "join": null
-                                }
-                            },
-                            " ",
-                            {
-                                "stem": {
-                                    "type": "Ident",
-                                    "value": "in"
-                                },
-                                "options": {
-                                    "ops": [
-                                        {
-                                            "type": "ResolveOsPath"
-                                        }
-                                    ],
-                                    "join": null
-                                }
-                            }
-                        ]
+                        "value": "{cc} -MM -MT <in> -MF <out> <in>"
                     }
                 }
             ]
@@ -371,103 +222,38 @@
     },
     {
         "Build": {
-            "pattern": [
-                {
-                    "Interpolation": {
-                        "stem": {
-                            "type": "Ident",
-                            "value": "executable"
-                        }
-                    }
-                }
-            ],
+            "pattern": "{executable}",
             "body": [
                 {
                     "From": {
-                        "type": "Chain",
-                        "value": {
-                            "head": {
-                                "type": "Glob",
-                                "value": "*.c"
-                            },
-                            "tail": [
-                                {
-                                    "Match": {
-                                        "Braced": [
-                                            {
-                                                "pattern": [
-                                                    "PatternStem",
-                                                    {
-                                                        "Literal": ".c"
-                                                    }
-                                                ],
+                        "expr": {
+                            "type": "Glob",
+                            "value": "*.c"
+                        },
+                        "ops": [
+                            {
+                                "Match": {
+                                    "Braced": [
+                                        {
+                                            "pattern": "%.c",
+                                            "expr": {
                                                 "expr": {
                                                     "type": "StringExpr",
-                                                    "value": [
-                                                        "/",
-                                                        {
-                                                            "stem": {
-                                                                "type": "Ident",
-                                                                "value": "profile"
-                                                            }
-                                                        },
-                                                        {
-                                                            "stem": {
-                                                                "type": "PatternCapture"
-                                                            }
-                                                        },
-                                                        ".o"
-                                                    ]
-                                                }
+                                                    "value": "/{profile}{%}.o"
+                                                },
+                                                "ops": []
                                             }
-                                        ]
-                                    }
+                                        }
+                                    ]
                                 }
-                            ]
-                        }
+                            }
+                        ]
                     }
                 },
                 {
                     "Run": {
                         "type": "Shell",
-                        "value": [
-                            {
-                                "stem": {
-                                    "type": "Ident",
-                                    "value": "ld"
-                                }
-                            },
-                            " -o ",
-                            {
-                                "stem": {
-                                    "type": "Ident",
-                                    "value": "out"
-                                },
-                                "options": {
-                                    "ops": [
-                                        {
-                                            "type": "ResolveOsPath"
-                                        }
-                                    ],
-                                    "join": null
-                                }
-                            },
-                            " ",
-                            {
-                                "stem": {
-                                    "type": "Ident",
-                                    "value": "in"
-                                },
-                                "options": {
-                                    "ops": [
-                                        {
-                                            "type": "ResolveOsPath"
-                                        }
-                                    ],
-                                    "join": " "
-                                }
-                            }
-                        ]
+                        "value": "{ld} -o <out> <in*>"
                     }
                 }
             ]
@@ -479,21 +265,15 @@
             "body": [
                 {
                     "Build": {
-                        "type": "Ident",
-                        "value": "executable"
+                        "expr": {
+                            "type": "Ident",
+                            "value": "executable"
+                        },
+                        "ops": []
                     }
                 },
                 {
-                    "Info": [
-                        "Build done for profile '",
-                        {
-                            "stem": {
-                                "type": "Ident",
-                                "value": "profile"
-                            }
-                        },
-                        "'"
-                    ]
+                    "Info": "Build done for profile '{profile}'"
                 }
             ]
         }
@@ -504,27 +284,17 @@
             "body": [
                 {
                     "Build": {
-                        "type": "StringExpr",
-                        "value": "build"
+                        "expr": {
+                            "type": "StringExpr",
+                            "value": "build"
+                        },
+                        "ops": []
                     }
                 },
                 {
                     "Run": {
                         "type": "Shell",
-                        "value": {
-                            "stem": {
-                                "type": "Ident",
-                                "value": "executable"
-                            },
-                            "options": {
-                                "ops": [
-                                    {
-                                        "type": "ResolveOsPath"
-                                    }
-                                ],
-                                "join": null
-                            }
-                        }
+                        "value": "<executable>"
                     }
                 }
             ]
@@ -537,42 +307,18 @@
                 {
                     "Let": {
                         "ident": "object-files",
-                        "value": {
-                            "type": "Chain",
-                            "value": {
-                                "head": {
-                                    "type": "Glob",
-                                    "value": "*.c"
-                                },
-                                "tail": [
-                                    {
-                                        "Map": [
-                                            {
-                                                "stem": {
-                                                    "type": "Ident",
-                                                    "value": "profile"
-                                                }
-                                            },
-                                            {
-                                                "stem": {
-                                                    "type": "Implied"
-                                                },
-                                                "options": {
-                                                    "ops": [
-                                                        {
-                                                            "type": "ReplaceExtension",
-                                                            "from": ".c",
-                                                            "to": ".o"
-                                                        }
-                                                    ],
-                                                    "join": null
-                                                }
-                                            }
-                                        ]
-                                    }
-                                ]
+                        "expr": {
+                            "type": "Glob",
+                            "value": "*.c"
+                        },
+                        "ops": [
+                            {
+                                "Map": {
+                                    "type": "StringExpr",
+                                    "value": "{profile}{:.c=.o}"
+                                }
                             }
-                        }
+                        ]
                     }
                 },
                 {

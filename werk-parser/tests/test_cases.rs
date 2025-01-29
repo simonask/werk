@@ -94,8 +94,8 @@ macro_rules! success_case {
             if input.root != expected_ast {
                 let input_json = serde_json::to_string(&input.root).unwrap();
                 eprintln!("AST mismatch!");
-                // eprintln!("Got:\n{:?}\n", input.root);
                 // eprintln!("Expected:\n{:?}", expected_ast);
+                // eprintln!("Got:\n{:?}\n", input.root);
                 eprintln!("Got:\n{}\n", input_json);
                 eprintln!("Expected:\n{}", expected_json);
                 panic!("AST mismatch");
@@ -123,3 +123,4 @@ success_case!(let_match);
 success_case!(let_match_inline);
 success_case!(let_map);
 success_case!(let_list);
+success_case!(expr_parens);

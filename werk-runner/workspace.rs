@@ -239,7 +239,7 @@ impl<'a> Workspace<'a> {
                         );
                     } else {
                         let scope = RootScope::new(self);
-                        let mut value = eval::eval(&scope, &let_stmt.value)?;
+                        let mut value = eval::eval_chain(&scope, &let_stmt.value)?;
                         value
                             .used
                             .insert(UsedVariable::Global(let_stmt.ident.ident.to_string(), hash));

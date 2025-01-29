@@ -1,7 +1,7 @@
 [
     {
         "Let": {
-            "ident": "list",
+            "ident": "paths",
             "expr": {
                 "type": "List",
                 "value": {
@@ -19,18 +19,24 @@
                                 "value": "b"
                             },
                             "ops": []
-                        },
-                        {
-                            "expr": {
-                                "type": "StringExpr",
-                                "value": "c"
-                            },
-                            "ops": []
                         }
                     ]
                 }
             },
-            "ops": []
+            "ops": [
+                {
+                    "Map": {
+                        "type": "SubExpr",
+                        "value": {
+                            "expr": {
+                                "type": "Env",
+                                "value": "{}"
+                            },
+                            "ops": []
+                        }
+                    }
+                }
+            ]
         }
     }
 ]

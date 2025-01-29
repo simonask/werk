@@ -2,9 +2,9 @@ error: expected expression
  --> INPUT:1:1
   |
 1 | let foo =
-  | -        -
+  | -        ^
   | |        |
-  | |        expected an expression
-  | |        help: expression chains must start with a value, or an `env`, `glob`, `which`, or `shell` operation
+  | |        help: expressions must start with a value, or an `env`, `glob`, `which`, or `shell` operation
+  | |        expected expression
   | info: while parsing `let` statement
   |

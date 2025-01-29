@@ -1990,7 +1990,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
- "toml_edit",
  "unicode-ident",
  "winnow",
 ]
@@ -2000,6 +1999,7 @@ name = "werk-runner"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "annotate-snippets",
  "anyhow",
  "futures",
  "globset",

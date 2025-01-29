@@ -2,9 +2,10 @@ error: expected pattern literal
  --> INPUT:1:7
   |
 1 | build foo {}
-  | -     -
+  | -     ^
   | |     |
-  | |     `build` must be followed by a pattern literal
+  | |     help: `build` must be followed by a pattern literal
   | |     help: use string interpolation to use variables in recipe names
+  | |     expected pattern literal
   | info: while parsing build recipe
   |

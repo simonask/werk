@@ -255,7 +255,18 @@ pub enum EvalError {
     AssertionMatchFailed(Span, Box<(String, String)>),
 }
 
+impl werk_parser::DisplayError for EvalError {
+    fn annotations(&self) -> Vec<werk_parser::DisplayAnnotation> {
+        vec![werk_parser::DisplayAnnotation {
+            level: annotate_snippets::Level::Error,
+            message: self.to_string(),
+            span: werk_parser::parser::Spanned::span(self),
+        }]
+    }
+}
+
 impl werk_parser::parser::Spanned for EvalError {
+    #[inline]
     fn span(&self) -> Span {
         match self {
             EvalError::InvalidEdition(span)

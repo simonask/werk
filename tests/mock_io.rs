@@ -34,7 +34,7 @@ pub struct TestBuilder<'a> {
     pub defines: Vec<(String, String)>,
     pub default_filesystem: bool,
     pub create_workspace_dir: bool,
-    pub werkfile: Option<TestSource<'a>>,
+    pub werkfile: &'a str,
 }
 
 pub fn native_path<I: IntoIterator<Item: AsRef<OsStr>>>(
@@ -59,7 +59,7 @@ impl Default for TestBuilder<'_> {
             defines: Vec::new(),
             default_filesystem: true,
             create_workspace_dir: true,
-            werkfile: None,
+            werkfile: "",
         }
     }
 }
@@ -80,17 +80,13 @@ impl<'a> TestBuilder<'a> {
         self
     }
 
-    pub fn werkfile(&mut self, werkfile: impl Into<TestSource<'a>>) -> &mut Self {
-        self.werkfile = Some(werkfile.into());
+    pub fn werkfile(&mut self, werkfile: &'a str) -> &mut Self {
+        self.werkfile = werkfile;
         self
     }
 
     pub fn build(&self) -> Result<Test<'a>, werk_parser::Error> {
-        let ast = match self.werkfile {
-            Some(TestSource::Werk(source)) => Some(werk_parser::parse_werk(source)?),
-            Some(TestSource::Toml(toml)) => Some(werk_parser::parse_toml(toml)?),
-            None => None,
-        };
+        let ast = werk_parser::parse_werk(self.werkfile)?;
 
         let mut io = MockIo::default();
         io.initialize_default_env();
@@ -111,29 +107,12 @@ impl<'a> TestBuilder<'a> {
     }
 }
 
-pub enum TestSource<'a> {
-    Werk(&'a str),
-    Toml(&'a toml_edit::ImDocument<&'a str>),
-}
-
-impl<'a> From<&'a str> for TestSource<'a> {
-    fn from(s: &'a str) -> Self {
-        TestSource::Werk(s)
-    }
-}
-
-impl<'a> From<&'a toml_edit::ImDocument<&'a str>> for TestSource<'a> {
-    fn from(t: &'a toml_edit::ImDocument<&'a str>) -> Self {
-        TestSource::Toml(t)
-    }
-}
-
 pub struct Test<'a> {
     pub io: Arc<MockIo>,
     pub render: Arc<MockRender>,
     pub workspace_dir: Absolute<std::path::PathBuf>,
     pub output_dir: Absolute<std::path::PathBuf>,
-    pub ast: Option<werk_parser::Document<'a>>,
+    pub ast: werk_parser::Document<'a>,
 }
 
 impl<'a> Test<'a> {
@@ -141,43 +120,22 @@ impl<'a> Test<'a> {
         TestBuilder::default().werkfile(werk_source).build()
     }
 
-    pub fn reload(
-        &mut self,
-        werkfile: impl Into<TestSource<'a>>,
-    ) -> Result<(), werk_parser::Error> {
-        self.ast = match werkfile.into() {
-            TestSource::Werk(source) => Some(werk_parser::parse_werk(source)?),
-            TestSource::Toml(toml) => Some(werk_parser::parse_toml(toml)?),
-        };
+    pub fn reload(&mut self, werkfile: &'a str) -> Result<(), werk_parser::Error> {
+        self.ast = werk_parser::parse_werk(werkfile)?;
         Ok(())
-    }
-
-    pub fn new_toml(toml: &'a toml_edit::ImDocument<&'a str>) -> Result<Self, werk_parser::Error> {
-        TestBuilder::default().werkfile(toml).build()
-    }
-
-    pub fn reload_toml(
-        &mut self,
-        toml: &'a toml_edit::ImDocument<&'a str>,
-    ) -> Result<(), werk_parser::Error> {
-        self.reload(toml)
     }
 
     pub fn create_workspace(
         &self,
         defines: &[(&str, &str)],
     ) -> Result<werk_runner::Workspace<'_>, werk_runner::Error> {
-        if let Some(ref ast) = self.ast {
-            werk_runner::Workspace::new(
-                ast,
-                &*self.io,
-                &*self.render,
-                test_workspace_dir().to_path_buf(),
-                &test_workspace_settings(defines),
-            )
-        } else {
-            panic!("no werkfile loaded!")
-        }
+        werk_runner::Workspace::new(
+            &self.ast,
+            &*self.io,
+            &*self.render,
+            test_workspace_dir().to_path_buf(),
+            &test_workspace_settings(defines),
+        )
     }
 }
 

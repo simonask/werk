@@ -2,7 +2,9 @@ error: expected character =
  --> INPUT:1:1
   |
 1 | let hello
-  | -        ^ `let <identifier>` must be followed by a `=`
-  | |
+  | -        ^
+  | |        |
+  | |        help: `let <identifier>` must be followed by a `=`
+  | |        expected character =
   | info: while parsing `let` statement
   |

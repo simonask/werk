@@ -2,8 +2,10 @@ error: expected pattern literal
  --> INPUT:1:1
   |
 1 | let foo = bar | match {
-  | -               -      ^ expected pattern in `match`
-  | |               |
+  | -               -      ^
+  | |               |      |
+  | |               |      help: `match` arm must start with a pattern
+  | |               |      expected pattern literal
   | |               info: while parsing match
   | info: while parsing `let` statement
   |

@@ -221,18 +221,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     let display_root_eval_error =
         |err: werk_runner::EvalError| print_eval_error(werkfile.as_ref(), &source_code, err);
 
-    let toml_document;
-    let ast = match werkfile {
-        Werkfile::Werk(_) => werk_parser::parse_werk(&source_code).map_err(display_parse_error)?,
-        Werkfile::Toml(_) => {
-            toml_document = toml_edit::ImDocument::parse(&*source_code)
-                .map_err(Into::into)
-                .map_err(display_parse_error)?;
-            werk_parser::parse_toml_document(&toml_document)
-                .map_err(Into::into)
-                .map_err(display_parse_error)?
-        }
-    };
+    let ast = werk_parser::parse_werk(&source_code).map_err(display_parse_error)?;
 
     // Read the configuration statements from the AST.
     let config = werk_runner::ir::Config::new(&ast).map_err(display_root_eval_error)?;
@@ -409,21 +398,7 @@ async fn autowatch_loop(
             }
         };
 
-        let toml_document;
-        let ast = match werkfile {
-            Werkfile::Werk(_) => werk_parser::parse_werk(&source_code),
-            Werkfile::Toml(_) => {
-                toml_document = match toml_edit::ImDocument::parse(&*source_code) {
-                    Ok(doc) => doc,
-                    Err(err) => {
-                        print_parse_error(werkfile.as_ref(), &source_code, err.into());
-                        watch_set = watch_manifest.clone();
-                        continue;
-                    }
-                };
-                werk_parser::parse_toml_document(&toml_document).map_err(Into::into)
-            }
-        };
+        let ast = werk_parser::parse_werk(&source_code);
 
         let ast = match ast {
             Ok(ast) => ast,
