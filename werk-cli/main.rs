@@ -147,7 +147,7 @@ enum Error {
     WorkspaceDirectory(String, std::io::Error),
     #[error("Invalid output directory '{0}': {1}")]
     OutputDirectory(String, PathError),
-    #[error("werk.toml or Werkfile not found in this directory or any parent directory")]
+    #[error("Werkfile not found in this directory or any parent directory")]
     NoWerkfile,
     #[error("Invalid define (must take the form `key=value`): {0}")]
     InvalidDefineArg(String),
@@ -183,16 +183,11 @@ async fn try_main(args: Args) -> Result<(), Error> {
     let color_stderr = render::ColorOutputKind::initialize(&std::io::stderr(), args.color);
 
     let werkfile = if let Some(file) = args.file {
-        let file = file.normalize()?;
-        if file.extension() == Some("toml".as_ref()) {
-            Werkfile::Toml(file)
-        } else {
-            Werkfile::Werk(file)
-        }
+        file.normalize()?
     } else {
         find_werkfile()?
     };
-    tracing::info!("Using werkfile: {}", werkfile.as_ref().display());
+    tracing::info!("Using werkfile: {}", werkfile.display());
 
     // Determine the workspace directory.
     let workspace_dir_abs;
@@ -208,13 +203,12 @@ async fn try_main(args: Args) -> Result<(), Error> {
         }
     } else {
         werkfile
-            .as_ref()
             .parent()
             .expect("normalized Werkfile path has no parent directory")
     };
 
     // Parse the werk manifest!
-    let source_code = std::fs::read_to_string(werkfile.as_ref())?;
+    let source_code = std::fs::read_to_string(&werkfile)?;
     let display_error = |err: werk_runner::Error| print_error(werkfile.as_ref(), &source_code, err);
     let display_parse_error =
         |err: werk_parser::Error| print_parse_error(werkfile.as_ref(), &source_code, err);
@@ -326,7 +320,7 @@ async fn autowatch_loop(
     timeout: std::time::Duration,
     // The initial workspace built by main(). Must be finalize()d.
     workspace: Workspace<'_>,
-    werkfile: Werkfile,
+    werkfile: Absolute<std::path::PathBuf>,
     // Target to keep building
     target_from_args: Option<String>,
     output_directory_from_args: Option<&std::path::Path>,
@@ -341,7 +335,7 @@ async fn autowatch_loop(
 
     let (io, render) = (workspace.io, workspace.render);
 
-    let watch_manifest = HashSet::from_iter([werkfile.as_ref().to_path_buf()]);
+    let watch_manifest = HashSet::from_iter([werkfile.clone()]);
     let mut watch_set = watch_manifest.clone();
     watch_set.extend(workspace.workspace_files().filter_map(|(_, entry)| {
         if entry.metadata.is_file {
@@ -389,7 +383,7 @@ async fn autowatch_loop(
         render.reset();
 
         // Re-read the manifest.
-        let source_code = match std::fs::read_to_string(werkfile.as_ref()) {
+        let source_code = match std::fs::read_to_string(&werkfile) {
             Ok(source_code) => source_code,
             Err(err) => {
                 render.warning(None, &format!("Error reading manifest: {err}"));
@@ -614,37 +608,16 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
     }
 }
 
-enum Werkfile {
-    Werk(Absolute<std::path::PathBuf>),
-    Toml(Absolute<std::path::PathBuf>),
-}
-
-impl AsRef<Absolute<std::path::Path>> for Werkfile {
-    fn as_ref(&self) -> &Absolute<std::path::Path> {
-        match self {
-            Werkfile::Werk(path) | Werkfile::Toml(path) => path,
-        }
-    }
-}
-
-fn find_werkfile() -> Result<Werkfile, Error> {
-    const WERKFILE_NAMES_TOML: &[&str] = &["werk.toml"];
-    const WERKFILE_NAMES: &[&str] = &["werk.toml", "Werkfile", "werkfile", "build.werk"];
+fn find_werkfile() -> Result<Absolute<std::path::PathBuf>, Error> {
+    const WERKFILE_NAMES: &[&str] = &["Werkfile", "werkfile", "build.werk"];
 
     let mut current = Absolute::current_dir()?;
 
     loop {
-        for name in WERKFILE_NAMES_TOML {
-            let candidate = current.join(name).unwrap();
-            if candidate.is_file() {
-                return Ok(Werkfile::Toml(candidate));
-            }
-        }
-
         for name in WERKFILE_NAMES {
             let candidate = current.join(name).unwrap();
             if candidate.is_file() {
-                return Ok(Werkfile::Werk(candidate));
+                return Ok(candidate);
             }
         }
 

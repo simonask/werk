@@ -31,8 +31,8 @@ pub trait Io: Send + Sync + 'static {
         forward_stdout: bool,
     ) -> Result<Box<dyn Child>, std::io::Error>;
 
-    /// Run a command as part of evaluating the contents of a werk.toml file.
-    /// This might still do something in dry-run mode.
+    /// Run a command as part of evaluating the contents of a Werkfile. This
+    /// might still do something in dry-run mode.
     fn run_during_eval(
         &self,
         command_line: &ShellCommandLine,

@@ -6,8 +6,7 @@ use crate::{cache::Hash128, EvalError, GlobalVariables, Pattern, PatternMatchDat
 
 type Result<T, E = EvalError> = std::result::Result<T, E>;
 
-/// Representation of the `Werkfile` or `werk.toml` manifest, partially
-/// evaluated.
+/// Representation of the `Werkfile` manifest, partially evaluated.
 ///
 /// - Global variables are fully evaluated.
 /// - Recipe patterns are fully evaluated.

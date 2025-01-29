@@ -2,7 +2,6 @@
 
 - [ ] Consider using pattern syntax for glob patterns instead of standard glob
   syntax.
-- [ ] Forward doc comments from TOML to `--list`.
 - [ ] Autoclean: Match files in the output directory against available recipes
   and delete them if they are older than `.werk-cache`.
 
