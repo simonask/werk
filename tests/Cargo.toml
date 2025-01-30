@@ -20,6 +20,10 @@ toml_edit.workspace = true
 futures.workspace = true
 regex.workspace = true
 
+[dev-dependencies]
+criterion = "0.3"
+iai = "0.1"
+
 [lib]
 path = "lib.rs"
 
@@ -38,3 +42,11 @@ path = "test_outdatedness.rs"
 [[test]]
 name = "test_cases"
 path = "test_cases.rs"
+
+[[bench]]
+name = "bench_eval"
+harness = false
+
+# [[bench]]
+# name = "bench_iai"
+# harness = false
