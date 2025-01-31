@@ -19,6 +19,7 @@ macro_rules_attribute = "0.2.0"
 toml_edit.workspace = true
 futures.workspace = true
 regex.workspace = true
+werk-util.workspace = true
 
 [dev-dependencies]
 criterion = "0.3"

@@ -1,5 +1,12 @@
 [workspace]
-members = ["werk-parser", "werk-cli", "werk-runner", "werk-fs", "tests"]
+members = [
+    "werk-parser",
+    "werk-cli",
+    "werk-runner",
+    "werk-fs",
+    "tests",
+    "werk-util",
+]
 resolver = "2"
 
 [workspace.dependencies]
@@ -7,6 +14,7 @@ ahash = "0.8.11"
 werk-runner.path = "werk-runner"
 werk-parser.path = "werk-parser"
 werk-fs.path = "werk-fs"
+werk-util.path = "werk-util"
 winnow = "^0.6.25"
 thiserror = "2.0"
 tracing = "0.1.40"

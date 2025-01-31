@@ -36,12 +36,18 @@ impl<'de, P: serde::Deserialize<'de> + Normalize<'de>> serde::Deserialize<'de> f
 }
 
 impl<P: Sized> Absolute<P> {
+    #[must_use]
     pub(crate) const fn new_unchecked(path: P) -> Self {
         Self { path }
     }
 
     pub fn into_inner(self) -> P {
         self.path
+    }
+
+    #[must_use]
+    pub fn as_inner(&self) -> &P {
+        &self.path
     }
 }
 
@@ -491,6 +497,12 @@ impl Deref for Absolute<std::path::PathBuf> {
     }
 }
 
+impl<P: ?Sized> AsRef<Absolute<P>> for Absolute<P> {
+    fn as_ref(&self) -> &Absolute<P> {
+        self
+    }
+}
+
 impl AsRef<std::ffi::OsStr> for Absolute<std::path::Path> {
     #[inline]
     fn as_ref(&self) -> &std::ffi::OsStr {
@@ -523,6 +535,13 @@ impl AsRef<std::path::Path> for Absolute<std::path::PathBuf> {
     #[inline]
     fn as_ref(&self) -> &std::path::Path {
         &self.path
+    }
+}
+
+impl AsRef<Absolute<crate::Path>> for Absolute<crate::PathBuf> {
+    #[inline]
+    fn as_ref(&self) -> &Absolute<crate::Path> {
+        self
     }
 }
 

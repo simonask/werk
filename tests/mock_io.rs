@@ -167,29 +167,29 @@ impl MockRender {
 }
 
 impl werk_runner::Render for MockRender {
-    fn will_build(&self, task_id: &TaskId, num_steps: usize, outdatedness: &Outdatedness) {
+    fn will_build(&self, task_id: TaskId, num_steps: usize, outdatedness: &Outdatedness) {
         self.log.lock().push(MockRenderEvent::WillBuild(
-            task_id.clone(),
+            task_id,
             num_steps,
             outdatedness.clone(),
         ));
     }
 
-    fn did_build(&self, task_id: &TaskId, result: &Result<BuildStatus, Error>) {
+    fn did_build(&self, task_id: TaskId, result: &Result<BuildStatus, Error>) {
         self.log
             .lock()
-            .push(MockRenderEvent::DidBuild(task_id.clone(), result.clone()));
+            .push(MockRenderEvent::DidBuild(task_id, result.clone()));
     }
 
     fn will_execute(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command: &ShellCommandLine,
         step: usize,
         num_steps: usize,
     ) {
         self.log.lock().push(MockRenderEvent::WillExecute(
-            task_id.clone(),
+            task_id,
             command.clone(),
             step,
             num_steps,
@@ -198,14 +198,14 @@ impl werk_runner::Render for MockRender {
 
     fn did_execute(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command: &ShellCommandLine,
         result: &Result<std::process::ExitStatus, std::io::Error>,
         step: usize,
         num_steps: usize,
     ) {
         self.log.lock().push(MockRenderEvent::DidExecute(
-            task_id.clone(),
+            task_id,
             command.clone(),
             result.as_ref().map_err(|_| ()).cloned(),
             step,
@@ -213,18 +213,16 @@ impl werk_runner::Render for MockRender {
         ));
     }
 
-    fn message(&self, task_id: Option<&TaskId>, message: &str) {
-        self.log.lock().push(MockRenderEvent::Message(
-            task_id.cloned(),
-            message.to_string(),
-        ));
+    fn message(&self, task_id: Option<TaskId>, message: &str) {
+        self.log
+            .lock()
+            .push(MockRenderEvent::Message(task_id, message.to_string()));
     }
 
-    fn warning(&self, task_id: Option<&TaskId>, message: &str) {
-        self.log.lock().push(MockRenderEvent::Warning(
-            task_id.cloned(),
-            message.to_string(),
-        ));
+    fn warning(&self, task_id: Option<TaskId>, message: &str) {
+        self.log
+            .lock()
+            .push(MockRenderEvent::Warning(task_id, message.to_string()));
     }
 }
 

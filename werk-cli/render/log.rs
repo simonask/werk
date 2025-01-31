@@ -16,7 +16,7 @@ impl LogWatcher {
 impl werk_runner::Render for LogWatcher {
     fn will_build(
         &self,
-        task_id: &werk_runner::TaskId,
+        task_id: werk_runner::TaskId,
         num_steps: usize,
         outdatedness: &werk_runner::Outdatedness,
     ) {
@@ -34,7 +34,7 @@ impl werk_runner::Render for LogWatcher {
 
     fn did_build(
         &self,
-        task_id: &werk_runner::TaskId,
+        task_id: werk_runner::TaskId,
         result: &Result<werk_runner::BuildStatus, werk_runner::Error>,
     ) {
         match result {
@@ -51,7 +51,7 @@ impl werk_runner::Render for LogWatcher {
 
     fn will_execute(
         &self,
-        task_id: &werk_runner::TaskId,
+        task_id: werk_runner::TaskId,
         command: &werk_runner::ShellCommandLine,
         step: usize,
         _num_steps: usize,
@@ -63,7 +63,7 @@ impl werk_runner::Render for LogWatcher {
 
     fn did_execute(
         &self,
-        task_id: &werk_runner::TaskId,
+        task_id: werk_runner::TaskId,
         command: &werk_runner::ShellCommandLine,
         status: &std::io::Result<std::process::ExitStatus>,
         step: usize,
@@ -83,11 +83,11 @@ impl werk_runner::Render for LogWatcher {
         }
     }
 
-    fn message(&self, task_id: Option<&werk_runner::TaskId>, message: &str) {
+    fn message(&self, task_id: Option<werk_runner::TaskId>, message: &str) {
         tracing::info!(task_id = ?task_id, "Message: {message}");
     }
 
-    fn warning(&self, task_id: Option<&werk_runner::TaskId>, message: &str) {
+    fn warning(&self, task_id: Option<werk_runner::TaskId>, message: &str) {
         tracing::warn!(task_id = ?task_id, "Warning: {message}");
     }
 }

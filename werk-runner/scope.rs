@@ -1,12 +1,13 @@
 use ahash::HashMap;
+use werk_util::{Symbol, SymbolRegistryLock};
 
 use crate::{
     eval::{Eval, Used},
     ir, Io, PatternMatchData, Render, TaskId, Value, Workspace,
 };
 
-pub type LocalVariables = indexmap::IndexMap<String, Eval<Value>>;
-pub type GlobalVariables = indexmap::IndexMap<String, GlobalVar>;
+pub type LocalVariables = indexmap::IndexMap<Symbol, Eval<Value>>;
+pub type GlobalVariables = indexmap::IndexMap<Symbol, GlobalVar>;
 
 pub struct GlobalVar {
     pub value: Eval<Value>,
@@ -21,13 +22,13 @@ pub struct RootScope<'a> {
 pub struct TaskRecipeScope<'a> {
     parent: &'a RootScope<'a>,
     vars: LocalVariables,
-    task_id: &'a TaskId,
+    task_id: TaskId,
 }
 
 pub struct BuildRecipeScope<'a> {
     parent: &'a RootScope<'a>,
     vars: LocalVariables,
-    task_id: &'a TaskId,
+    task_id: TaskId,
     recipe_match: &'a ir::BuildRecipeMatch<'a>,
     input_files: Value,
     output_file: Value,
@@ -49,7 +50,7 @@ pub struct MatchScope<'a> {
 
 /// Look up a variable in a scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Lookup<'a> {
+pub enum Lookup {
     /// The scope's implied value (forwarded from another expression). An empty
     /// stem in a string interpolation.
     Implied,
@@ -59,7 +60,7 @@ pub enum Lookup<'a> {
     /// string interpolation.
     CaptureGroup(u32),
     /// Lookup by identifier. `{ident}` in string interpolation.
-    Ident(&'a str),
+    Ident(Symbol),
     /// The `^` special variable in build recipes. Cannot be shadowed.
     InputFile,
     /// The `@` special variable in build recipes. Cannot be shadowed.
@@ -128,10 +129,10 @@ impl std::ops::Deref for LookupValue<'_> {
 }
 
 pub trait Scope: Send + Sync {
-    fn get<'b>(&'b self, name: Lookup<'_>) -> Option<LookupValue<'b>>;
+    fn get(&self, name: Lookup) -> Option<LookupValue<'_>>;
     fn workspace(&self) -> &Workspace;
 
-    fn task_id(&self) -> Option<&TaskId>;
+    fn task_id(&self) -> Option<TaskId>;
     fn render(&self) -> &dyn Render;
 
     fn io(&self) -> &dyn Io {
@@ -149,7 +150,7 @@ impl<'a> RootScope<'a> {
 impl<'a> TaskRecipeScope<'a> {
     #[inline]
     #[must_use]
-    pub fn new(root: &'a RootScope<'a>, task_id: &'a TaskId) -> Self {
+    pub fn new(root: &'a RootScope<'a>, task_id: TaskId) -> Self {
         Self {
             parent: root,
             vars: LocalVariables::new(),
@@ -157,7 +158,7 @@ impl<'a> TaskRecipeScope<'a> {
         }
     }
 
-    pub fn set(&mut self, name: String, value: Eval<Value>) {
+    pub fn set(&mut self, name: Symbol, value: Eval<Value>) {
         if default_global_constants().contains_key(&name) {
             tracing::warn!("Shadowing built-in constant `{}`", name);
         }
@@ -170,7 +171,7 @@ impl<'a> BuildRecipeScope<'a> {
     #[must_use]
     pub fn new(
         root: &'a RootScope<'a>,
-        task_id: &'a TaskId,
+        task_id: TaskId,
         recipe_match: &'a ir::BuildRecipeMatch<'a>,
     ) -> Self {
         Self {
@@ -183,7 +184,7 @@ impl<'a> BuildRecipeScope<'a> {
         }
     }
 
-    pub fn set(&mut self, name: String, value: Eval<Value>) {
+    pub fn set(&mut self, name: Symbol, value: Eval<Value>) {
         if default_global_constants().contains_key(&name) {
             tracing::warn!("Shadowing built-in constant `{}`", name);
         }
@@ -232,30 +233,49 @@ impl<'a> MatchScope<'a> {
     }
 }
 
-pub fn default_global_constants() -> &'static HashMap<String, Value> {
-    static GLOBAL_CONSTANTS: std::sync::OnceLock<HashMap<String, Value>> =
+pub fn default_global_constants() -> &'static HashMap<Symbol, Value> {
+    static GLOBAL_CONSTANTS: std::sync::OnceLock<HashMap<Symbol, Value>> =
         std::sync::OnceLock::new();
     GLOBAL_CONSTANTS.get_or_init(|| {
         let mut map = HashMap::default();
+        let mut sym = SymbolRegistryLock::lock();
         map.insert(
-            "EXE_SUFFIX".to_owned(),
+            sym.insert("EXE_SUFFIX"),
             Value::String(if cfg!(windows) { ".exe" } else { "" }.to_owned()),
         );
-        map.insert("EMPTY".to_owned(), Value::String(String::new()));
+        map.insert(sym.insert("EMPTY"), Value::String(String::new()));
         map
     })
 }
 
+pub struct SymCache {
+    pub symbol_in: Symbol,
+    pub symbol_out: Symbol,
+}
+
+impl SymCache {
+    pub fn get() -> &'static SymCache {
+        static CACHE: std::sync::OnceLock<SymCache> = std::sync::OnceLock::new();
+        CACHE.get_or_init(|| {
+            let mut sym = SymbolRegistryLock::lock();
+            SymCache {
+                symbol_in: sym.insert("in"),
+                symbol_out: sym.insert("out"),
+            }
+        })
+    }
+}
+
 impl Scope for RootScope<'_> {
     #[inline]
-    fn get<'b>(&'b self, name: Lookup<'_>) -> Option<LookupValue<'b>> {
+    fn get(&self, name: Lookup) -> Option<LookupValue<'_>> {
         let Lookup::Ident(name) = name else {
             return None;
         };
 
-        let Some(global) = self.workspace.manifest.globals.get(name) else {
+        let Some(global) = self.workspace.manifest.globals.get(&name) else {
             return default_global_constants()
-                .get(name)
+                .get(&name)
                 .map(Eval::inherent)
                 .map(LookupValue::ValueRef);
         };
@@ -269,7 +289,7 @@ impl Scope for RootScope<'_> {
     }
 
     #[inline]
-    fn task_id(&self) -> Option<&TaskId> {
+    fn task_id(&self) -> Option<TaskId> {
         None
     }
 
@@ -281,12 +301,12 @@ impl Scope for RootScope<'_> {
 
 impl Scope for TaskRecipeScope<'_> {
     #[inline]
-    fn get<'b>(&'b self, lookup: Lookup<'_>) -> Option<LookupValue<'b>> {
+    fn get(&self, lookup: Lookup) -> Option<LookupValue<'_>> {
         let Lookup::Ident(name) = lookup else {
             return None;
         };
 
-        let Some(local) = self.vars.get(name) else {
+        let Some(local) = self.vars.get(&name) else {
             return self.parent.get(lookup);
         };
 
@@ -299,7 +319,7 @@ impl Scope for TaskRecipeScope<'_> {
     }
 
     #[inline]
-    fn task_id(&self) -> Option<&TaskId> {
+    fn task_id(&self) -> Option<TaskId> {
         Some(self.task_id)
     }
 
@@ -311,7 +331,7 @@ impl Scope for TaskRecipeScope<'_> {
 
 impl Scope for BuildRecipeScope<'_> {
     #[inline]
-    fn get<'b>(&'b self, lookup: Lookup<'_>) -> Option<LookupValue<'b>> {
+    fn get(&self, lookup: Lookup) -> Option<LookupValue<'_>> {
         match lookup {
             Lookup::Implied => None,
             Lookup::PatternStem => {
@@ -326,14 +346,17 @@ impl Scope for BuildRecipeScope<'_> {
                     group.to_owned(),
                 ))))
             }
-            Lookup::InputFile | Lookup::Ident("in") => {
-                Some(LookupValue::ValueRef(Eval::inherent(&self.input_files)))
-            }
-            Lookup::OutputFile | Lookup::Ident("out") => {
-                Some(LookupValue::ValueRef(Eval::inherent(&self.output_file)))
-            }
+            Lookup::InputFile => Some(LookupValue::ValueRef(Eval::inherent(&self.input_files))),
+            Lookup::OutputFile => Some(LookupValue::ValueRef(Eval::inherent(&self.output_file))),
             Lookup::Ident(name) => {
-                let Some(local) = self.vars.get(name) else {
+                let sym_cache = SymCache::get();
+                if name == sym_cache.symbol_in {
+                    return Some(LookupValue::ValueRef(Eval::inherent(&self.input_files)));
+                } else if name == sym_cache.symbol_out {
+                    return Some(LookupValue::ValueRef(Eval::inherent(&self.output_file)));
+                }
+
+                let Some(local) = self.vars.get(&name) else {
                     return self.parent.get(lookup);
                 };
                 Some(LookupValue::EvalRef(local))
@@ -347,7 +370,7 @@ impl Scope for BuildRecipeScope<'_> {
     }
 
     #[inline]
-    fn task_id(&self) -> Option<&TaskId> {
+    fn task_id(&self) -> Option<TaskId> {
         Some(self.task_id)
     }
 
@@ -359,7 +382,7 @@ impl Scope for BuildRecipeScope<'_> {
 
 impl Scope for SubexprScope<'_> {
     #[inline]
-    fn get<'b>(&'b self, lookup: Lookup<'_>) -> Option<LookupValue<'b>> {
+    fn get(&self, lookup: Lookup) -> Option<LookupValue<'_>> {
         match lookup {
             Lookup::Implied => Some(LookupValue::EvalRef(self.implied_value)),
             _ => self.parent.get(lookup),
@@ -372,7 +395,7 @@ impl Scope for SubexprScope<'_> {
     }
 
     #[inline]
-    fn task_id(&self) -> Option<&TaskId> {
+    fn task_id(&self) -> Option<TaskId> {
         self.parent.task_id()
     }
 
@@ -384,7 +407,7 @@ impl Scope for SubexprScope<'_> {
 
 impl Scope for MatchScope<'_> {
     #[inline]
-    fn get<'b>(&'b self, lookup: Lookup<'_>) -> Option<LookupValue<'b>> {
+    fn get(&self, lookup: Lookup) -> Option<LookupValue<'_>> {
         match lookup {
             Lookup::PatternStem => {
                 let stem = self.pattern_match.stem()?;
@@ -409,7 +432,7 @@ impl Scope for MatchScope<'_> {
     }
 
     #[inline]
-    fn task_id(&self) -> Option<&TaskId> {
+    fn task_id(&self) -> Option<TaskId> {
         self.parent.task_id()
     }
 

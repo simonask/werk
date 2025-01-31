@@ -1,5 +1,5 @@
 [package]
-name = "werk-fs"
+name = "werk-util"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,10 +7,10 @@ edition = "2021"
 path = "lib.rs"
 
 [dependencies]
-winnow.workspace = true
-thiserror.workspace = true
+ahash.workspace = true
+hashbrown = "0.15.2"
+parking_lot.workspace = true
 serde.workspace = true
-werk-util.workspace = true
 
 [lints]
 workspace = true

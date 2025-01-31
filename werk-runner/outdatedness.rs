@@ -3,7 +3,8 @@ use std::{
     ops::{BitOr, BitOrAssign},
 };
 
-use werk_fs::Absolute;
+use werk_fs::{Absolute, SymPath};
+use werk_util::Symbol;
 
 use crate::{
     cache::TargetOutdatednessCache,
@@ -15,23 +16,29 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Reason {
     /// The output file of a recipe does not exist.
-    Missing(Absolute<werk_fs::PathBuf>),
+    Missing(Absolute<SymPath>),
     /// A source file was newer than its output.
-    Modified(Absolute<werk_fs::PathBuf>, std::time::SystemTime),
+    Modified(Absolute<SymPath>, std::time::SystemTime),
     /// The result of a glob operation changed between runs.
-    Glob(String),
+    Glob(Symbol),
     /// The value of a used environment variable changed between runs.
-    Env(String),
+    Env(Symbol),
     /// The resolved path of a binary executable changed between runs.
-    Which(String),
+    Which(Symbol),
     /// The constant value of a global variable changed between runs.
-    GlobalChanged(String),
+    GlobalChanged(Symbol),
     /// Recipe changed between runs.
     RecipeChanged,
     /// Manual define changed.
-    Define(String),
+    Define(Symbol),
     /// The recipe has a dependency that was rebuilt.
     Rebuilt(TaskId),
+}
+
+impl Reason {
+    pub fn missing(path: impl Into<Absolute<SymPath>>) -> Self {
+        Reason::Missing(path.into())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +49,10 @@ pub struct Outdatedness {
 impl Outdatedness {
     pub fn new<I: IntoIterator<Item = Reason>>(reasons: I) -> Self {
         Self::from_iter(reasons)
+    }
+
+    pub fn missing(path: impl Into<Absolute<SymPath>>) -> Self {
+        Self::new(std::iter::once(Reason::missing(path)))
     }
 
     #[must_use]
@@ -191,47 +202,47 @@ impl<'a> OutdatednessTracker<'a> {
                 UsedVariable::Glob(glob, hash) => {
                     if self
                         .cache
-                        .is_some_and(|cache| cache.is_glob_outdated(&glob, hash))
+                        .is_some_and(|cache| cache.is_glob_outdated(glob, hash))
                     {
-                        self.outdatedness.insert(Reason::Glob(glob.clone()));
+                        self.outdatedness.insert(Reason::Glob(glob));
                     }
                     self.new_cache.glob.insert(glob, hash);
                 }
                 UsedVariable::Which(which, hash) => {
                     if self
                         .cache
-                        .is_some_and(|cache| cache.is_which_outdated(&which, hash))
+                        .is_some_and(|cache| cache.is_which_outdated(which, hash))
                     {
-                        self.outdatedness.insert(Reason::Which(which.clone()));
+                        self.outdatedness.insert(Reason::Which(which));
                     }
-                    self.new_cache.which.insert(which.clone(), hash);
+                    self.new_cache.which.insert(which, hash);
                 }
                 UsedVariable::Env(env, hash) => {
                     if self
                         .cache
-                        .is_some_and(|cache| cache.is_env_outdated(&env, hash))
+                        .is_some_and(|cache| cache.is_env_outdated(env, hash))
                     {
-                        self.outdatedness.insert(Reason::Env(env.clone()));
+                        self.outdatedness.insert(Reason::Env(env));
                     }
-                    self.new_cache.env.insert(env.clone(), hash);
+                    self.new_cache.env.insert(env, hash);
                 }
                 UsedVariable::Define(def, hash) => {
                     if self
                         .cache
-                        .is_some_and(|cache| cache.is_define_outdated(&def, hash))
+                        .is_some_and(|cache| cache.is_define_outdated(def, hash))
                     {
-                        self.outdatedness.insert(Reason::Define(def.clone()));
+                        self.outdatedness.insert(Reason::Define(def));
                     }
-                    self.new_cache.define.insert(def.clone(), hash);
+                    self.new_cache.define.insert(def, hash);
                 }
                 UsedVariable::Global(var, hash) => {
                     if self
                         .cache
-                        .is_some_and(|cache| cache.is_global_outdated(&var, hash))
+                        .is_some_and(|cache| cache.is_global_outdated(var, hash))
                     {
-                        self.outdatedness.insert(Reason::GlobalChanged(var.clone()));
+                        self.outdatedness.insert(Reason::GlobalChanged(var));
                     }
-                    self.new_cache.global.insert(var.clone(), hash);
+                    self.new_cache.global.insert(var, hash);
                 }
                 UsedVariable::WorkspaceFile(path, mtime) => {
                     if let Some(target_mtime) = self.target_mtime {
@@ -244,8 +255,8 @@ impl<'a> OutdatednessTracker<'a> {
         }
     }
 
-    pub fn target_does_not_exist(&mut self, target: Absolute<werk_fs::PathBuf>) {
-        self.outdatedness.insert(Reason::Missing(target));
+    pub fn missing(&mut self, target: impl Into<Absolute<SymPath>>) {
+        self.outdatedness.insert(Reason::Missing(target.into()));
     }
 
     pub fn add_reason(&mut self, reason: Reason) {
@@ -263,7 +274,7 @@ impl<'a> OutdatednessTracker<'a> {
         if let Some(cache) = self.cache {
             for key in cache.define.keys() {
                 if !self.new_cache.define.contains_key(key) {
-                    self.outdatedness.insert(Reason::Define(key.clone()));
+                    self.outdatedness.insert(Reason::Define(*key));
                 }
             }
         }

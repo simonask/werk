@@ -2,14 +2,14 @@ use crate::{BuildStatus, Error, Outdatedness, ShellCommandLine, TaskId};
 
 pub trait Render: Send + Sync {
     /// Build task is about to start.
-    fn will_build(&self, task_id: &TaskId, num_steps: usize, outdatedness: &Outdatedness);
+    fn will_build(&self, task_id: TaskId, num_steps: usize, outdatedness: &Outdatedness);
 
     /// Build task finished (all steps have been completed).
-    fn did_build(&self, task_id: &TaskId, result: &Result<BuildStatus, Error>);
+    fn did_build(&self, task_id: TaskId, result: &Result<BuildStatus, Error>);
     /// Run command is about to be executed.
     fn will_execute(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command: &ShellCommandLine,
         step: usize,
         num_steps: usize,
@@ -17,7 +17,7 @@ pub trait Render: Send + Sync {
 
     fn on_child_process_stderr_line(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command: &ShellCommandLine,
         line_without_eol: &[u8],
         quiet: bool,
@@ -27,7 +27,7 @@ pub trait Render: Send + Sync {
 
     fn on_child_process_stdout_line(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command: &ShellCommandLine,
         line_without_eol: &[u8],
     ) {
@@ -42,7 +42,7 @@ pub trait Render: Send + Sync {
     /// function,
     fn did_execute(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command: &ShellCommandLine,
         status: &std::io::Result<std::process::ExitStatus>,
         step: usize,
@@ -51,11 +51,11 @@ pub trait Render: Send + Sync {
 
     /// Emit a message from the user, typically from the `info` expression in
     /// the manifest.
-    fn message(&self, task_id: Option<&TaskId>, message: &str);
+    fn message(&self, task_id: Option<TaskId>, message: &str);
 
     /// Emit a warning from the user, typically from the `warn` expression in
     /// the manifest.
-    fn warning(&self, task_id: Option<&TaskId>, message: &str);
+    fn warning(&self, task_id: Option<TaskId>, message: &str);
 
     /// Emit an informational message from the runtime, typically the `werk`
     /// binary wants to tell the user about something that happened.

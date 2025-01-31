@@ -1,5 +1,7 @@
 use std::{borrow::Cow, fmt::Write, hash::Hash as _};
 
+use werk_util::Symbol;
+
 use crate::{
     parser::{parse_pattern_expr_unquoted, parse_string_expr_unquoted, Escape, Span},
     SemanticHash,
@@ -225,7 +227,7 @@ impl SemanticHash for PatternFragment<'_> {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Interpolation<'a> {
-    pub stem: InterpolationStem<'a>,
+    pub stem: InterpolationStem,
     pub options: Option<Box<InterpolationOptions<'a>>>,
 }
 
@@ -233,7 +235,7 @@ impl Interpolation<'_> {
     #[must_use]
     pub fn into_static(self) -> Interpolation<'static> {
         Interpolation {
-            stem: self.stem.into_static(),
+            stem: self.stem,
             options: self.options.map(|o| Box::new(o.into_static())),
         }
     }
@@ -353,8 +355,8 @@ impl InterpolationOptions<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum InterpolationStem<'a> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum InterpolationStem {
     /// Empty stem; inherit output type from the interpolated value.
     Implied,
     /// `{%}` - output is string.
@@ -362,29 +364,16 @@ pub enum InterpolationStem<'a> {
     /// `{1}` - output is string.
     CaptureGroup(u32),
     /// `{ident}` - output is string.
-    Ident(Cow<'a, str>),
+    Ident(Symbol),
 }
 
-impl InterpolationStem<'_> {
-    #[inline]
-    #[must_use]
-    pub fn into_static(self) -> InterpolationStem<'static> {
-        match self {
-            InterpolationStem::Implied => InterpolationStem::Implied,
-            InterpolationStem::PatternCapture => InterpolationStem::PatternCapture,
-            InterpolationStem::CaptureGroup(i) => InterpolationStem::CaptureGroup(i),
-            InterpolationStem::Ident(s) => InterpolationStem::Ident(s.into_owned().into()),
-        }
-    }
-}
-
-impl SemanticHash for InterpolationStem<'_> {
+impl SemanticHash for InterpolationStem {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
             InterpolationStem::PatternCapture | InterpolationStem::Implied => (),
             InterpolationStem::CaptureGroup(i) => i.hash(state),
-            InterpolationStem::Ident(s) => s.hash(state),
+            InterpolationStem::Ident(s) => s.as_str().hash(state),
         }
     }
 }

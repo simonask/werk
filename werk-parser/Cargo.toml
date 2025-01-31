@@ -17,6 +17,7 @@ winnow.workspace = true
 regex.workspace = true
 annotate-snippets.workspace = true
 serde.workspace = true
+werk-util.workspace = true
 
 [dev-dependencies]
 anstream = "0.6.18"

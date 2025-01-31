@@ -162,10 +162,10 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 }
 
 impl<const LINEAR: bool> Renderer<LINEAR> {
-    pub fn will_build(&mut self, task_id: &TaskId, num_steps: usize, outdatedness: &Outdatedness) {
+    pub fn will_build(&mut self, task_id: TaskId, num_steps: usize, outdatedness: &Outdatedness) {
         self.state
             .current_tasks
-            .insert(task_id.clone(), TaskStatus::new(num_steps));
+            .insert(task_id, TaskStatus::new(num_steps));
         self.state.num_tasks += 1;
 
         _ = self.render_lines(|out, state| {
@@ -196,8 +196,8 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
         });
     }
 
-    fn did_build(&mut self, task_id: &TaskId, result: &Result<BuildStatus, Error>) {
-        let Some(finished) = self.state.current_tasks.shift_remove(task_id) else {
+    fn did_build(&mut self, task_id: TaskId, result: &Result<BuildStatus, Error>) {
+        let Some(finished) = self.state.current_tasks.shift_remove(&task_id) else {
             return;
         };
 
@@ -241,12 +241,12 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 
     fn will_execute(
         &mut self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command: &ShellCommandLine,
         step: usize,
         num_steps: usize,
     ) {
-        let Some(status) = self.state.current_tasks.get_mut(task_id) else {
+        let Some(status) = self.state.current_tasks.get_mut(&task_id) else {
             return;
         };
         status.progress = step + 1;
@@ -272,14 +272,14 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 
     fn on_child_process_stderr_line(
         &mut self,
-        task_id: &TaskId,
+        task_id: TaskId,
         _command: &ShellCommandLine,
         line_without_eol: &[u8],
         quiet: bool,
     ) {
         if (quiet | self.state.settings.quiet) && !self.state.settings.loud {
             // Capture the output for later in case the task fails.
-            let Some(status) = self.state.current_tasks.get_mut(task_id) else {
+            let Some(status) = self.state.current_tasks.get_mut(&task_id) else {
                 return;
             };
             let captured = status.captured.get_or_insert_default();
@@ -297,7 +297,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 
     fn on_child_process_stdout_line(
         &mut self,
-        _task_id: &TaskId,
+        _task_id: TaskId,
         _command: &ShellCommandLine,
         line_without_eol: &[u8],
     ) {
@@ -311,7 +311,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 
     fn did_execute(
         &mut self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command: &ShellCommandLine,
         result: &Result<std::process::ExitStatus, std::io::Error>,
         step: usize,
@@ -343,12 +343,12 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
         }
     }
 
-    fn message(&mut self, _task_id: Option<&TaskId>, message: &str) {
+    fn message(&mut self, _task_id: Option<TaskId>, message: &str) {
         _ = self
             .render_lines(|out, _status| writeln!(out, "{} {}", "[info]".bright_green(), message));
     }
 
-    fn warning(&mut self, _task_id: Option<&TaskId>, message: &str) {
+    fn warning(&mut self, _task_id: Option<TaskId>, message: &str) {
         _ = self
             .render_lines(|out, _status| writeln!(out, "{} {}", "[warn]".bright_yellow(), message));
     }
@@ -367,19 +367,19 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 }
 
 impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
-    fn will_build(&self, task_id: &TaskId, num_steps: usize, outdatedness: &Outdatedness) {
+    fn will_build(&self, task_id: TaskId, num_steps: usize, outdatedness: &Outdatedness) {
         self.inner
             .lock()
             .will_build(task_id, num_steps, outdatedness);
     }
 
-    fn did_build(&self, task_id: &TaskId, result: &Result<BuildStatus, Error>) {
+    fn did_build(&self, task_id: TaskId, result: &Result<BuildStatus, Error>) {
         self.inner.lock().did_build(task_id, result);
     }
 
     fn will_execute(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command: &ShellCommandLine,
         step: usize,
         num_steps: usize,
@@ -391,7 +391,7 @@ impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
 
     fn did_execute(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command: &ShellCommandLine,
         status: &std::io::Result<std::process::ExitStatus>,
         step: usize,
@@ -402,11 +402,11 @@ impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
             .did_execute(task_id, command, status, step, num_steps);
     }
 
-    fn message(&self, task_id: Option<&TaskId>, message: &str) {
+    fn message(&self, task_id: Option<TaskId>, message: &str) {
         self.inner.lock().message(task_id, message)
     }
 
-    fn warning(&self, task_id: Option<&TaskId>, message: &str) {
+    fn warning(&self, task_id: Option<TaskId>, message: &str) {
         self.inner.lock().warning(task_id, message)
     }
 
@@ -416,7 +416,7 @@ impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
 
     fn on_child_process_stderr_line(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command: &ShellCommandLine,
         line_without_eol: &[u8],
         quiet: bool,
@@ -428,7 +428,7 @@ impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
 
     fn on_child_process_stdout_line(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command: &ShellCommandLine,
         line_without_eol: &[u8],
     ) {

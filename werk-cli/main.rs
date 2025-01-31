@@ -519,7 +519,7 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
         .collect::<Vec<_>>();
     let max_global_name_len = globals
         .iter()
-        .map(|(name, _, _)| name.len())
+        .map(|(name, _, _)| name.as_str().len())
         .max()
         .unwrap_or(0);
     let max_global_value_len = globals

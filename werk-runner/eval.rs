@@ -1,6 +1,7 @@
 mod used;
 pub use used::*;
 use werk_fs::{Absolute, PathError};
+use werk_util::Symbol;
 
 use std::{borrow::Cow, sync::Arc};
 
@@ -160,7 +161,7 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             })?;
 
             if let Some(hash) = hash {
-                used.insert(UsedVariable::Which(string, hash));
+                used.insert(UsedVariable::Which(Symbol::new(&string), hash));
             }
 
             Ok(Eval {
@@ -174,7 +175,7 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
                 mut used,
             } = eval_string_expr(scope, &expr.param)?;
             let (env, hash) = scope.workspace().env(&name);
-            used.insert(UsedVariable::Env(name, hash));
+            used.insert(UsedVariable::Env(Symbol::new(&name), hash));
             Ok(Eval {
                 value: Value::String(env),
                 used,
@@ -194,7 +195,7 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             })
         }
         ast::Expr::Ident(ident) => scope
-            .get(Lookup::Ident(&ident.ident))
+            .get(Lookup::Ident(ident.ident))
             .ok_or_else(|| EvalError::NoSuchIdentifier(ident.span, ident.ident.to_string()))
             .map(LookupValue::into_owned),
         ast::Expr::Error(expr) => {
@@ -596,7 +597,7 @@ pub fn eval_pattern_builder<'a, P: Scope + ?Sized>(
                     return Err(EvalError::PatternStemInterpolationInPattern(expr.span));
                 }
 
-                let value = eval_string_interpolation_stem(scope, expr.span, &interp.stem)?;
+                let value = eval_string_interpolation_stem(scope, expr.span, interp.stem)?;
                 used |= value.used();
 
                 let mut value_owned;
@@ -658,7 +659,7 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
         match fragment {
             ast::StringFragment::Literal(lit) => s.push_str(lit),
             ast::StringFragment::Interpolation(interp) => {
-                let value = eval_string_interpolation_stem(scope, expr.span, &interp.stem)?;
+                let value = eval_string_interpolation_stem(scope, expr.span, interp.stem)?;
                 used |= value.used();
 
                 let mut value_owned;
@@ -820,7 +821,7 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
                 builder.push_lit(lit);
             }
             ast::StringFragment::Interpolation(interp) => {
-                let value = eval_string_interpolation_stem(scope, expr.span, &interp.stem)?;
+                let value = eval_string_interpolation_stem(scope, expr.span, interp.stem)?;
                 used |= value.used();
 
                 let mut value_owned;
@@ -882,11 +883,11 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
     })
 }
 
-fn eval_string_interpolation_stem<'a, P: Scope + ?Sized>(
-    scope: &'a P,
+fn eval_string_interpolation_stem<P: Scope + ?Sized>(
+    scope: &P,
     span: Span,
-    stem: &ast::InterpolationStem,
-) -> Result<LookupValue<'a>, EvalError> {
+    stem: ast::InterpolationStem,
+) -> Result<LookupValue, EvalError> {
     Ok(match stem {
         ast::InterpolationStem::Implied => scope
             .get(Lookup::Implied)
@@ -895,9 +896,9 @@ fn eval_string_interpolation_stem<'a, P: Scope + ?Sized>(
             .get(Lookup::PatternStem)
             .ok_or(EvalError::NoPatternStem(span))?,
         ast::InterpolationStem::CaptureGroup(group) => scope
-            .get(Lookup::CaptureGroup(*group))
-            .ok_or(EvalError::NoSuchCaptureGroup(span, *group))?,
-        ast::InterpolationStem::Ident(ref ident) => scope
+            .get(Lookup::CaptureGroup(group))
+            .ok_or(EvalError::NoSuchCaptureGroup(span, group))?,
+        ast::InterpolationStem::Ident(ident) => scope
             .get(Lookup::Ident(ident))
             .ok_or_else(|| EvalError::NoSuchIdentifier(span, ident.as_ref().to_owned()))?,
     })
@@ -1011,7 +1012,7 @@ pub fn eval_read<P: Scope + ?Sized>(
         ));
     };
 
-    let used = UsedVariable::WorkspaceFile(path.into_owned(), fs_entry.metadata.mtime);
+    let used = UsedVariable::WorkspaceFile(Absolute::symbolicate(&path), fs_entry.metadata.mtime);
 
     Ok(Eval {
         value: string,
@@ -1035,7 +1036,7 @@ pub fn eval_glob(
         .workspace()
         .glob_workspace_files(&glob_pattern_string)
         .map_err(|err| EvalError::Glob(expr.span, Arc::new(err)))?;
-    used.insert(UsedVariable::Glob(glob_pattern_string, hash));
+    used.insert(UsedVariable::Glob(Symbol::new(&glob_pattern_string), hash));
     let matches = matches
         .into_iter()
         .map(|p| Value::String(p.into_inner().into()))
@@ -1070,7 +1071,7 @@ pub(crate) fn eval_build_recipe_statements(
         match stmt.statement {
             ast::BuildRecipeStmt::Let(ref let_stmt) => {
                 let value = eval_chain(scope, &let_stmt.value)?;
-                scope.set(let_stmt.ident.ident.to_string(), value);
+                scope.set(let_stmt.ident.ident, value);
             }
             ast::BuildRecipeStmt::From(ref expr) => {
                 let value = eval_chain(scope, &expr.param)?;
@@ -1089,7 +1090,7 @@ pub(crate) fn eval_build_recipe_statements(
                 match value.value {
                     Value::String(ref depfile) => {
                         evaluated.depfile = Some(depfile.clone());
-                        scope.set(String::from("depfile"), value);
+                        scope.set(Symbol::from("depfile"), value);
                     }
                     Value::List(_) => {
                         return Err(EvalError::UnexpectedList(expr.span));
@@ -1158,10 +1159,7 @@ pub(crate) fn eval_task_recipe_statements(
         match stmt.statement {
             ast::TaskRecipeStmt::Let(ref let_stmt) => {
                 let value = eval_chain(scope, &let_stmt.value)?;
-                scope.set(
-                    let_stmt.ident.ident.to_string(),
-                    Eval::inherent(value.value),
-                );
+                scope.set(let_stmt.ident.ident, Eval::inherent(value.value));
             }
             ast::TaskRecipeStmt::Build(ref expr) => {
                 let value = eval_chain(scope, &expr.param)?;

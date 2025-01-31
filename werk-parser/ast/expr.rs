@@ -19,7 +19,7 @@ use super::{keyword, token, Body, BodyStmt, Ident, PatternExpr, StringExpr, Trai
 #[serde(tag = "type", content = "value")]
 pub enum Expr<'a> {
     // Look up variable in scope.
-    Ident(Ident<'a>),
+    Ident(Ident),
     StringExpr(StringExpr<'a>),
     Shell(ShellExpr<'a>),
     Read(ReadExpr<'a>),

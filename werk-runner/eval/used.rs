@@ -3,6 +3,9 @@ use std::{
     ops::{BitOr, BitOrAssign},
 };
 
+use werk_fs::{Absolute, SymPath};
+use werk_util::Symbol;
+
 use crate::cache::Hash128;
 
 /// The external variables used when evaluating an expression.
@@ -39,14 +42,14 @@ impl Used {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum UsedVariable {
-    Glob(String, Hash128),
-    Which(String, Hash128),
-    Env(String, Hash128),
-    Define(String, Hash128),
+    Glob(Symbol, Hash128),
+    Which(Symbol, Hash128),
+    Env(Symbol, Hash128),
+    Define(Symbol, Hash128),
     /// Used a global variable. The hash is the hash of the expression (not the
     /// value itself).
-    Global(String, Hash128),
-    WorkspaceFile(werk_fs::Absolute<werk_fs::PathBuf>, std::time::SystemTime),
+    Global(Symbol, Hash128),
+    WorkspaceFile(Absolute<SymPath>, std::time::SystemTime),
 }
 
 impl FromIterator<UsedVariable> for Used {
