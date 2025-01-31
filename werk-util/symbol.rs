@@ -1,17 +1,47 @@
-use std::{borrow::Borrow, num::NonZero};
+use std::borrow::Borrow;
 
 use hashbrown::{hash_map::EntryRef, HashMap};
 use parking_lot::{Mutex, MutexGuard};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Symbol(NonZero<u32>);
+#[derive(Clone, Copy, Eq)]
+pub struct Symbol(&'static &'static str);
+
+impl PartialEq for Symbol {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0)
+    }
+}
+
+impl std::hash::Hash for Symbol {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::ptr::hash(self.0.as_ptr(), state);
+    }
+}
+
+impl PartialOrd for Symbol {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Symbol {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.0.as_ptr() as usize).cmp(&(other.0.as_ptr() as usize))
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-struct SymStr(&'static str);
+struct SymStr(&'static &'static str);
 impl From<&str> for SymStr {
     #[inline]
     fn from(s: &str) -> SymStr {
-        Self(String::leak(s.to_string()))
+        let string: &'static str = s.to_string().leak();
+        let leaked: &'static &'static str = Box::leak(Box::new(string));
+        Self(leaked)
     }
 }
 impl Borrow<str> for SymStr {
@@ -22,8 +52,7 @@ impl Borrow<str> for SymStr {
 }
 
 struct Registry {
-    by_name: HashMap<SymStr, Symbol, ahash::RandomState>,
-    by_index: Vec<SymStr>,
+    by_name: HashMap<SymStr, (), ahash::RandomState>,
 }
 static REGISTRY: Mutex<Registry> = Mutex::new(Registry {
     by_name: HashMap::with_hasher(ahash::RandomState::with_seeds(
@@ -32,33 +61,9 @@ static REGISTRY: Mutex<Registry> = Mutex::new(Registry {
         0x9038_b72c_8d04_99f6,
         0x3715_c24b_7e23_6bf4,
     )),
-    by_index: Vec::new(),
 });
 
 impl Symbol {
-    #[expect(clippy::cast_possible_truncation)]
-    #[must_use]
-    pub(crate) const unsafe fn from_index_unchecked(index: usize) -> Symbol {
-        unsafe {
-            let index = index.unchecked_add(1);
-            let index = index as u32;
-            Symbol(NonZero::new_unchecked(index))
-        }
-    }
-
-    #[must_use]
-    pub(crate) const fn from_index(index: usize) -> Symbol {
-        const SYM_MAX: usize = u32::MAX as usize - 1;
-        assert!(index <= SYM_MAX, "too many interned strings");
-        unsafe { Self::from_index_unchecked(index) }
-    }
-
-    #[inline]
-    #[must_use]
-    pub(crate) const fn index(self) -> usize {
-        self.0.get() as usize - 1
-    }
-
     #[inline]
     #[must_use]
     pub fn new(string: &str) -> Symbol {
@@ -74,7 +79,7 @@ impl Symbol {
     #[inline]
     #[must_use]
     pub fn as_str(self) -> &'static str {
-        SymbolRegistryLock::lock().get_str(self)
+        self.0
     }
 }
 
@@ -151,14 +156,14 @@ impl SymbolRegistryLock {
     #[inline]
     #[must_use]
     pub fn get(&self, string: &str) -> Option<Symbol> {
-        self.lock.by_name.get(string).copied()
+        let (key, ()) = self.lock.by_name.get_key_value(string)?;
+        Some(Symbol(key.0))
     }
 
     #[inline]
     #[must_use]
     pub fn get_str(&self, sym: Symbol) -> &'static str {
-        let index = sym.index();
-        self.lock.by_index[index].0
+        sym.0
     }
 
     #[inline]
@@ -166,14 +171,11 @@ impl SymbolRegistryLock {
     pub fn insert(&mut self, string: &str) -> Symbol {
         let registry = &mut *self.lock;
         match registry.by_name.entry_ref(string) {
-            EntryRef::Occupied(occupied_entry) => *occupied_entry.get(),
+            EntryRef::Occupied(occupied_entry) => Symbol(occupied_entry.key().0),
             EntryRef::Vacant(vacant_entry_ref) => {
-                let index = registry.by_index.len();
-                let symbol = Symbol::from_index(index);
                 // String is leaked here via `SymStr::from`.
-                let occupied = vacant_entry_ref.insert_entry(symbol);
-                registry.by_index.push(*occupied.key());
-                symbol
+                let occupied = vacant_entry_ref.insert_entry(());
+                Symbol(occupied.key().0)
             }
         }
     }
@@ -195,5 +197,25 @@ impl<'de> serde::Deserialize<'de> for Symbol {
     {
         let string = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
         Ok(Symbol::new(&string))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn basic() {
+        let i = 123;
+
+        // Two different heap pointers.
+        let a = format!("hello {i}");
+        let b = format!("hello {i}");
+
+        let a = Symbol::new(&a);
+        let b = Symbol::new(&b);
+
+        assert_eq!(a, b);
+        assert_eq!(a.0.as_ptr(), b.0.as_ptr());
     }
 }
