@@ -547,7 +547,13 @@ fn eval_split(
     let pattern = pattern_builder.build();
 
     let mut result = Vec::new();
-    split_recursive(&param.value, &pattern.regex, &mut result);
+    split_recursive(
+        &param.value,
+        pattern
+            .regex()
+            .expect("split-pattern did not produce a regex"),
+        &mut result,
+    );
     Ok(Eval {
         value: Value::List(result),
         used,

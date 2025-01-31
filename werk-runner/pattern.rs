@@ -8,6 +8,17 @@ pub struct Pattern<'a> {
     pub string: String,
     /// The source span for the pattern.
     pub span: Span,
+    matcher: PatternMatcher<'a>,
+}
+
+#[derive(Debug, Clone)]
+enum PatternMatcher<'a> {
+    Literal,
+    Regex(PatternRegex<'a>),
+}
+
+#[derive(Debug, Clone)]
+struct PatternRegex<'a> {
     /// Parsed fragments of the pattern.
     pub fragments: Box<[PatternFragment<'a>]>,
     /// The regular expression used to match this pattern.
@@ -127,6 +138,26 @@ impl<'a> PatternBuilder<'a> {
 
     #[must_use]
     pub fn build(self) -> Pattern<'a> {
+        // Check if we can use fast-path string comparison instead of regex matching.
+        if !self.match_substrings
+            && self
+                .fragments
+                .iter()
+                .all(|f| matches!(f, PatternFragment::Literal(_)))
+        {
+            let mut string = String::new();
+            for f in &self.fragments {
+                if let PatternFragment::Literal(lit) = f {
+                    string.push_str(lit);
+                }
+            }
+            return Pattern {
+                string,
+                span: self.span,
+                matcher: PatternMatcher::Literal,
+            };
+        }
+
         let mut regex_pattern = String::from(if self.match_substrings { "" } else { "^" });
         let mut capture_count = 0;
         let mut stem_capture_index = None;
@@ -165,10 +196,12 @@ impl<'a> PatternBuilder<'a> {
         Pattern {
             span: self.span,
             string: self.string,
-            fragments: self.fragments.into(),
-            regex: Box::new(regex),
-            stem_capture_index,
-            num_capture_groups,
+            matcher: PatternMatcher::Regex(PatternRegex {
+                fragments: self.fragments.into(),
+                regex: Box::new(regex),
+                stem_capture_index,
+                num_capture_groups,
+            }),
         }
     }
 }
@@ -193,29 +226,60 @@ impl<'a> Pattern<'a> {
 
     #[must_use]
     pub fn match_whole_string(&self, string: &str) -> Option<PatternMatchData> {
-        let m = self.regex.captures(string)?;
-        let mut capture_groups = Vec::with_capacity(self.num_capture_groups);
-        let mut stem = None;
+        match self.matcher {
+            PatternMatcher::Literal => {
+                if string == self.string {
+                    Some(PatternMatchData {
+                        stem: None,
+                        captures: Box::default(),
+                    })
+                } else {
+                    None
+                }
+            }
+            PatternMatcher::Regex(ref regex) => {
+                let m = regex.regex.captures(string)?;
+                let mut capture_groups = Vec::with_capacity(regex.num_capture_groups);
+                let mut stem = None;
 
-        let mut group_matches = m.iter();
-        // Skip the implicit whole-string match group.
-        group_matches.next().unwrap();
+                let mut group_matches = m.iter();
+                // Skip the implicit whole-string match group.
+                group_matches.next().unwrap();
 
-        for (index, group) in group_matches.enumerate() {
-            let group_str = group.unwrap().as_str();
-            if self.stem_capture_index == Some(index) {
-                stem = Some(group_str);
-            } else {
-                capture_groups.push(group_str);
+                for (index, group) in group_matches.enumerate() {
+                    let group_str = group.unwrap().as_str();
+                    if regex.stem_capture_index == Some(index) {
+                        stem = Some(group_str);
+                    } else {
+                        capture_groups.push(group_str);
+                    }
+                }
+
+                Some(PatternMatchData::new(stem, capture_groups))
             }
         }
-
-        Some(PatternMatchData::new(stem, capture_groups))
     }
 
+    #[must_use]
     pub fn match_whole_path(&self, path: &werk_fs::Path) -> Option<PatternMatchData> {
-        tracing::trace!("Matching '{path}' against {:?}", self.regex);
+        tracing::trace!("Matching '{path}' against {:?}", self.string);
         self.match_whole_string(path.as_str())
+    }
+
+    #[must_use]
+    pub fn regex(&self) -> Option<&regex::Regex> {
+        match self.matcher {
+            PatternMatcher::Regex(ref regex) => Some(&*regex.regex),
+            PatternMatcher::Literal => None,
+        }
+    }
+
+    #[must_use]
+    pub fn fragments(&self) -> Option<&[PatternFragment<'a>]> {
+        match self.matcher {
+            PatternMatcher::Regex(ref regex) => Some(&*regex.fragments),
+            PatternMatcher::Literal => None,
+        }
     }
 }
 
@@ -271,9 +335,12 @@ mod tests {
             }
         }
         let pattern = builder.build();
+        let PatternMatcher::Regex(ref regex) = pattern.matcher else {
+            panic!("expected regex")
+        };
 
         assert_eq!(
-            &*pattern.fragments,
+            &*regex.fragments,
             &[
                 PatternFragment::PatternStem,
                 PatternFragment::Literal(".c".into())
