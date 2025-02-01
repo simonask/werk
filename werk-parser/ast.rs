@@ -13,6 +13,7 @@ pub mod token;
 
 pub use expr::*;
 pub use string::*;
+use werk_util::Symbol;
 
 /// Whitespace and comments within statements and expressions (not doc
 /// comments).
@@ -131,7 +132,7 @@ pub struct ConfigStmt<'a> {
     pub token_config: keyword::Config,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
-    pub ident: Ident<'a>,
+    pub ident: Ident,
     #[serde(skip, default)]
     pub ws_2: Whitespace,
     #[serde(skip, default)]
@@ -167,14 +168,14 @@ pub struct ConfigBool(#[serde(skip, default)] pub Span, pub bool);
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
-pub struct Ident<'a> {
+pub struct Ident {
     #[serde(skip, default)]
     pub span: Span,
-    pub ident: Cow<'a, str>,
+    pub ident: Symbol,
 }
 
-impl<'a> Ident<'a> {
-    pub fn new(span: impl Into<Span>, ident: &'a str) -> Self {
+impl Ident {
+    pub fn new(span: impl Into<Span>, ident: impl Into<Symbol>) -> Self {
         Self {
             span: span.into(),
             ident: ident.into(),
@@ -182,33 +183,40 @@ impl<'a> Ident<'a> {
     }
 }
 
-impl std::fmt::Debug for Ident<'_> {
+impl std::fmt::Debug for Ident {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Ident({:?}, {:?})", self.ident, self.span)
     }
 }
 
-impl std::fmt::Display for Ident<'_> {
+impl std::fmt::Display for Ident {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.ident)
+        f.write_str(self.ident.as_str())
     }
 }
 
-impl SemanticHash for Ident<'_> {
+impl SemanticHash for Ident {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.ident.hash(state);
+        self.ident.as_str().hash(state);
     }
 }
 
-impl PartialEq<str> for Ident<'_> {
+impl PartialEq<Symbol> for Ident {
+    #[inline]
+    fn eq(&self, other: &Symbol) -> bool {
+        self.ident == *other
+    }
+}
+
+impl PartialEq<str> for Ident {
     #[inline]
     fn eq(&self, other: &str) -> bool {
         self.ident == other
     }
 }
 
-impl PartialEq<&str> for Ident<'_> {
+impl PartialEq<&str> for Ident {
     #[inline]
     fn eq(&self, other: &&str) -> bool {
         self.ident == *other
@@ -231,7 +239,7 @@ pub struct CommandRecipe<'a> {
     pub token_task: keyword::Task,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
-    pub name: Ident<'a>,
+    pub name: Ident,
     #[serde(skip, default)]
     pub ws_2: Whitespace,
     pub body: Body<TaskRecipeStmt<'a>>,
@@ -380,7 +388,7 @@ pub struct LetStmt<'a> {
     pub token_let: keyword::Let,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
-    pub ident: Ident<'a>,
+    pub ident: Ident,
     #[serde(skip, default)]
     pub ws_2: Whitespace,
     #[serde(skip, default)]

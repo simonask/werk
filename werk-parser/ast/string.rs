@@ -1,5 +1,7 @@
 use std::{borrow::Cow, fmt::Write, hash::Hash as _};
 
+use werk_util::Symbol;
+
 use crate::{
     parser::{parse_pattern_expr_unquoted, parse_string_expr_unquoted, Escape, Span},
     SemanticHash,
@@ -75,7 +77,7 @@ impl<'a> StringExpr<'a> {
 }
 
 /// Interpolated string fragment.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StringFragment<'a> {
     Literal(Cow<'a, str>),
     /// `{...}`
@@ -99,7 +101,7 @@ impl SemanticHash for StringFragment<'_> {
         std::mem::discriminant(self).hash(state);
         match self {
             StringFragment::Literal(s) => s.hash(state),
-            StringFragment::Interpolation(i) => i.hash(state),
+            StringFragment::Interpolation(i) => i.semantic_hash(state),
         }
     }
 }
@@ -184,7 +186,7 @@ impl SemanticHash for PatternExpr<'_> {
 }
 
 /// Interpolated pattern fragment (i.e., can have capture patterns like `%` and `(a|b|c)`).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PatternFragment<'a> {
     Literal(Cow<'a, str>),
     /// `%`
@@ -218,14 +220,14 @@ impl SemanticHash for PatternFragment<'_> {
             PatternFragment::Literal(s) => s.hash(state),
             PatternFragment::PatternStem => (),
             PatternFragment::OneOf(v) => v.hash(state),
-            PatternFragment::Interpolation(i) => i.hash(state),
+            PatternFragment::Interpolation(i) => i.semantic_hash(state),
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Interpolation<'a> {
-    pub stem: InterpolationStem<'a>,
+    pub stem: InterpolationStem,
     pub options: Option<Box<InterpolationOptions<'a>>>,
 }
 
@@ -233,7 +235,7 @@ impl Interpolation<'_> {
     #[must_use]
     pub fn into_static(self) -> Interpolation<'static> {
         Interpolation {
-            stem: self.stem.into_static(),
+            stem: self.stem,
             options: self.options.map(|o| Box::new(o.into_static())),
         }
     }
@@ -268,7 +270,7 @@ impl Interpolation<'_> {
 impl SemanticHash for Interpolation<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.stem.semantic_hash(state);
-        self.options.hash(state);
+        self.options.semantic_hash(state);
     }
 }
 
@@ -331,7 +333,7 @@ impl std::fmt::Display for Interpolation<'_> {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InterpolationOptions<'a> {
     /// `{stem:operation}`
     pub ops: Vec<InterpolationOp<'a>>,
@@ -353,8 +355,15 @@ impl InterpolationOptions<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum InterpolationStem<'a> {
+impl SemanticHash for InterpolationOptions<'_> {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.ops.as_slice().semantic_hash(state);
+        self.join.as_deref().semantic_hash(state);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InterpolationStem {
     /// Empty stem; inherit output type from the interpolated value.
     Implied,
     /// `{%}` - output is string.
@@ -362,29 +371,16 @@ pub enum InterpolationStem<'a> {
     /// `{1}` - output is string.
     CaptureGroup(u32),
     /// `{ident}` - output is string.
-    Ident(Cow<'a, str>),
+    Ident(Symbol),
 }
 
-impl InterpolationStem<'_> {
-    #[inline]
-    #[must_use]
-    pub fn into_static(self) -> InterpolationStem<'static> {
-        match self {
-            InterpolationStem::Implied => InterpolationStem::Implied,
-            InterpolationStem::PatternCapture => InterpolationStem::PatternCapture,
-            InterpolationStem::CaptureGroup(i) => InterpolationStem::CaptureGroup(i),
-            InterpolationStem::Ident(s) => InterpolationStem::Ident(s.into_owned().into()),
-        }
-    }
-}
-
-impl SemanticHash for InterpolationStem<'_> {
+impl SemanticHash for InterpolationStem {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
             InterpolationStem::PatternCapture | InterpolationStem::Implied => (),
             InterpolationStem::CaptureGroup(i) => i.hash(state),
-            InterpolationStem::Ident(s) => s.hash(state),
+            InterpolationStem::Ident(s) => s.as_str().hash(state),
         }
     }
 }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use werk_runner::Value;
 
 use tests::mock_io::*;
+use werk_util::Symbol;
 
 fn evaluate_global(source: &str, global_variable_name_to_check: &str) -> Value {
     let path = std::path::Path::new("test input");
@@ -23,7 +24,7 @@ fn evaluate_global(source: &str, global_variable_name_to_check: &str) -> Value {
     workspace
         .manifest
         .globals
-        .get(global_variable_name_to_check)
+        .get(&Symbol::new(global_variable_name_to_check))
         .ok_or_else(|| anyhow::anyhow!("global variable not found"))
         .unwrap()
         .value

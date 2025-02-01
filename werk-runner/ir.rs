@@ -1,6 +1,7 @@
 use indexmap::IndexMap;
 use werk_fs::Absolute;
 use werk_parser::{ast, parser::Span};
+use werk_util::Symbol;
 
 use crate::{cache::Hash128, EvalError, GlobalVariables, Pattern, PatternMatchData};
 
@@ -15,7 +16,7 @@ type Result<T, E = EvalError> = std::result::Result<T, E>;
 #[derive(Default)]
 pub struct Manifest<'a> {
     pub globals: GlobalVariables,
-    pub task_recipes: IndexMap<&'a str, TaskRecipe<'a>>,
+    pub task_recipes: IndexMap<&'static str, TaskRecipe<'a>>,
     pub build_recipes: Vec<BuildRecipe<'a>>,
 }
 
@@ -134,7 +135,7 @@ pub enum Edition {
 #[derive(Debug)]
 pub struct TaskRecipe<'a> {
     pub span: Span,
-    pub name: &'a str,
+    pub name: Symbol,
     pub doc_comment: String,
     pub body: &'a [ast::BodyStmt<ast::TaskRecipeStmt<'a>>],
     pub hash: Hash128,
@@ -165,7 +166,7 @@ impl Config {
                 continue;
             };
 
-            match &*config_stmt.ident.ident {
+            match config_stmt.ident.ident.as_str() {
                 "edition" => {
                     let edition = match config_stmt.value {
                         ast::ConfigValue::String(ast::ConfigString(_, ref edition))

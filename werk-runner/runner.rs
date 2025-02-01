@@ -3,7 +3,8 @@ use std::{future::Future, sync::Arc, time::SystemTime};
 use futures::{channel::oneshot, StreamExt};
 use indexmap::{map::Entry, IndexMap};
 use parking_lot::Mutex;
-use werk_fs::{Absolute, Normalize as _, Path};
+use werk_fs::{Absolute, Normalize as _, Path, SymPath};
+use werk_util::Symbol;
 
 use crate::{
     depfile::Depfile,
@@ -51,7 +52,7 @@ pub enum BuildStatus {
     Complete(TaskId, Outdatedness),
     /// Target is a dependency that exists in the filesystem, along with its
     /// last modification time.
-    Exists(Absolute<werk_fs::PathBuf>, SystemTime),
+    Exists(Absolute<SymPath>, SystemTime),
 }
 
 impl BuildStatus {
@@ -63,7 +64,7 @@ impl BuildStatus {
         match self {
             BuildStatus::Complete(task_id, outdatedness) => {
                 if outdatedness.is_outdated() {
-                    Some(Reason::Rebuilt(task_id.clone()))
+                    Some(Reason::Rebuilt(task_id))
                 } else {
                     None
                 }
@@ -86,25 +87,24 @@ enum TaskStatus {
     Pending(Vec<oneshot::Sender<Result<BuildStatus, Error>>>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TaskId {
-    Task(Box<str>),
+    Task(Symbol),
     // TODO: When recipes can build multiple files, this needs to change to some
     // ID that encapsulates the "recipe instance" rather than the path of a
     // single target.
-    Build(Box<Absolute<werk_fs::Path>>),
+    Build(Absolute<SymPath>),
 }
 
 impl TaskId {
-    pub fn command(s: impl Into<Box<str>>) -> Self {
+    pub fn command(s: impl Into<Symbol>) -> Self {
         let name = s.into();
-        debug_assert!(!name.starts_with('/'));
+        debug_assert!(!name.as_str().starts_with('/'));
         TaskId::Task(name)
     }
 
-    pub fn build(p: impl Into<Box<Absolute<werk_fs::Path>>>) -> Self {
-        let path = p.into();
-        TaskId::Build(path)
+    pub fn build(p: impl AsRef<Absolute<werk_fs::Path>>) -> Self {
+        TaskId::Build(Absolute::symbolicate(p))
     }
 
     pub fn try_build<P>(p: P) -> Result<Self, P::Error>
@@ -123,10 +123,10 @@ impl TaskId {
 
     #[inline]
     #[must_use]
-    pub fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &'static str {
         match self {
-            TaskId::Task(task) => task,
-            TaskId::Build(build) => build.as_str(),
+            TaskId::Task(task) => task.as_str(),
+            TaskId::Build(build) => build.as_inner().as_str(),
         }
     }
 
@@ -134,7 +134,7 @@ impl TaskId {
     #[must_use]
     pub fn as_path(&self) -> Option<&Absolute<werk_fs::Path>> {
         if let TaskId::Build(build) = self {
-            Some(build)
+            Some(build.as_path())
         } else {
             None
         }
@@ -142,11 +142,14 @@ impl TaskId {
 
     #[inline]
     #[must_use]
-    pub fn short_name(&self) -> &str {
+    pub fn short_name(&self) -> &'static str {
         match self {
-            TaskId::Task(task) => task,
+            TaskId::Task(task) => task.as_str(),
             TaskId::Build(path) => {
-                let Some((_prefix, filename)) = path.as_str().rsplit_once(werk_fs::Path::SEPARATOR)
+                let Some((_prefix, filename)) = path
+                    .as_inner()
+                    .as_str()
+                    .rsplit_once(werk_fs::Path::SEPARATOR)
                 else {
                     // The path is absolute.
                     unreachable!()
@@ -290,7 +293,7 @@ impl<'a> Inner<'a> {
             if let Some(build_recipe_match) = self.workspace.manifest.match_build_recipe(&path)? {
                 if let Some(task_recipe) = task_recipe_match {
                     return Err(AmbiguousPatternError {
-                        pattern1: task_recipe.name.to_owned(),
+                        pattern1: task_recipe.name.as_str().to_owned(),
                         pattern2: build_recipe_match.recipe.pattern.string.clone(),
                         path: path.to_string(),
                     }
@@ -342,10 +345,10 @@ impl<'a> Inner<'a> {
             }
         }
 
-        fn finish_built(this: &RunnerState, task_id: &TaskId, result: &Result<BuildStatus, Error>) {
+        fn finish_built(this: &RunnerState, task_id: TaskId, result: &Result<BuildStatus, Error>) {
             // Notify dependents
             let mut tasks = this.tasks.lock();
-            let status = tasks.get_mut(task_id).expect("task not registered");
+            let status = tasks.get_mut(&task_id).expect("task not registered");
             // Set the task status as complete.
             let TaskStatus::Pending(waiters) =
                 std::mem::replace(status, TaskStatus::Built(result.clone()))
@@ -365,22 +368,22 @@ impl<'a> Inner<'a> {
         // Perform the circular dependency check regardless of how the task was
         // triggered. Otherwise the check would depend on scheduling, which is
         // nondeterministic.
-        if dep_chain.contains(&task_id) {
-            let dep_chain = dep_chain.push(&task_id);
+        if dep_chain.contains(task_id) {
+            let dep_chain = dep_chain.push(task_id);
             return Err(Error::CircularDependency(dep_chain.collect()));
         }
 
         match schedule(&self.workspace.runner_state, spec) {
             Scheduling::Done(result) => result,
-            Scheduling::Pending(receiver) => receiver
-                .await
-                .map_err(|_| Error::Cancelled(task_id.clone()))?,
+            Scheduling::Pending(receiver) => {
+                receiver.await.map_err(|_| Error::Cancelled(task_id))?
+            }
             Scheduling::BuildNow(task_spec) => {
                 let result = self
                     .clone()
-                    .rebuild_spec(&task_id, task_spec, dep_chain)
+                    .rebuild_spec(task_id, task_spec, dep_chain)
                     .await;
-                finish_built(&self.workspace.runner_state, &task_id, &result);
+                finish_built(&self.workspace.runner_state, task_id, &result);
                 result
             }
         }
@@ -392,20 +395,20 @@ impl<'a> Inner<'a> {
         };
         let mtime = entry.metadata.mtime;
         tracing::debug!("Check file mtime `{path}`: {mtime:?}");
-        Ok(BuildStatus::Exists(path.to_path_buf(), mtime))
+        Ok(BuildStatus::Exists(Absolute::symbolicate(path), mtime))
     }
 
     #[tracing::instrument(level = "debug", skip_all, fields(target_file))]
     async fn execute_build_recipe(
         self: &Arc<Self>,
-        task_id: &TaskId,
+        task_id: TaskId,
         recipe_match: ir::BuildRecipeMatch<'_>,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
         let global_scope = RootScope::new(self.workspace);
         let mut scope = BuildRecipeScope::new(&global_scope, task_id, &recipe_match);
         scope.set(
-            "out".to_owned(),
+            Symbol::new("out"),
             Eval::inherent(Value::String(recipe_match.target_file.to_string())),
         );
 
@@ -441,7 +444,7 @@ impl<'a> Inner<'a> {
             tracing::debug!("Output exists, mtime: {mtime:?}");
         } else {
             tracing::debug!("Output file missing, target is outdated");
-            outdatedness.target_does_not_exist(recipe_match.target_file.to_path_buf());
+            outdatedness.missing(Absolute::symbolicate(&recipe_match.target_file));
         }
 
         let mut check_implicit_depfile_was_generated = None;
@@ -453,7 +456,7 @@ impl<'a> Inner<'a> {
 
             // Make the `depfile` variable available to the recipe body.
             scope.set(
-                String::from("depfile"),
+                Symbol::from("depfile"),
                 Eval::inherent(Value::String(depfile.clone())),
             );
 
@@ -506,7 +509,7 @@ impl<'a> Inner<'a> {
                 // or a previous run. Add that as a reason to rebuild the
                 // main recipe. Note that this causes the main recipe to
                 // always be outdated if it fails to generate the depfile!
-                outdatedness.add_reason(Reason::Missing(depfile_path.into_owned()));
+                outdatedness.add_reason(Reason::Missing(Absolute::symbolicate(depfile_path)));
             } else {
                 // If the depfile is generated by a rule, it is an error if that
                 // rule did not generate the depfile. If it is implicit, it's
@@ -548,10 +551,10 @@ impl<'a> Inner<'a> {
             tracing::trace!("Reasons: {:?}", outdated);
             self.execute_recipe_commands(task_id, evaluated.commands, evaluated.env, true, false)
                 .await
-                .map(|()| BuildStatus::Complete(task_id.clone(), outdated))
+                .map(|()| BuildStatus::Complete(task_id, outdated))
         } else {
             tracing::debug!("Up to date");
-            Ok(BuildStatus::Complete(task_id.clone(), outdated))
+            Ok(BuildStatus::Complete(task_id, outdated))
         };
 
         // Check if the implicit depfile was actually generated, and emit a warning if not.
@@ -577,7 +580,7 @@ impl<'a> Inner<'a> {
 
     async fn execute_command_recipe(
         self: &Arc<Self>,
-        task_id: &TaskId,
+        task_id: TaskId,
         recipe: &ir::TaskRecipe<'a>,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
@@ -597,7 +600,7 @@ impl<'a> Inner<'a> {
         self.build_dependencies(dependency_specs, dep_chain, None)
             .await?;
 
-        let outdated = Outdatedness::outdated(Reason::Rebuilt(task_id.clone()));
+        let outdated = Outdatedness::outdated(Reason::Rebuilt(task_id));
         self.workspace
             .render
             .will_build(task_id, evaluated.commands.len(), &outdated);
@@ -605,7 +608,7 @@ impl<'a> Inner<'a> {
         let result = self
             .execute_recipe_commands(task_id, evaluated.commands, evaluated.env, false, true)
             .await
-            .map(|()| BuildStatus::Complete(task_id.clone(), outdated));
+            .map(|()| BuildStatus::Complete(task_id, outdated));
 
         self.workspace.render.did_build(task_id, &result);
         result
@@ -613,7 +616,7 @@ impl<'a> Inner<'a> {
 
     async fn execute_recipe_commands(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         run_commands: Vec<RunCommand>,
         mut env: Env,
         silent_by_default: bool,
@@ -704,7 +707,7 @@ impl<'a> Inner<'a> {
     #[expect(clippy::too_many_arguments)]
     async fn execute_recipe_run_command(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         command_line: &ShellCommandLine,
         env: &Env,
         capture: bool,
@@ -762,7 +765,7 @@ impl<'a> Inner<'a> {
 
     fn execute_recipe_delete_command(
         &self,
-        task_id: &TaskId,
+        task_id: TaskId,
         paths: &[Absolute<std::path::PathBuf>],
         silent: bool,
     ) -> Result<(), Error> {
@@ -882,7 +885,7 @@ impl<'a> Inner<'a> {
     /// Unconditionally run the task if it is outdated.
     async fn rebuild_spec(
         self: &Arc<Self>,
-        task_id: &TaskId,
+        task_id: TaskId,
         spec: TaskSpec<'a>,
         dep_chain: DepChain<'_>,
     ) -> Result<BuildStatus, Error> {
@@ -902,8 +905,8 @@ impl<'a> Inner<'a> {
             TaskSpec::CheckExists(path) => self.check_exists(&path),
             TaskSpec::CheckExistsRelaxed(path) => match self.check_exists(&path) {
                 Err(Error::NoRuleToBuildTarget(_)) => Ok(BuildStatus::Complete(
-                    task_id.clone(),
-                    Outdatedness::outdated(Reason::Missing(path)),
+                    task_id,
+                    Outdatedness::outdated(Reason::Missing(Absolute::symbolicate(&path))),
                 )),
                 otherwise => otherwise,
             },
@@ -968,7 +971,7 @@ impl std::fmt::Display for RunCommand {
 #[derive(Debug, Clone, Copy)]
 struct DepChainEntry<'a> {
     parent: DepChain<'a>,
-    this: &'a TaskId,
+    this: TaskId,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -987,15 +990,15 @@ impl<'a> DepChain<'a> {
         }
     }
 
-    pub fn contains(&self, task: &TaskId) -> bool {
+    pub fn contains(&self, task: TaskId) -> bool {
         match self {
             DepChain::Empty => false,
-            DepChain::Owned(owned) => owned.vec.contains(task),
+            DepChain::Owned(owned) => owned.vec.contains(&task),
             DepChain::Ref(parent) => parent.contains(task),
         }
     }
 
-    pub fn push<'b>(self, task: &'b TaskId) -> DepChainEntry<'b>
+    pub fn push<'b>(self, task: TaskId) -> DepChainEntry<'b>
     where
         'a: 'b,
     {
@@ -1015,11 +1018,11 @@ impl DepChainEntry<'_> {
 
     fn collect_vec(&self) -> Vec<TaskId> {
         let mut vec = self.parent.collect_vec();
-        vec.push(self.this.clone());
+        vec.push(self.this);
         vec
     }
 
-    fn contains(&self, task_id: &TaskId) -> bool {
+    fn contains(&self, task_id: TaskId) -> bool {
         if self.this == task_id {
             true
         } else {

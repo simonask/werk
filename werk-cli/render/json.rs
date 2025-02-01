@@ -9,7 +9,7 @@ impl JsonWatcher {
 impl werk_runner::Render for JsonWatcher {
     fn will_build(
         &self,
-        task_id: &werk_runner::TaskId,
+        task_id: werk_runner::TaskId,
         num_steps: usize,
         _outdatedness: &werk_runner::Outdatedness,
     ) {
@@ -32,7 +32,7 @@ impl werk_runner::Render for JsonWatcher {
 
     fn did_build(
         &self,
-        task_id: &werk_runner::TaskId,
+        task_id: werk_runner::TaskId,
         result: &Result<werk_runner::BuildStatus, werk_runner::Error>,
     ) {
         #[derive(serde::Serialize)]
@@ -58,7 +58,7 @@ impl werk_runner::Render for JsonWatcher {
 
     fn will_execute(
         &self,
-        task_id: &werk_runner::TaskId,
+        task_id: werk_runner::TaskId,
         command: &werk_runner::ShellCommandLine,
         step: usize,
         num_steps: usize,
@@ -86,7 +86,7 @@ impl werk_runner::Render for JsonWatcher {
 
     fn did_execute(
         &self,
-        task_id: &werk_runner::TaskId,
+        task_id: werk_runner::TaskId,
         command: &werk_runner::ShellCommandLine,
         status: &std::io::Result<std::process::ExitStatus>,
         step: usize,
@@ -124,7 +124,7 @@ impl werk_runner::Render for JsonWatcher {
         println!();
     }
 
-    fn message(&self, task_id: Option<&werk_runner::TaskId>, message: &str) {
+    fn message(&self, task_id: Option<werk_runner::TaskId>, message: &str) {
         #[derive(serde::Serialize)]
         #[serde(tag = "type")]
         struct Warning<'a> {
@@ -142,7 +142,7 @@ impl werk_runner::Render for JsonWatcher {
         println!();
     }
 
-    fn warning(&self, task_id: Option<&werk_runner::TaskId>, message: &str) {
+    fn warning(&self, task_id: Option<werk_runner::TaskId>, message: &str) {
         #[derive(serde::Serialize)]
         #[serde(tag = "type")]
         struct Warning<'a> {

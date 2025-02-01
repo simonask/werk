@@ -197,7 +197,7 @@ impl<'a> Parse<'a> for ast::ConfigStmt<'a> {
 
         let value_start = config.value.span().start;
 
-        match &*config.ident.ident {
+        match config.ident.ident.as_str() {
             "print-commands" => {
                 if !matches!(config.value, ast::ConfigValue::Bool(_)) {
                     return Err(ErrMode::Cut(Error::new(
@@ -747,7 +747,7 @@ impl<'a, T: Parse<'a>> Parse<'a> for ast::ListExpr<T> {
     }
 }
 
-impl<'a> Parse<'a> for ast::Ident<'a> {
+impl<'a> Parse<'a> for ast::Ident {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
         fn identifier_chars<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
             const KEYWORDS: &[&str] = &["let"];

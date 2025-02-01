@@ -5,6 +5,7 @@ use std::{
 
 use werk_fs::Absolute;
 use werk_parser::parser::Span;
+use werk_util::Symbol;
 
 use crate::{eval::UsedVariable, EvalError, Value, Workspace};
 
@@ -165,7 +166,7 @@ impl ShellCommandLineBuilder {
             let (program_path, hash) = workspace
                 .which(&program)
                 .map_err(|err| EvalError::CommandNotFound(span, program.clone(), err))?;
-            let used = hash.map(|hash| UsedVariable::Which(program.clone(), hash));
+            let used = hash.map(|hash| UsedVariable::Which(Symbol::new(&program), hash));
 
             Ok((
                 ShellCommandLine {

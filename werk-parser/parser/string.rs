@@ -5,6 +5,7 @@ use crate::{
     parser::{Input, Offset, TokenParserExt as _},
     Error, Failure,
 };
+use werk_util::Symbol;
 use winnow::{
     ascii::{digit1, multispace1, space0},
     combinator::{
@@ -222,13 +223,14 @@ fn is_identifier_continue(ch: char) -> bool {
     ch == '-' || unicode_ident::is_xid_continue(ch)
 }
 
-fn ident<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
+fn ident(input: &mut Input<'_>) -> PResult<Symbol> {
     (
         take_while(1, is_identifier_start),
         take_while(0.., is_identifier_continue),
     )
         .expect(&"identifier")
         .take()
+        .map(Symbol::new)
         .parse_next(input)
 }
 
@@ -302,7 +304,7 @@ fn pattern_one_of<'a>(input: &mut Input<'a>) -> PResult<Vec<Cow<'a, str>>> {
     delimited(
         '('.expect(&"start of pattern one-of group"),
         // TODO: Allow more than just identifiers here.
-        separated(1.., cut_err(ident).map(Cow::Borrowed), '|'),
+        separated(1.., cut_err(ident).map(|s| Cow::Borrowed(s.as_str())), '|'),
         ')'.or_cut(Failure::ExpectedChar(')')),
     )
     .while_parsing("pattern capture group")
@@ -374,13 +376,13 @@ fn interpolation_inner_with_stem<'a, const TERMINATE: char>(
         .parse_next(input)
 }
 
-fn interpolation_stem<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationStem<'a>> {
+fn interpolation_stem(input: &mut Input) -> PResult<ast::InterpolationStem> {
     alt((
         '%'.value(ast::InterpolationStem::PatternCapture),
         digit1
             .try_map(str::parse)
             .map(ast::InterpolationStem::CaptureGroup),
-        ident.map(Cow::Borrowed).map(ast::InterpolationStem::Ident),
+        ident.map(ast::InterpolationStem::Ident),
     ))
     .expect(&"one of %, a capture group number, or an identifier")
     .parse_next(input)

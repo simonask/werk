@@ -4,6 +4,7 @@ use parking_lot::Mutex;
 use std::{borrow::Cow, collections::hash_map};
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_parser::ast;
+use werk_util::Symbol;
 
 use crate::{
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
@@ -107,7 +108,7 @@ pub struct Workspace<'a> {
     /// Caches of expensive runtime values (glob, which, env).
     runtime_caches: Mutex<Caches>,
     /// Overridden global variables from the command line.
-    pub defines: HashMap<String, String>,
+    pub defines: HashMap<Symbol, String>,
     pub force_color: bool,
     pub io: &'a dyn Io,
     pub render: &'a dyn Render,
@@ -176,7 +177,11 @@ impl<'a> Workspace<'a> {
                 env_cache: HashMap::default(),
                 build_recipe_hashes: HashMap::default(),
             }),
-            defines: settings.defines.clone(),
+            defines: settings
+                .defines
+                .iter()
+                .map(|(k, v)| (Symbol::new(k), v.clone()))
+                .collect(),
             force_color: settings.force_color,
             io,
             render,
@@ -212,24 +217,21 @@ impl<'a> Workspace<'a> {
                 }
                 ast::RootStmt::Let(ref let_stmt) => {
                     let hash = compute_stable_semantic_hash(&let_stmt.value);
-                    if let Some(global_override) = self.defines.get(&*let_stmt.ident.ident) {
+                    if let Some(global_override) = self.defines.get(&let_stmt.ident.ident) {
                         tracing::trace!(
                             "Overriding global variable `{}` with `{}`",
                             let_stmt.ident.ident,
                             global_override
                         );
                         self.manifest.globals.insert(
-                            let_stmt.ident.ident.to_string(),
+                            let_stmt.ident.ident,
                             GlobalVar {
                                 value: Eval::using_vars(
                                     global_override.clone().into(),
                                     [
-                                        UsedVariable::Global(
-                                            let_stmt.ident.ident.to_string(),
-                                            hash,
-                                        ),
+                                        UsedVariable::Global(let_stmt.ident.ident, hash),
                                         UsedVariable::Define(
-                                            let_stmt.ident.ident.to_string(),
+                                            let_stmt.ident.ident,
                                             compute_stable_hash(global_override),
                                         ),
                                     ],
@@ -242,10 +244,10 @@ impl<'a> Workspace<'a> {
                         let mut value = eval::eval_chain(&scope, &let_stmt.value)?;
                         value
                             .used
-                            .insert(UsedVariable::Global(let_stmt.ident.ident.to_string(), hash));
+                            .insert(UsedVariable::Global(let_stmt.ident.ident, hash));
                         tracing::trace!("(global) let `{}` = {:?}", let_stmt.ident, value);
                         self.manifest.globals.insert(
-                            let_stmt.ident.ident.to_string(),
+                            let_stmt.ident.ident,
                             GlobalVar {
                                 value,
                                 comment: doc_comment,
@@ -256,10 +258,10 @@ impl<'a> Workspace<'a> {
                 ast::RootStmt::Task(ref command_recipe) => {
                     let hash = compute_stable_semantic_hash(command_recipe);
                     self.manifest.task_recipes.insert(
-                        &command_recipe.name.ident,
+                        command_recipe.name.ident.as_str(),
                         TaskRecipe {
                             span: command_recipe.span,
-                            name: &command_recipe.name.ident,
+                            name: command_recipe.name.ident,
                             doc_comment,
                             body: &command_recipe.body.statements,
                             hash,
