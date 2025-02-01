@@ -271,15 +271,15 @@ impl<'a> Workspace<'a> {
                         );
                     }
                 }
-                ast::RootStmt::Task(ref command_recipe) => {
-                    let hash = compute_stable_semantic_hash(command_recipe);
+                ast::RootStmt::Task(ref task_recipe) => {
+                    let hash = compute_stable_semantic_hash(task_recipe);
                     self.manifest.task_recipes.insert(
-                        command_recipe.name.ident.as_str(),
+                        task_recipe.name.ident.as_str(),
                         TaskRecipe {
-                            span: command_recipe.span,
-                            name: command_recipe.name.ident,
+                            span: task_recipe.span,
+                            name: task_recipe.name.ident,
                             doc_comment,
-                            ast: command_recipe,
+                            ast: task_recipe,
                             hash,
                         },
                     );

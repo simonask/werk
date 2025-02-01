@@ -136,7 +136,7 @@ pub struct TaskRecipe<'a> {
     pub span: Span,
     pub name: Symbol,
     pub doc_comment: String,
-    pub ast: &'a ast::CommandRecipe<'a>,
+    pub ast: &'a ast::TaskRecipe<'a>,
     pub hash: Hash128,
 }
 

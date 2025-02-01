@@ -351,9 +351,9 @@ impl<'a> Parse<'a> for ast::TaskRecipeStmt<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::CommandRecipe<'a> {
+impl<'a> Parse<'a> for ast::TaskRecipe<'a> {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
-        let (mut recipe, span) = seq! { ast::CommandRecipe {
+        let (mut recipe, span) = seq! { ast::TaskRecipe {
             span: default,
             token_task: parse,
             ws_1: whitespace,

@@ -105,7 +105,7 @@ impl Root<'_> {
     }
 
     #[must_use]
-    pub fn find_command(&self, name: &str) -> Option<&CommandRecipe> {
+    pub fn find_command(&self, name: &str) -> Option<&TaskRecipe> {
         self.statements.iter().find_map(|stmt| match stmt {
             BodyStmt {
                 statement: RootStmt::Task(stmt),
@@ -120,7 +120,7 @@ impl Root<'_> {
 pub enum RootStmt<'a> {
     Config(ConfigStmt<'a>),
     Let(LetStmt<'a>),
-    Task(CommandRecipe<'a>),
+    Task(TaskRecipe<'a>),
     Build(BuildRecipe<'a>),
 }
 
@@ -232,7 +232,7 @@ pub enum MessageType {
 hash_is_semantic!(MessageType);
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct CommandRecipe<'a> {
+pub struct TaskRecipe<'a> {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
@@ -245,7 +245,7 @@ pub struct CommandRecipe<'a> {
     pub body: Body<TaskRecipeStmt<'a>>,
 }
 
-impl SemanticHash for CommandRecipe<'_> {
+impl SemanticHash for TaskRecipe<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.name.semantic_hash(state);
         self.body.semantic_hash(state);

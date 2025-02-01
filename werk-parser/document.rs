@@ -33,7 +33,7 @@ impl<'a> Document<'a> {
         }
     }
 
-    pub fn task_recipes(&self) -> impl Iterator<Item = &ast::CommandRecipe<'_>> + '_ {
+    pub fn task_recipes(&self) -> impl Iterator<Item = &ast::TaskRecipe<'_>> + '_ {
         self.root
             .statements
             .iter()
@@ -104,7 +104,7 @@ impl<'a> Document<'a> {
     }
 
     #[must_use]
-    pub fn find_task_recipe(&self, name: &str) -> Option<&ast::CommandRecipe<'_>> {
+    pub fn find_task_recipe(&self, name: &str) -> Option<&ast::TaskRecipe<'_>> {
         self.task_recipes().find(|stmt| stmt.name == name)
     }
 }
