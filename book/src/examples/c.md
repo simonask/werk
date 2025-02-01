@@ -57,7 +57,7 @@ build "%.o" {
     let flags = [cflags, "-I<include-path>"]
 
     # Generate depfile and object file in the same command
-    run "{cc} -MM -MT <in> -MF <depfile> -c {flags*} -o <out> <in>"
+    run "{cc} -MMD -MT <in> -MF <depfile> -c {flags*} -o <out> <in>"
 }
 
 # Build rule for the main executable
