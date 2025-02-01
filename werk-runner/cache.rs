@@ -7,6 +7,7 @@ use werk_util::Symbol;
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct WerkCache {
     /// Per-build-target caches.
+    #[serde(default)]
     pub build: BTreeMap<Absolute<werk_fs::PathBuf>, TargetOutdatednessCache>,
 }
 
