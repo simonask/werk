@@ -1,9 +1,10 @@
 use std::{borrow::Cow, fmt::Write, sync::Arc};
 
 use crate::{
-    ast, fatal,
-    parser::{Input, Offset, TokenParserExt as _},
-    Error, Failure,
+    ast::{self, token},
+    fatal,
+    parser::{Input, Offset, Parser as _},
+    Error, Failure, ModalErr,
 };
 use werk_util::Symbol;
 use winnow::{
@@ -12,19 +13,19 @@ use winnow::{
         alt, cut_err, delimited, empty, opt, peek, preceded, repeat, separated, separated_pair,
         terminated,
     },
-    stream::Location as _,
+    stream::Location,
     token::{any, one_of, take_till, take_while},
     Parser,
 };
 
-use super::{PResult, Parse};
+use super::{parse, PResult, Parse};
 
 impl<'a> Parse<'a> for ast::StringExpr<'a> {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
         let (mut expr, span) = delimited(
-            '"'.expect(&"string literal"),
+            parse::<token::DoubleQuote>.expect(&"string literal"),
             string_expr_inside_quotes,
-            '"'.or_cut(Failure::ExpectedChar('"')),
+            cut_err(parse::<token::DoubleQuote>),
         )
         .with_token_span()
         .while_parsing("string literal")
@@ -37,9 +38,9 @@ impl<'a> Parse<'a> for ast::StringExpr<'a> {
 impl<'a> Parse<'a> for ast::PatternExpr<'a> {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
         let (mut expr, span) = delimited(
-            '"'.expect(&"pattern literal"),
+            parse::<token::DoubleQuote>.expect(&"pattern literal"),
             pattern_expr_inside_quotes,
-            '"'.or_cut(Failure::ExpectedChar('"')),
+            cut_err(parse::<token::DoubleQuote>),
         )
         .with_token_span()
         .while_parsing("pattern literal")
@@ -188,9 +189,9 @@ fn string_literal_fragment<'a, const IS_PATTERN: bool>(input: &mut Input<'a>) ->
         .parse_next(input)
 }
 
-fn escaped_char(input: &mut Input) -> PResult<char> {
+fn escaped_char(input: &mut Input) -> Result<char, ModalErr> {
     let escape_seq_char = winnow::combinator::dispatch! {
-        any;
+        any::<Input<'_>, ModalErr>;
         '\\' => empty.value('\\'),
         '{' => empty.value('{'),
         '}' => empty.value('}'),
@@ -302,10 +303,10 @@ fn push_pattern_fragment<'a>(expr: &mut ast::PatternExpr<'a>, frag: StringFragme
 
 fn pattern_one_of<'a>(input: &mut Input<'a>) -> PResult<Vec<Cow<'a, str>>> {
     delimited(
-        '('.expect(&"start of pattern one-of group"),
+        parse::<token::ParenOpen>.expect(&"start of pattern one-of group"),
         // TODO: Allow more than just identifiers here.
         separated(1.., cut_err(ident).map(|s| Cow::Borrowed(s.as_str())), '|'),
-        ')'.or_cut(Failure::ExpectedChar(')')),
+        cut_err(parse::<token::ParenClose>),
     )
     .while_parsing("pattern capture group")
     .parse_next(input)
@@ -313,9 +314,9 @@ fn pattern_one_of<'a>(input: &mut Input<'a>) -> PResult<Vec<Cow<'a, str>>> {
 
 fn string_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation<'a>> {
     delimited(
-        '{'.expect(&"string interpolation block"),
+        parse::<token::BraceOpen>.expect(&"string interpolation block"),
         cut_err(interpolation_inner::<'}'>),
-        '}'.or_cut(Failure::ExpectedChar('}')),
+        cut_err(parse::<token::BraceClose>),
     )
     .while_parsing("string interpolation block")
     .parse_next(input)
@@ -323,9 +324,9 @@ fn string_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation
 
 fn path_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation<'a>> {
     let mut interp = delimited(
-        '<'.expect(&"path interpolation block"),
+        parse::<token::LessThan>.expect(&"path interpolation block"),
         cut_err(interpolation_inner::<'>'>),
-        '>'.or_cut(Failure::ExpectedChar('>')),
+        cut_err(parse::<token::GreaterThan>),
     )
     .while_parsing("path interpolation block")
     .parse_next(input)?;
@@ -461,15 +462,11 @@ fn interpolation_op_regex_replace<'a>(
 fn regex_replace_pattern(input: &mut Input) -> PResult<regex::Regex> {
     // TODO: Properly handle regex patterns containing slashes. Need to skip
     // ahead in the stream, skipping escaped slashes.
-    let location = input.location();
+    let location = input.current_token_start();
     let regex_pattern = take_till(1.., ['/']).parse_next(input)?;
 
     regex::Regex::new(regex_pattern).map_err(|err| {
-        winnow::error::ErrMode::Backtrack(Error {
-            context: None,
-            fail: Failure::ValidRegex(Arc::new(err)),
-            offset: Offset(location as u32),
-        })
+        ModalErr::Backtrack(Offset(location as u32), Failure::ValidRegex(Arc::new(err)))
     })
 }
 

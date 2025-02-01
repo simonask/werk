@@ -3,15 +3,15 @@ use std::marker::PhantomData;
 use winnow::{
     ascii::{line_ending, till_line_ending},
     combinator::{alt, cut_err, delimited, empty, eof, opt, peek, preceded, repeat, seq},
-    error::ErrMode,
-    stream::{Location as _, Stream as _},
+    error::AddContext as _,
+    stream::{Location, Stream as _},
     token::{any, none_of, one_of, take_while},
-    Parser,
+    Parser as _,
 };
 
 use crate::{
     ast::{self, keyword, token, ws_ignore},
-    fatal, ErrContext, Error, Failure,
+    fatal, ErrContext, Error, Failure, ModalErr,
 };
 
 mod span;
@@ -21,8 +21,53 @@ pub use span::*;
 pub use string::*;
 
 pub type Input<'a> = winnow::stream::LocatingSlice<&'a str>;
-pub type PError = crate::error::Error;
-pub type PResult<T> = winnow::ModalResult<T, PError>;
+pub type PResult<T> = Result<T, ModalErr>;
+
+/// Shorthand trait.
+pub(crate) trait Parser<'a, O>: winnow::Parser<Input<'a>, O, ModalErr> {
+    fn with_token_span(self) -> SpannedTokenParser<Self, O>
+    where
+        Self: Sized,
+    {
+        SpannedTokenParser(self, std::marker::PhantomData)
+    }
+
+    fn token_span(self) -> TokenSpanParser<Self, O>
+    where
+        Self: Sized,
+    {
+        TokenSpanParser(self, std::marker::PhantomData)
+    }
+
+    fn while_parsing(self, thing: &'static str) -> WhileParsing<Self>
+    where
+        Self: Sized,
+    {
+        WhileParsing(self, thing)
+    }
+
+    fn expect(self, thing: &'static &'static str) -> OrFail<Self, O>
+    where
+        Self: Sized,
+    {
+        OrFail(self, Some(Failure::Expected(thing)), PhantomData)
+    }
+
+    fn or_fail(self, failure: Failure) -> OrFail<Self, O>
+    where
+        Self: Sized,
+    {
+        OrFail(self, Some(failure), PhantomData)
+    }
+
+    fn help(self, text: &'static str) -> Help<Self, O>
+    where
+        Self: Sized,
+    {
+        Help(self, text, PhantomData)
+    }
+}
+impl<'a, P, O> Parser<'a, O> for P where P: winnow::Parser<Input<'a>, O, ModalErr> {}
 
 /// Helper trait to parse the AST via type inference.
 ///
@@ -45,7 +90,7 @@ impl<'a, T: Parse<'a>> Parse<'a> for Box<T> {
     }
 }
 
-fn parse<'a, T: Parse<'a>>(input: &mut Input<'a>) -> PResult<T> {
+fn parse<'a, T: Parse<'a>>(input: &mut Input<'a>) -> Result<T, ModalErr> {
     T::parse(input)
 }
 
@@ -88,11 +133,11 @@ fn statements_delimited<'a, Open, Item, Close, OpenParser, ParseNextItem, CloseP
     mut initial: OpenParser,
     parse_next: ParseNextItem,
     mut terminal: CloseParser,
-) -> impl Parser<Input<'a>, (Open, Vec<ast::BodyStmt<Item>>, ast::Whitespace, Close), PError>
+) -> impl Parser<'a, (Open, Vec<ast::BodyStmt<Item>>, ast::Whitespace, Close)>
 where
-    OpenParser: Parser<Input<'a>, Open, PError>,
-    CloseParser: Parser<Input<'a>, Close, PError>,
-    ParseNextItem: Parser<Input<'a>, Item, PError>,
+    OpenParser: Parser<'a, Open>,
+    CloseParser: Parser<'a, Close>,
+    ParseNextItem: Parser<'a, Item>,
 {
     let mut parse_next = parse_next;
 
@@ -112,7 +157,8 @@ where
             }
 
             if !has_separator {
-                return Err(ErrMode::Cut(Error::new(Offset(input.location() as u32),Failure::Expected(&"semicolon or newline before next statement"))));
+                return Err(ModalErr::Error(Error::new(Offset(input.previous_token_end() as u32),
+                    Failure::Expected(&"semicolon or newline before next statement"))));
             }
 
             let item = parse_next.parse_next(input)?;
@@ -200,7 +246,7 @@ impl<'a> Parse<'a> for ast::ConfigStmt<'a> {
         match config.ident.ident.as_str() {
             "print-commands" => {
                 if !matches!(config.value, ast::ConfigValue::Bool(_)) {
-                    return Err(ErrMode::Cut(Error::new(
+                    return Err(ModalErr::Error(Error::new(
                         value_start,
                         Failure::Expected(&"boolean value for `print-commands`"),
                     )));
@@ -208,7 +254,7 @@ impl<'a> Parse<'a> for ast::ConfigStmt<'a> {
             }
             "edition" => {
                 if !matches!(config.value, ast::ConfigValue::String(_)) {
-                    return Err(ErrMode::Cut(Error::new(
+                    return Err(ModalErr::Error(Error::new(
                         value_start,
                         Failure::Expected(&"string literal for `edition`"),
                     )));
@@ -216,7 +262,7 @@ impl<'a> Parse<'a> for ast::ConfigStmt<'a> {
             }
             "out-dir" | "output-directory" => {
                 if !matches!(config.value, ast::ConfigValue::String(_)) {
-                    return Err(ErrMode::Cut(Error::new(
+                    return Err(ModalErr::Error(Error::new(
                         value_start,
                         Failure::Expected(&"string literal for `out-dir`"),
                     )));
@@ -224,14 +270,14 @@ impl<'a> Parse<'a> for ast::ConfigStmt<'a> {
             }
             "default" | "default-target" => {
                 if !matches!(config.value, ast::ConfigValue::String(_)) {
-                    return Err(ErrMode::Cut(Error::new(
+                    return Err(ModalErr::Error(Error::new(
                         value_start,
                         Failure::Expected(&"string literal for `default`"),
                     )));
                 }
             }
             _ => {
-                return Err(ErrMode::Cut(Error::new(
+                return Err(ModalErr::Error(Error::new(
                     config.ident.span.start,
                     Failure::Expected(
                         &"config key, one of `out-dir`, `edition`, `print-commands`, or `default`",
@@ -281,11 +327,9 @@ impl<'a> Parse<'a> for ast::TaskRecipeStmt<'a> {
             parse.map(ast::TaskRecipeStmt::Warn),
             parse.map(ast::TaskRecipeStmt::SetCapture),
             parse.map(ast::TaskRecipeStmt::SetNoCapture),
-            fatal(Failure::Expected(&"task recipe statement"))
-                .error_context("invalid task recipe statement")
-                .help(
-                    "could be one of `let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
-                ),
+            fatal(Failure::Expected(&"task recipe statement")).help(
+                "could be one of `let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
+            ),
         ))
         .parse_next(input)
     }
@@ -509,7 +553,7 @@ impl<'a> Parse<'a> for ast::SubExpr<'a> {
             ws_1: whitespace,
             expr: cut_err(parse),
             ws_2: whitespace,
-            token_close: cut_err(parse).error_context("missing closing `)` for subexpression"),
+            token_close: cut_err(parse),
         }}
         .with_token_span()
         .parse_next(input)?;
@@ -564,7 +608,6 @@ impl<'a> Parse<'a> for ast::RunExpr<'a> {
             parse.map(ast::RunExpr::Env),
             parse.map(ast::RunExpr::Block),
             fatal(Failure::Expected(&"a run expression"))
-                .error_context("invalid `run` expression")
                 .help("one of `shell`, `info`, `warn`, `write`, `copy`, `delete`, `env`, `env-remove`, a string literal, a list, or a block")
         ))
         .parse_next(input)
@@ -674,7 +717,6 @@ impl<'a> Parse<'a> for ast::MatchBody<'a> {
             ),
             parse.map(|MatchArmSingle(arm)| ast::MatchBody::Single(Box::new(arm))),
         ))
-        .expect(&"match body { ... } or a single match arm")
         .parse_next(input)
     }
 }
@@ -701,8 +743,8 @@ impl<'a, T: Parse<'a>> Parse<'a> for ast::ListExpr<T> {
 
             if !has_separator {
                 input.reset(&end_of_last_item);
-                return Err(ErrMode::Cut(Error::new(
-                    Offset(input.location() as u32),
+                return Err(ModalErr::Error(Error::new(
+                    Offset(input.previous_token_end() as u32),
                     Failure::ExpectedChar(','),
                 )));
             }
@@ -782,9 +824,9 @@ fn escaped_string<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
     }
 
     delimited(
-        '"'.expect(&"string literal"),
+        parse::<token::DoubleQuote>.expect(&"string literal"),
         repeat::<_, (), (), _, _>(0.., escaped_string_char).take(),
-        '"'.or_cut(Failure::ExpectedChar('"')),
+        cut_err(parse::<token::DoubleQuote>),
     )
     .parse_next(input)
 }
@@ -792,13 +834,14 @@ fn escaped_string<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
 fn until_eol_or_eof<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
     match (till_line_ending, line_ending).take().parse_next(input) {
         Ok(comment) => Ok(comment),
-        Err(winnow::error::ErrMode::Backtrack(_)) => Ok(input.finish()),
+        Err(ModalErr::Backtrack(..)) => Ok(input.finish()),
         Err(err) => Err(err),
     }
 }
 
 /// Whitespace (whitespace and comments) preceding a statement. The whitespace
 /// can be used to separate statements. Does not include semicolons.
+#[expect(clippy::unnecessary_wraps)] // This parser can never fail.
 fn whitespace_parsed(input: &mut Input) -> PResult<ParsedWhitespace> {
     #[derive(Clone, Copy)]
     enum WsPart {
@@ -816,7 +859,7 @@ fn whitespace_parsed(input: &mut Input) -> PResult<ParsedWhitespace> {
         '\n'.value(WsPart::Newline),
     ));
 
-    let ((has_newlines, has_comments), span) = repeat(0.., ws_part)
+    let mut parser = repeat(0.., ws_part)
         .fold(
             || (false, false),
             |(has_newlines, has_comments), part| match part {
@@ -825,14 +868,16 @@ fn whitespace_parsed(input: &mut Input) -> PResult<ParsedWhitespace> {
                 WsPart::Newline => (true, has_comments),
             },
         )
-        .with_token_span()
-        .parse_next(input)?;
+        .with_token_span();
 
-    Ok(ParsedWhitespace {
-        span,
-        has_newlines,
-        has_comments,
-    })
+    match parser.parse_next(input) {
+        Ok(((has_newlines, has_comments), span)) => Ok(ParsedWhitespace {
+            span,
+            has_newlines,
+            has_comments,
+        }),
+        Err(_) => unreachable!("whitespace parser should never fail"),
+    }
 }
 
 fn whitespace_parsed_nonempty(input: &mut Input) -> PResult<ParsedWhitespace> {
@@ -871,168 +916,93 @@ impl ParsedWhitespace {
     }
 }
 
-pub(crate) trait TokenParserExt<'a, O>: winnow::Parser<Input<'a>, O, Error> {
-    fn with_token_span(self) -> SpannedTokenParser<Self, O>
-    where
-        Self: Sized,
-    {
-        SpannedTokenParser(self, std::marker::PhantomData)
-    }
+pub trait SetFailure {
+    fn set_failure(&mut self, failure: Failure);
+}
 
-    fn token_span(self) -> TokenSpanParser<Self, O>
-    where
-        Self: Sized,
-    {
-        TokenSpanParser(self, std::marker::PhantomData)
-    }
-
-    fn while_parsing(self, thing: &'static str) -> WhileParsing<Self>
-    where
-        Self: Sized,
-    {
-        WhileParsing(self, thing)
-    }
-
-    fn or_cut(self, failure: Failure) -> OrCut<Self, O>
-    where
-        Self: Sized,
-    {
-        OrCut(self, Some(failure), PhantomData)
-    }
-
-    fn or_backtrack(self, failure: Failure) -> OrBacktrack<Self, O>
-    where
-        Self: Sized,
-    {
-        OrBacktrack(self, Some(failure), PhantomData)
-    }
-
-    fn expect(self, thing: &'static &'static str) -> OrBacktrack<Self, O>
-    where
-        Self: Sized,
-    {
-        self.or_backtrack(Failure::Expected(thing))
-    }
-
-    fn help(self, text: &'static str) -> Help<Self, O>
-    where
-        Self: Sized,
-    {
-        Help(self, text, PhantomData)
-    }
-
-    fn error_context(self, text: &'static str) -> AddErrorContext<Self, O>
-    where
-        Self: Sized,
-    {
-        AddErrorContext(self, text, PhantomData)
+impl SetFailure for Error {
+    #[inline]
+    fn set_failure(&mut self, failure: Failure) {
+        self.fail = failure;
     }
 }
 
-impl<'a, O, T> TokenParserExt<'a, O> for T where T: winnow::Parser<Input<'a>, O, Error> {}
+impl SetFailure for ModalErr {
+    #[inline]
+    fn set_failure(&mut self, failure: Failure) {
+        match self {
+            ModalErr::Backtrack(_, ref mut fail) => *fail = failure,
+            ModalErr::Error(err) => err.fail = failure,
+        }
+    }
+}
 
 pub(crate) struct WhileParsing<P>(P, &'static str);
-impl<'a, P, O> winnow::Parser<Input<'a>, O, Error> for WhileParsing<P>
+impl<'a, P, O> winnow::Parser<Input<'a>, O, ModalErr> for WhileParsing<P>
 where
-    P: winnow::Parser<Input<'a>, O, Error>,
+    P: Parser<'a, O>,
 {
     fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<O> {
-        let offset = input.location();
-        let mut result = self.0.parse_next(input);
-        if let Err(ErrMode::Cut(ref mut err)) = result {
-            err.push(ErrContext::WhileParsing(Offset(offset as u32), self.1));
-        }
-        result
+        let checkpoint = input.checkpoint();
+        self.0
+            .parse_next(input)
+            .map_err(|err| err.add_context(input, &checkpoint, ErrContext::WhileParsing(self.1)))
     }
 }
 
 pub(crate) struct SpannedTokenParser<P, O>(P, PhantomData<O>);
-impl<'a, P, O> winnow::Parser<Input<'a>, (O, Span), Error> for SpannedTokenParser<P, O>
+impl<'a, P, O> winnow::Parser<Input<'a>, (O, Span), ModalErr> for SpannedTokenParser<P, O>
 where
-    P: winnow::Parser<Input<'a>, O, Error>,
+    P: Parser<'a, O>,
 {
     fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<(O, Span)> {
-        let start = input.location();
+        let start = input.current_token_start();
         self.0.parse_next(input).map(|value| {
-            let end = input.location();
+            let end = input.previous_token_end();
             (value, Span::from(start..end))
         })
     }
 }
 
 pub(crate) struct TokenSpanParser<P, O>(P, std::marker::PhantomData<O>);
-impl<'a, P, O> winnow::Parser<Input<'a>, Span, Error> for TokenSpanParser<P, O>
+impl<'a, P, O> winnow::Parser<Input<'a>, Span, ModalErr> for TokenSpanParser<P, O>
 where
-    P: winnow::Parser<Input<'a>, O, Error>,
+    P: Parser<'a, O>,
 {
     fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<Span> {
-        let start = input.location();
+        let start = input.current_token_start();
         self.0.parse_next(input).map(|_| {
-            let end = input.location();
+            let end = input.previous_token_end();
             Span::from(start..end)
         })
     }
 }
 
-pub(crate) struct OrCut<P, O>(P, Option<Failure>, PhantomData<O>);
-impl<'a, P, O> winnow::Parser<Input<'a>, O, Error> for OrCut<P, O>
+pub(crate) struct OrFail<P, O>(P, Option<Failure>, PhantomData<O>);
+impl<'a, P, O> winnow::Parser<Input<'a>, O, ModalErr> for OrFail<P, O>
 where
-    P: winnow::Parser<Input<'a>, O, Error>,
+    P: Parser<'a, O>,
 {
     fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<O> {
-        let location = input.location();
         let mut result = self.0.parse_next(input);
-        if let Err(ErrMode::Backtrack(_)) = result {
-            let err = self.1.take().expect("or_cut parser called twice");
-            result = Err(ErrMode::Cut(Error::new(Offset(location as u32), err)));
-        }
-        result
-    }
-}
-
-pub(crate) struct OrBacktrack<P, O>(P, Option<Failure>, PhantomData<O>);
-impl<'a, P, O> winnow::Parser<Input<'a>, O, Error> for OrBacktrack<P, O>
-where
-    P: winnow::Parser<Input<'a>, O, Error>,
-{
-    fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<O> {
-        let location = input.location();
-        let mut result = self.0.parse_next(input);
-        if let Err(ErrMode::Backtrack(_)) = result {
-            let err = self.1.take().expect("or_cut parser called twice");
-            result = Err(ErrMode::Backtrack(Error::new(Offset(location as u32), err)));
+        if let Err(ref mut err) = result {
+            err.set_failure(self.1.take().expect("or_fail parser invoked twice"));
         }
         result
     }
 }
 
 pub(crate) struct Help<P, O>(P, &'static str, PhantomData<O>);
-impl<'a, P, O> winnow::Parser<Input<'a>, O, Error> for Help<P, O>
+impl<'a, P, O, E> winnow::Parser<Input<'a>, O, E> for Help<P, O>
 where
-    P: winnow::Parser<Input<'a>, O, Error>,
+    P: winnow::Parser<Input<'a>, O, E>,
+    E: winnow::error::ParserError<Input<'a>> + winnow::error::AddContext<Input<'a>, ErrContext>,
 {
-    fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<O> {
-        let offset = input.location();
-        let mut result = self.0.parse_next(input);
-        if let Err(ErrMode::Backtrack(ref mut err) | ErrMode::Cut(ref mut err)) = result {
-            err.push(ErrContext::Hint(Offset(offset as u32), self.1));
-        }
-        result
-    }
-}
-
-pub(crate) struct AddErrorContext<P, O>(P, &'static str, PhantomData<O>);
-impl<'a, P, O> winnow::Parser<Input<'a>, O, Error> for AddErrorContext<P, O>
-where
-    P: winnow::Parser<Input<'a>, O, Error>,
-{
-    fn parse_next(&mut self, input: &mut Input<'a>) -> PResult<O> {
-        let offset = input.location();
-        let mut result = self.0.parse_next(input);
-        if let Err(ErrMode::Backtrack(ref mut err) | ErrMode::Cut(ref mut err)) = result {
-            err.push(ErrContext::Error(Offset(offset as u32), self.1));
-        }
-        result
+    fn parse_next(&mut self, input: &mut Input<'a>) -> Result<O, E> {
+        let checkpoint = input.checkpoint();
+        self.0
+            .parse_next(input)
+            .map_err(|err| err.add_context(input, &checkpoint, ErrContext::Hint(self.1)))
     }
 }
 
