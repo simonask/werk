@@ -77,7 +77,7 @@ impl<'a> StringExpr<'a> {
 }
 
 /// Interpolated string fragment.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StringFragment<'a> {
     Literal(Cow<'a, str>),
     /// `{...}`
@@ -101,7 +101,7 @@ impl SemanticHash for StringFragment<'_> {
         std::mem::discriminant(self).hash(state);
         match self {
             StringFragment::Literal(s) => s.hash(state),
-            StringFragment::Interpolation(i) => i.hash(state),
+            StringFragment::Interpolation(i) => i.semantic_hash(state),
         }
     }
 }
@@ -186,7 +186,7 @@ impl SemanticHash for PatternExpr<'_> {
 }
 
 /// Interpolated pattern fragment (i.e., can have capture patterns like `%` and `(a|b|c)`).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PatternFragment<'a> {
     Literal(Cow<'a, str>),
     /// `%`
@@ -220,12 +220,12 @@ impl SemanticHash for PatternFragment<'_> {
             PatternFragment::Literal(s) => s.hash(state),
             PatternFragment::PatternStem => (),
             PatternFragment::OneOf(v) => v.hash(state),
-            PatternFragment::Interpolation(i) => i.hash(state),
+            PatternFragment::Interpolation(i) => i.semantic_hash(state),
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Interpolation<'a> {
     pub stem: InterpolationStem,
     pub options: Option<Box<InterpolationOptions<'a>>>,
@@ -270,7 +270,7 @@ impl Interpolation<'_> {
 impl SemanticHash for Interpolation<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.stem.semantic_hash(state);
-        self.options.hash(state);
+        self.options.semantic_hash(state);
     }
 }
 
@@ -333,7 +333,7 @@ impl std::fmt::Display for Interpolation<'_> {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InterpolationOptions<'a> {
     /// `{stem:operation}`
     pub ops: Vec<InterpolationOp<'a>>,
@@ -355,7 +355,14 @@ impl InterpolationOptions<'_> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+impl SemanticHash for InterpolationOptions<'_> {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.ops.as_slice().semantic_hash(state);
+        self.join.as_deref().semantic_hash(state);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InterpolationStem {
     /// Empty stem; inherit output type from the interpolated value.
     Implied,
