@@ -123,6 +123,17 @@ impl PartialEq for Offset {
     }
 }
 
+impl PartialOrd for Offset {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        if self.is_ignored() || other.is_ignored() {
+            return Some(std::cmp::Ordering::Equal);
+        }
+
+        self.0.partial_cmp(&other.0)
+    }
+}
+
 impl Offset {
     #[must_use]
     pub const fn ignore() -> Self {

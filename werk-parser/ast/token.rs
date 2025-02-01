@@ -1,7 +1,7 @@
 use winnow::Parser as _;
 
 use crate::{
-    parser::{Offset, Parse, Span, Spanned, TokenParserExt as _},
+    parser::{Input, Offset, PResult, Parse, Parser as _, Span, Spanned},
     Failure,
 };
 
@@ -37,9 +37,9 @@ impl<const CHAR: char> Spanned for Token<CHAR> {
 }
 
 impl<'a, const CHAR: char> Parse<'a> for Token<CHAR> {
-    fn parse(input: &mut crate::parser::Input<'a>) -> crate::parser::PResult<Self> {
-        CHAR.token_span()
-            .or_backtrack(Failure::ExpectedChar(CHAR))
+    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+        CHAR.or_fail(Failure::ExpectedChar(CHAR))
+            .token_span()
             .map(Token::with_span)
             .parse_next(input)
     }
@@ -62,6 +62,8 @@ def_token!(ParenOpen, '(');
 def_token!(ParenClose, ')');
 def_token!(BracketOpen, '[');
 def_token!(BracketClose, ']');
+def_token!(LessThan, '<');
+def_token!(GreaterThan, '>');
 def_token!(DoubleQuote, '"');
 def_token!(Percent, '%');
 def_token!(Pipe, '|');

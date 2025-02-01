@@ -1,7 +1,7 @@
 use winnow::Parser as _;
 
 use crate::{
-    parser::{Input, Offset, PResult, Parse, Span, Spanned, TokenParserExt as _},
+    parser::{Input, Offset, PResult, Parse, Parser as _, Span, Spanned},
     Failure,
 };
 
@@ -61,7 +61,7 @@ macro_rules! def_keyword {
         impl<'a> Parse<'a> for $t {
             fn parse(input: &mut Input<'a>) -> PResult<Self> {
                 winnow::combinator::terminated($s, winnow::combinator::peek(end_of_keyword))
-                    .or_backtrack(Failure::ExpectedKeyword(&$s))
+                    .or_fail(Failure::ExpectedKeyword(&$s))
                     .token_span()
                     .map(Self::with_span)
                     .parse_next(input)
