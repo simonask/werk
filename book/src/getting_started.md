@@ -4,6 +4,10 @@
 time. That said, `werk` is a self-contained binary that can easily be
 transferred between machines.
 
+## Installation Dependencies
+
+- `rustc` >= 1.83.0
+
 ## Installation steps
 
 1. `git clone https://github.com/simonask/werk`
