@@ -1,8 +1,9 @@
 let cargo = which "cargo"
+let glslc = which "glslc"
 let wasm-tuple = "wasm32-wasip2"
 
 let profile = "debug"
-let wasm-profile = "profile"
+let wasm-profile = "debug"
 
 let cargo-profile = profile | match {
     "debug" => "dev"
@@ -20,7 +21,7 @@ build "{wasm-tuple}/{wasm-profile}/%.wasm" {
     # use a regex to replace it.
     let package-name = "{%:s/_/-/}"
 
-    depfile "{%}.d"
+    depfile "{wasm-tuple}/{wasm-profile}/{%}.d"
     run "{cargo} build
         --target={wasm-tuple}
         --profile={cargo-wasm-profile}
@@ -50,7 +51,7 @@ build "assets.tar.gz" {
 # Rule to build the main program.
 build "{profile}/program{EXE_SUFFIX}" {
     depfile "{profile}/program.d"
-    run "cargo -p program --profile={cargo-profile}"
+    run "cargo build -p program --profile={cargo-profile}"
 }
 
 # Task to build everything.
@@ -58,8 +59,8 @@ task build {
     build ["{profile}/program{EXE_SUFFIX}", "assets.tar.gz"]
 }
 
-# Task that just runs `cargo --clean`. This deletes `target/`, so also removes
+# Task that just runs `cargo clean`. This deletes `target/`, so also removes
 # compiled shaders.
 task clean {
-    run "{cargo} --clean"
+    run "{cargo} clean"
 }

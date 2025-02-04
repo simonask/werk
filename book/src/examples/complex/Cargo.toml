@@ -1,0 +1,3 @@
+[workspace]
+resolver = "3"
+members = ["program", "plugin1", "plugin2"]
