@@ -24,33 +24,16 @@ fn version_string() -> String {
     )
 }
 
-#[derive(Debug, clap::Parser)]
-#[command(version = version_string())]
-pub struct Args {
-    /// The target to build.
-    pub target: Option<String>,
-
-    #[clap(short, long)]
-    /// The path to the Werkfile. Defaults to searching for `Werkfile` in the
-    /// current working directory and its parents.
-    pub file: Option<std::path::PathBuf>,
-
-    /// List the available recipes.
-    #[clap(short, long)]
-    pub list: bool,
-
-    /// Dry run; do not execute any recipe commands. Note: Shell commands used
-    /// in global variables are still executed!
-    #[clap(long)]
-    pub dry_run: bool,
-
+#[derive(clap::Args, Debug)]
+#[command(next_help_heading = "Output options")]
+pub struct OutputArgs {
     /// Print recipe commands as they are executed. Implied by `--verbose`.
-    #[clap(long)]
+    #[clap(long, next_help_heading = "print")]
     pub print_commands: bool,
 
     /// Print recipes that were up-to-date.
     /// Implied by `--verbose`.
-    #[clap(long)]
+    #[clap(long, help_heading = "print")]
     pub print_fresh: bool,
 
     /// Silence informational output from executed commands, only printing to
@@ -72,6 +55,39 @@ pub struct Args {
     #[clap(long, short)]
     pub verbose: bool,
 
+    #[clap(long, default_value = "auto")]
+    pub color: ColorChoice,
+
+    #[clap(long, default_value = "ansi")]
+    pub output_format: OutputChoice,
+
+    /// Enable debug logging to stdout.
+    ///
+    /// This takes a logging directive like `RUST_LOG`.
+    #[clap(long)]
+    pub log: Option<Option<String>>,
+}
+
+#[derive(Debug, clap::Parser)]
+#[command(version = version_string(),)]
+pub struct Args {
+    /// The target to build.
+    pub target: Option<String>,
+
+    /// The path to the Werkfile. Defaults to searching for `Werkfile` in the
+    /// current working directory and its parents.
+    #[clap(short, long)]
+    pub file: Option<std::path::PathBuf>,
+
+    /// List the available recipes.
+    #[clap(short, long)]
+    pub list: bool,
+
+    /// Dry run; do not execute any recipe commands. Note: Shell commands used
+    /// in global variables are still executed!
+    #[clap(long)]
+    pub dry_run: bool,
+
     /// Build the target, then keep rebuilding it when the workspace changes.
     #[clap(long, short)]
     pub watch: bool,
@@ -80,12 +96,6 @@ pub struct Args {
     /// rebuilding. Implies `--watch`.
     #[clap(long, default_value = "250")]
     pub watch_delay: u64,
-
-    #[clap(long, default_value = "auto")]
-    pub color: ColorChoice,
-
-    #[clap(long, default_value = "ansi")]
-    pub output_format: OutputChoice,
 
     /// Number of tasks to execute in parallel. Defaults to the number of CPU cores.
     #[clap(long, short)]
@@ -104,11 +114,8 @@ pub struct Args {
     #[clap(long, short = 'D')]
     pub define: Vec<String>,
 
-    /// Enable debug logging to stdout.
-    ///
-    /// This takes a logging directive like `RUST_LOG`.
-    #[clap(long)]
-    pub log: Option<Option<String>>,
+    #[command(flatten)]
+    pub output: OutputArgs,
 }
 
 /// Color mode.
@@ -161,7 +168,7 @@ enum Error {
 
 fn main() -> Result<(), Error> {
     let args = Args::parse();
-    match args.log {
+    match args.output.log {
         Some(Some(ref directive)) => tracing_subscriber::fmt::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::new(directive))
             .init(),
@@ -179,8 +186,8 @@ fn main() -> Result<(), Error> {
 async fn try_main(args: Args) -> Result<(), Error> {
     anstyle_query::windows::enable_ansi_colors();
 
-    let color_stdout = render::ColorOutputKind::initialize(&std::io::stdout(), args.color);
-    let color_stderr = render::ColorOutputKind::initialize(&std::io::stderr(), args.color);
+    let color_stdout = render::ColorOutputKind::initialize(&std::io::stdout(), args.output.color);
+    let color_stderr = render::ColorOutputKind::initialize(&std::io::stderr(), args.output.color);
 
     let werkfile = if let Some(file) = args.file {
         file.normalize()?
@@ -251,19 +258,19 @@ async fn try_main(args: Args) -> Result<(), Error> {
     };
 
     let renderer = render::make_renderer(render::OutputSettings {
-        logging_enabled: args.log.is_some() || args.list,
+        logging_enabled: args.output.log.is_some() || args.list,
         color: color_stderr,
-        output: if args.log.is_some() {
+        output: if args.output.log.is_some() {
             OutputChoice::Log
         } else {
-            args.output_format
+            args.output.output_format
         },
-        print_recipe_commands: args.print_commands | args.verbose,
-        print_fresh: args.print_fresh | args.verbose,
+        print_recipe_commands: args.output.print_commands | args.output.verbose,
+        print_fresh: args.output.print_fresh | args.output.verbose,
         dry_run: args.dry_run,
-        quiet: args.quiet && !args.verbose && !args.loud,
-        loud: args.loud | args.verbose,
-        explain: args.explain | args.verbose,
+        quiet: args.output.quiet && !args.output.verbose && !args.output.loud,
+        loud: args.output.loud | args.output.verbose,
+        explain: args.output.explain | args.output.verbose,
     });
 
     let workspace = Workspace::new_with_diagnostics(
