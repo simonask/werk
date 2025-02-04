@@ -3,6 +3,7 @@ use std::{fmt::Display, sync::Arc};
 mod ansi;
 mod json;
 mod log;
+pub(crate) mod null;
 mod stream;
 
 pub use ansi::term_width::*;

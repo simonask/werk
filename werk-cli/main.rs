@@ -1,10 +1,12 @@
+mod complete;
 pub mod dry_run;
 mod render;
 
 use std::{borrow::Cow, path::Path, sync::Arc};
 
 use ahash::HashSet;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::ArgValueCandidates;
 use futures::future::Either;
 use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
@@ -28,12 +30,12 @@ fn version_string() -> String {
 #[command(next_help_heading = "Output options")]
 pub struct OutputArgs {
     /// Print recipe commands as they are executed. Implied by `--verbose`.
-    #[clap(long, next_help_heading = "print")]
+    #[clap(long)]
     pub print_commands: bool,
 
     /// Print recipes that were up-to-date.
     /// Implied by `--verbose`.
-    #[clap(long, help_heading = "print")]
+    #[clap(long)]
     pub print_fresh: bool,
 
     /// Silence informational output from executed commands, only printing to
@@ -72,6 +74,7 @@ pub struct OutputArgs {
 #[command(version = version_string(), bin_name = env!("CARGO_BIN_NAME"))]
 pub struct Args {
     /// The target to build.
+    #[clap(add = ArgValueCandidates::new(complete::targets))]
     pub target: Option<String>,
 
     /// The path to the Werkfile. Defaults to searching for `Werkfile` in the
@@ -111,7 +114,7 @@ pub struct Args {
     pub output_dir: Option<std::path::PathBuf>,
 
     /// Override global variable. This takes the form `name=value`.
-    #[clap(long, short = 'D')]
+    #[clap(long, short = 'D', add = ArgValueCandidates::new(complete::defines))]
     pub define: Vec<String>,
 
     #[command(flatten)]
@@ -167,6 +170,8 @@ pub enum Error {
 }
 
 fn main() -> Result<(), Error> {
+    clap_complete::CompleteEnv::with_factory(Args::command).complete();
+
     let args = Args::parse();
     match args.output.log {
         Some(Some(ref directive)) => tracing_subscriber::fmt::fmt()
