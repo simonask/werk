@@ -254,7 +254,7 @@ impl Io for RealSystem {
                     return WalkState::Quit;
                 };
 
-                match entry.map_err(Into::into).and_then(TryInto::try_into) {
+                match entry.and_then(TryInto::try_into) {
                     Ok(entry) => {
                         entries.push(entry);
                         WalkState::Continue

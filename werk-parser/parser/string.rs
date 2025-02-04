@@ -649,6 +649,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::literal_string_with_formatting_args)]
     fn test_interpolation_options_implicit() {
         let empty_options = "{:}";
         assert_eq!(
