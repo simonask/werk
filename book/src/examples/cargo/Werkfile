@@ -1,3 +1,4 @@
+config default = "build"
 config out-dir = "target"
 
 let cargo = which "cargo"
@@ -15,4 +16,8 @@ build "{profile}/test-project{EXE_SUFFIX}" {
     depfile "{profile}/test-project.d"
 
     run "cargo build -p test-project --profile={cargo-profile}"
+}
+
+task build {
+    build "{profile}/test-project{EXE_SUFFIX}"
 }

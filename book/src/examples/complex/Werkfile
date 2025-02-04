@@ -1,3 +1,5 @@
+config default = "build"
+
 let cargo = which "cargo"
 let glslc = which "glslc"
 let wasm-tuple = "wasm32-wasip2"

@@ -1,3 +1,5 @@
+config default = "build"
+
 let glslc = which "glslc"
 let tar = which "tar"
 
@@ -13,6 +15,6 @@ build "shaders.tar.gz" {
     run "{tar} -zcf <out> <in*>"
 }
 
-task build-shaders {
+task build {
     build "shaders.tar.gz"
 }
