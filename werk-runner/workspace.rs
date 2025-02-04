@@ -139,6 +139,9 @@ impl<'a> Workspace<'a> {
             IndexMap::with_capacity_and_hasher(1024, ahash::RandomState::default());
 
         for entry in io.glob_workspace(&project_root, &settings.glob)? {
+            if entry.path.is_dir() {
+                continue;
+            }
             if entry.path.file_name() == Some(WERK_CACHE_FILENAME.as_ref()) {
                 return Err(Error::ClobberedWorkspace(entry.path.into_inner()));
             }
