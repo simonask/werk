@@ -1,8 +1,10 @@
 [package]
 name = "tests"
-version = "0.1.0"
-edition = "2021"
 publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
 
 [dependencies]
 werk-runner.workspace = true

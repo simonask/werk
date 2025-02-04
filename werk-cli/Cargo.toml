@@ -1,9 +1,10 @@
 [package]
 name = "werk-cli"
-version = "0.1.0"
-edition = "2021"
 build = "build.rs"
-rust-version = "1.83.0"
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "werk"
