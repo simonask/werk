@@ -181,6 +181,8 @@ pub enum Failure {
     ExpectedKeyword(&'static &'static str),
     #[error("invalid escape sequence: {0:?}")]
     InvalidEscapeChar(char),
+    #[error("invalid interpolation operator")]
+    InvalidInterpolationOp,
     #[error("expected character {0}")]
     ExpectedChar(char),
     #[error(transparent)]

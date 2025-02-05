@@ -83,25 +83,28 @@ async fn test_outdated_env() -> anyhow::Result<()> {
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.io.did_read_env("PROFILE"));
-    assert!(test.io.did_which("write"));
-    assert!(test.io.did_run_during_build(&ShellCommandLine {
+    assert!(test.did_read_env("PROFILE"));
+    assert!(test.did_which("write"));
+    assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("write"),
-        arguments: vec!["debug".into(), output_file("env-dep").display().to_string()],
+        arguments: vec![
+            "debug".into(),
+            test.output_path(["env-dep"]).display().to_string()
+        ],
     }));
 
     // Write .werk-cache.
     workspace.finalize().await.unwrap();
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.io.did_write_file(".werk-cache"));
+    assert!(test.did_write_output_file(&[".werk-cache"]));
 
     assert!(contains_file(
         &test.io.filesystem.lock(),
-        &output_file(".werk-cache")
+        &test.output_path([".werk-cache"])
     ));
     assert!(contains_file(
         &test.io.filesystem.lock(),
-        &output_file("env-dep")
+        &test.output_path(["env-dep"])
     ));
 
     // Change the environment!
@@ -143,8 +146,8 @@ async fn test_outdated_which() -> anyhow::Result<()> {
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.io.did_which("clang"));
-    assert!(test.io.did_run_during_build(&ShellCommandLine {
+    assert!(test.did_which("clang"));
+    assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
         arguments: vec![],
     }));
@@ -152,11 +155,11 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     // Write .werk-cache.
     workspace.finalize().await.unwrap();
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.io.did_write_file(".werk-cache"));
+    assert!(test.did_write_output_file(&[".werk-cache"]));
 
     assert!(contains_file(
         &test.io.filesystem.lock(),
-        &output_file(".werk-cache")
+        &test.output_path([".werk-cache"])
     ));
 
     // Change the environment!
@@ -176,7 +179,7 @@ async fn test_outdated_which() -> anyhow::Result<()> {
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
 
-    assert!(test.io.did_run_during_build(&ShellCommandLine {
+    assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("path/to/clang"),
         arguments: vec![],
     }));
@@ -214,8 +217,8 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.io.did_which("clang"));
-    assert!(test.io.did_run_during_build(&ShellCommandLine {
+    assert!(test.did_which("clang"));
+    assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
         arguments: vec![],
     }));
@@ -223,11 +226,11 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     // Write .werk-cache.
     workspace.finalize().await.unwrap();
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.io.did_write_file(".werk-cache"));
+    assert!(test.did_write_output_file(&[".werk-cache"]));
 
     assert!(contains_file(
         &test.io.filesystem.lock(),
-        &output_file(".werk-cache"),
+        &test.output_path([".werk-cache"]),
     ));
 
     // Change the environment!
@@ -241,11 +244,11 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
 
     let status = runner.build_file(Path::new("which-dep")?).await?;
 
-    assert!(test.io.did_run_during_build(&ShellCommandLine {
+    assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
         arguments: vec![
             String::from("-o"),
-            output_file("which-dep").display().to_string()
+            test.output_path(["which-dep"]).display().to_string()
         ],
     }));
 
@@ -269,9 +272,8 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
 
     let test = Test::new(WERK)?;
-    test.io.set_workspace_file("a.c", "void foo() {}").unwrap();
-    test.io
-        .set_workspace_file("b.c", "int main() { return 0; }\n")
+    test.set_workspace_file(&["a.c"], "void foo() {}").unwrap();
+    test.set_workspace_file(&["b.c"], "int main() { return 0; }\n")
         .unwrap();
     let workspace = test.create_workspace(&[])?;
     let runner = werk_runner::Runner::new(&workspace);
@@ -286,21 +288,24 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.io.did_which("clang"));
-    assert!(test.io.did_run_during_build(&ShellCommandLine {
+    assert!(test.did_which("clang"));
+    assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
-        arguments: vec![workspace_file_str("a.c"), workspace_file_str("b.c")],
+        arguments: vec![
+            test.workspace_path_str(["a.c"]),
+            test.workspace_path_str(["b.c"])
+        ],
     }));
 
     // Write .werk-cache.
     workspace.finalize().await.unwrap();
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.io.did_write_file(".werk-cache"));
+    assert!(test.did_write_output_file(&[".werk-cache"]));
 
-    assert!(test.io.contains_file(output_file(".werk-cache")));
+    assert!(test.io.contains_file(test.output_path([".werk-cache"])));
 
     // Change the environment!
-    test.io.delete_file(workspace_file("b.c")).unwrap();
+    test.io.delete_file(test.workspace_path(["b.c"])).unwrap();
     test.io.clear_oplog();
 
     // Initialize a new workspace.
@@ -309,9 +314,9 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
 
     let status = runner.build_file(Path::new("glob-dep")?).await?;
 
-    assert!(test.io.did_run_during_build(&ShellCommandLine {
+    assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
-        arguments: vec![workspace_file_str("a.c")],
+        arguments: vec![test.workspace_path_str(["a.c"])],
     }));
 
     // println!("oplog = {:#?}", &*io.oplog.lock());
@@ -347,23 +352,26 @@ async fn test_outdated_define() -> anyhow::Result<()> {
         )
     );
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.io.did_read_env("PROFILE"));
-    assert!(test.io.did_which("write"));
-    assert!(test.io.did_run_during_build(&ShellCommandLine {
+    assert!(test.did_read_env("PROFILE"));
+    assert!(test.did_which("write"));
+    assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("write"),
-        arguments: vec!["debug".into(), output_file("env-dep").display().to_string()],
+        arguments: vec![
+            "debug".into(),
+            test.output_path(["env-dep"]).display().to_string()
+        ],
     }));
 
     // Write .werk-cache.
     workspace.finalize().await.unwrap();
-    assert!(test.io.did_write_file(".werk-cache"));
+    assert!(test.did_write_output_file(&[".werk-cache"]));
     assert!(contains_file(
         &test.io.filesystem.lock(),
-        &output_file(".werk-cache")
+        &test.output_path(&[".werk-cache"])
     ));
     assert!(contains_file(
         &test.io.filesystem.lock(),
-        &output_file("env-dep")
+        &test.output_path(&["env-dep"])
     ));
 
     // Override the `profile` variable manually.
@@ -381,7 +389,7 @@ async fn test_outdated_define() -> anyhow::Result<()> {
         )
     );
     // Because the variable was overridden, the expression should not be evaluated.
-    assert!(!test.io.did_read_env("PROFILE"));
+    assert!(!test.did_read_env("PROFILE"));
 
     // Write .werk-cache.
     workspace.finalize().await.unwrap();

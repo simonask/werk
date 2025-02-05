@@ -1,26 +1,11 @@
-use std::sync::Arc;
-
 use werk_runner::Value;
 
 use tests::mock_io::*;
 use werk_util::Symbol;
 
 fn evaluate_global(source: &str, global_variable_name_to_check: &str) -> Value {
-    let path = std::path::Path::new("test input");
-    let ast = werk_parser::parse_werk(source)
-        .map_err(|err| anyhow::Error::msg(err.with_location(path, source).to_string()))
-        .unwrap();
-    let render = Arc::new(MockRender::default());
-    let io = Arc::new(MockIo::default());
-    io.with_default_workspace_dir();
-    let workspace = werk_runner::Workspace::new(
-        &ast,
-        &*io,
-        &*render,
-        test_workspace_dir().to_path_buf(),
-        &test_workspace_settings(&[]),
-    )
-    .unwrap();
+    let test = Test::new(source).unwrap();
+    let workspace = test.create_workspace(&[]).unwrap();
     workspace
         .manifest
         .globals

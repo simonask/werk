@@ -1036,6 +1036,14 @@ pub struct OwnedDependencyChain {
     vec: Vec<TaskId>,
 }
 
+impl OwnedDependencyChain {
+    #[inline]
+    #[must_use]
+    pub fn into_inner(self) -> Vec<TaskId> {
+        self.vec
+    }
+}
+
 impl std::fmt::Display for OwnedDependencyChain {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, task_id) in self.vec.iter().enumerate() {

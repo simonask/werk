@@ -42,7 +42,7 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
             if let Some(captures) = regexes.file.captures(line) {
                 let filename = captures.get(1).unwrap().as_str();
                 let content = captures.get(2).unwrap().as_str();
-                let path = workspace_file(filename);
+                let path = test.workspace_path(filename.split('/'));
                 insert_fs(
                     &mut fs,
                     &path,
@@ -95,7 +95,7 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
 
         let fs = test.io.filesystem.lock();
         for (filename, contents) in &check_files {
-            let out_file = output_file(filename);
+            let out_file = test.output_path(filename.split('/'));
             let (_entry, data) = read_fs(&fs, &out_file)?;
             assert_eq!(
                 data, *contents,

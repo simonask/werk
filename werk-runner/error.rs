@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use werk_fs::Absolute;
 use werk_parser::parser::Span;
 
 use crate::{depfile::DepfileError, OwnedDependencyChain, ShellCommandLine, TaskId, Value};
@@ -145,6 +146,16 @@ impl From<ignore::Error> for Error {
     }
 }
 
+impl werk_parser::DisplayError for Error {
+    fn annotations(&self) -> Vec<werk_parser::DisplayAnnotation> {
+        match self {
+            Error::Eval(eval_error) => eval_error.annotations(),
+            // TODO: Provide annotations for more error cases.
+            _ => vec![],
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error, PartialEq)]
 #[error("ambiguous pattern; both `{pattern1}` and `{pattern2}` would match `{path}`")]
 pub struct AmbiguousPatternError {
@@ -253,6 +264,8 @@ pub enum EvalError {
     AssertionFailed(Span, Box<(Value, Value)>),
     #[error("assertion failed: \"{}\" does not match the pattern '{}'", .1 .0.escape_default(), .1 .1)]
     AssertionMatchFailed(Span, Box<(String, String)>),
+    #[error("path matches both a file in the workspace and a build recipe; use `:out-dir` or `:workspace` to disambiguate: {1}")]
+    AmbiguousPathResolution(Span, Absolute<werk_fs::PathBuf>),
 }
 
 impl werk_parser::DisplayError for EvalError {
@@ -298,7 +311,8 @@ impl werk_parser::parser::Spanned for EvalError {
             | EvalError::Io(span, _)
             | EvalError::ErrorExpression(span, _)
             | EvalError::AssertionFailed(span, _)
-            | EvalError::AssertionMatchFailed(span, _) => *span,
+            | EvalError::AssertionMatchFailed(span, _)
+            | EvalError::AmbiguousPathResolution(span, _) => *span,
         }
     }
 }

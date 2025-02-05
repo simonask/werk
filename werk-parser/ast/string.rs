@@ -325,6 +325,8 @@ impl std::fmt::Display for Interpolation<'_> {
                         regex_interpolation_op.replacer
                     )?,
                     InterpolationOp::ResolveOsPath => unreachable!(),
+                    InterpolationOp::ResolveOutDir => f.write_str("out-dir")?,
+                    InterpolationOp::ResolveWorkspace => f.write_str("workspace")?,
                 }
             }
         }
@@ -398,6 +400,8 @@ pub enum InterpolationOp<'a> {
     // Interpret the string as an OS path and resolve it. This is the `<..>`
     // interpolation syntax.
     ResolveOsPath,
+    ResolveOutDir,
+    ResolveWorkspace,
 }
 
 impl InterpolationOp<'_> {
@@ -413,6 +417,8 @@ impl InterpolationOp<'_> {
             InterpolationOp::AppendEach(s) => InterpolationOp::AppendEach(s.into_owned().into()),
             InterpolationOp::RegexReplace(r) => InterpolationOp::RegexReplace(r.into_static()),
             InterpolationOp::ResolveOsPath => InterpolationOp::ResolveOsPath,
+            InterpolationOp::ResolveOutDir => InterpolationOp::ResolveOutDir,
+            InterpolationOp::ResolveWorkspace => InterpolationOp::ResolveWorkspace,
         }
     }
 }
@@ -427,7 +433,10 @@ impl SemanticHash for InterpolationOp<'_> {
             }
             InterpolationOp::PrependEach(s) | InterpolationOp::AppendEach(s) => s.hash(state),
             InterpolationOp::RegexReplace(r) => r.hash(state),
-            InterpolationOp::ResolveOsPath => (),
+            // Covered by discriminant.
+            InterpolationOp::ResolveOsPath
+            | InterpolationOp::ResolveOutDir
+            | InterpolationOp::ResolveWorkspace => (),
         }
     }
 }

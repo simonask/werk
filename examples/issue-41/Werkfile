@@ -1,0 +1,15 @@
+config out-dir = "../../target/examples/issue-41"
+config default = "build"
+
+build "foo" {
+    info "<out>"
+}
+
+build "bar" {
+    info "<out>"
+}
+
+task build {
+    build "foo"
+    build "bar"
+}

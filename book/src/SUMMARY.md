@@ -27,6 +27,7 @@
   - [Variables](./language/variables.md)
   - [Expressions](./language/expressions.md)
   - [String Interpolation](./language/strings.md)
+  - [Path resolution](./language/path_resolution.md)
   - [Patterns](./language/patterns.md)
   - [Recipe commands](./language/recipe_commands.md)
   - [Built-in variables](./language/builtins.md)
