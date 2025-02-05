@@ -1,6 +1,6 @@
 mod used;
 pub use used::*;
-use werk_fs::{Absolute, PathError};
+use werk_fs::Absolute;
 use werk_util::Symbol;
 
 use std::{borrow::Cow, sync::Arc};
@@ -11,9 +11,9 @@ use werk_parser::{
 };
 
 use crate::{
-    BuildRecipeScope, Env, EvalError, Lookup, LookupValue, MatchScope, Pattern, PatternBuilder,
-    RunCommand, Scope, ShellCommandLine, ShellCommandLineBuilder, ShellError, SubexprScope,
-    TaskRecipeScope, Value, Workspace,
+    AmbiguousPatternError, BuildRecipeScope, Env, EvalError, Lookup, LookupValue, MatchScope,
+    Pattern, PatternBuilder, RunCommand, Scope, ShellCommandLine, ShellCommandLineBuilder,
+    ShellError, SubexprScope, TaskRecipeScope, Value, Workspace,
 };
 
 /// Evaluated value, which keeps track of "outdatedness" with respect to cached
@@ -619,6 +619,7 @@ pub fn eval_pattern_builder<'a, P: Scope + ?Sized>(
                         &options.ops,
                         false,
                         scope.workspace(),
+                        ResolvePathMode::Illegal,
                     )?;
                     &value_owned
                 } else {
@@ -677,6 +678,7 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
                         &options.ops,
                         true,
                         scope.workspace(),
+                        ResolvePathMode::Infer,
                     )?;
 
                     if let Some(ref join) = options.join {
@@ -839,6 +841,7 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
                         &options.ops,
                         true,
                         scope.workspace(),
+                        ResolvePathMode::Infer,
                     )?;
                     &value_owned
                 } else {
@@ -910,13 +913,28 @@ fn eval_string_interpolation_stem<P: Scope + ?Sized>(
     })
 }
 
+#[derive(Clone, Copy)]
+enum ResolvePathMode {
+    /// Infer from whether or not the path exists in the workspace.
+    Infer,
+    /// The `:out-dir` operation was present.
+    OutDir,
+    /// The `:workspace` operation was present.
+    Workspace,
+    /// Cannot resolve paths here (e.g., in patterns)
+    Illegal,
+}
+
 fn eval_string_interpolation_ops(
     span: Span,
     value: &mut Value,
     ops: &[ast::InterpolationOp],
     allow_os_paths: bool,
     workspace: &Workspace,
+    default_resolve_mode: ResolvePathMode,
 ) -> Result<(), EvalError> {
+    let mut resolve_mode = default_resolve_mode;
+
     for op in ops {
         match op {
             ast::InterpolationOp::ReplaceExtension { from, to } => {
@@ -929,10 +947,22 @@ fn eval_string_interpolation_ops(
             }
             ast::InterpolationOp::ResolveOsPath => {
                 if allow_os_paths {
-                    recursive_resolve_path(span, value, werk_fs::Path::ROOT, workspace)?;
+                    recursive_resolve_path(
+                        span,
+                        value,
+                        werk_fs::Path::ROOT,
+                        workspace,
+                        resolve_mode,
+                    )?;
                 } else {
                     return Err(EvalError::JoinInPattern(span));
                 }
+            }
+            ast::InterpolationOp::ResolveOutDir => {
+                resolve_mode = ResolvePathMode::OutDir;
+            }
+            ast::InterpolationOp::ResolveWorkspace => {
+                resolve_mode = ResolvePathMode::Workspace;
             }
         }
     }
@@ -1297,19 +1327,42 @@ fn recursive_resolve_path(
     value: &mut Value,
     working_dir: &Absolute<werk_fs::Path>,
     workspace: &Workspace,
+    resolve_mode: ResolvePathMode,
 ) -> Result<(), EvalError> {
     value.try_recursive_modify(|string| {
-        let path = werk_fs::Path::new(string)?;
-        let path = path.absolutize(working_dir)?;
-        let path = workspace.resolve_path(&path);
+        let path = werk_fs::Path::new(string).map_err(|err| EvalError::Path(span, err))?;
+        let path = path.absolutize(working_dir).map_err(|err| EvalError::Path(span, err))?;
+        let path = match resolve_mode {
+            ResolvePathMode::Infer => resolve_path_infer(span, &path, workspace)?,
+            ResolvePathMode::OutDir => path.resolve(workspace.output_directory()),
+            ResolvePathMode::Workspace => path.resolve(workspace.project_root()),
+            ResolvePathMode::Illegal => return Err(EvalError::ResolvePathInPattern(span)),
+        };
         match path.to_str() {
             Some(path) => path.clone_into(string),
             None => panic!("Path resolution produced a non-UTF8 path; probably the project root path is non-UTF8"),
         }
-        Ok::<_, PathError>(())
-    }).map_err(|err| EvalError::Path(span,err))?;
+        Ok::<_, EvalError>(())
+    })
+}
 
-    Ok(())
+fn resolve_path_infer(
+    span: Span,
+    path: &Absolute<werk_fs::Path>,
+    workspace: &Workspace,
+) -> Result<Absolute<std::path::PathBuf>, EvalError> {
+    if let Some(workspace_file) = workspace.get_project_file(path) {
+        // Check if the path also matches a build recipe, and must be disambiguated.
+        match workspace.manifest.match_build_recipe(path) {
+            Ok(Some(_recipe)) => Err(EvalError::AmbiguousPathResolution(span, path.to_path_buf())),
+            Err(AmbiguousPatternError { .. }) => {
+                Err(EvalError::AmbiguousPathResolution(span, path.to_path_buf()))
+            }
+            Ok(None) => Ok(workspace_file.path.clone()),
+        }
+    } else {
+        Ok(path.resolve(workspace.output_directory()))
+    }
 }
 
 fn recursive_replace_extension(value: &mut Value, from: &str, to: &str) {

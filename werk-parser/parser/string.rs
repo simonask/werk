@@ -224,15 +224,18 @@ fn is_identifier_continue(ch: char) -> bool {
     ch == '-' || unicode_ident::is_xid_continue(ch)
 }
 
-fn ident(input: &mut Input<'_>) -> PResult<Symbol> {
+fn ident_str<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
     (
         take_while(1, is_identifier_start),
         take_while(0.., is_identifier_continue),
     )
         .expect(&"identifier")
         .take()
-        .map(Symbol::new)
         .parse_next(input)
+}
+
+fn ident(input: &mut Input<'_>) -> PResult<Symbol> {
+    ident_str.map(Symbol::new).parse_next(input)
 }
 
 #[derive(Debug, Clone)]
@@ -436,8 +439,22 @@ fn interpolation_op<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationOp<'
             to: Cow::from(to),
         }),
         interpolation_op_regex_replace.map(ast::InterpolationOp::RegexReplace),
+        interpolation_op_kw,
     ))
     .parse_next(input)
+}
+
+fn interpolation_op_kw<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationOp<'a>> {
+    let location = input.current_token_start();
+    let ident = ident_str.parse_next(input)?;
+    match ident {
+        "out-dir" => Ok(ast::InterpolationOp::ResolveOutDir),
+        "workspace" => Ok(ast::InterpolationOp::ResolveWorkspace),
+        _ => Err(ModalErr::Error(Error::new(
+            Offset(location as u32),
+            Failure::InvalidInterpolationOp,
+        ))),
+    }
 }
 
 fn interpolation_op_replace_ext<'a>(input: &mut Input<'a>) -> PResult<(&'a str, &'a str)> {

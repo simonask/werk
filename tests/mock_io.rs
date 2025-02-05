@@ -26,6 +26,16 @@ pub fn default_mtime() -> std::time::SystemTime {
     make_mtime(0)
 }
 
+#[inline]
+#[must_use]
+pub fn empty_program_output() -> std::process::Output {
+    std::process::Output {
+        status: std::process::ExitStatus::default(),
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+    }
+}
+
 pub struct TestBuilder<'a> {
     /// Note: Path in the mocked filesystem, not the actual filesystem.
     /// `canonicalize()` won't work etc.
@@ -88,12 +98,67 @@ impl<'a> TestBuilder<'a> {
     pub fn build(&self) -> Result<Test<'a>, werk_parser::Error> {
         let ast = werk_parser::parse_werk(self.werkfile)?;
 
-        let mut io = MockIo::default();
-        io.initialize_default_env();
+        let io = MockIo::default();
+        io.set_env("PROFILE", "debug");
         if self.default_filesystem {
             create_dirs(&mut io.filesystem.lock(), &self.workspace_dir).unwrap();
-            io.initialize_default_filesystem();
+            create_dirs(&mut io.filesystem.lock(), &self.output_dir).unwrap();
+
+            io.set_program("clang", program_path("clang"), |_cmd, _fs, _env| {
+                Ok(empty_program_output())
+            });
+            io.set_program("write", program_path("write"), move |cmdline, fs, _env| {
+                let contents = cmdline.arguments[0].as_str();
+                let file = std::path::Path::new(cmdline.arguments[1].as_str());
+                tracing::trace!("write {}", file.display());
+                insert_fs(
+                    fs,
+                    file,
+                    (
+                        Metadata {
+                            mtime: make_mtime(1),
+                            is_file: true,
+                            is_symlink: false,
+                        },
+                        contents.as_bytes().into(),
+                    ),
+                )
+                .unwrap();
+                Ok(empty_program_output())
+            });
+            io.set_program(
+                "write-env",
+                program_path("write-env"),
+                |cmdline, fs, env| {
+                    let varname = std::ffi::OsString::from(cmdline.arguments[0].as_str());
+                    let file = std::path::Path::new(cmdline.arguments[1].as_str());
+                    tracing::trace!("write-env {}", file.display());
+
+                    let contents = env
+                        .get(&varname)
+                        .cloned()
+                        .or_else(|| std::env::var_os(&varname))
+                        .unwrap_or_default();
+                    let contents: String = contents.into_string().unwrap();
+                    insert_fs(
+                        fs,
+                        file,
+                        (
+                            Metadata {
+                                mtime: make_mtime(1),
+                                is_file: true,
+                                is_symlink: false,
+                            },
+                            contents.as_bytes().into(),
+                        ),
+                    )
+                    .unwrap();
+
+                    Ok(empty_program_output())
+                },
+            );
         }
+
         if self.create_workspace_dir {
             io.create_parent_dirs(&self.workspace_dir).unwrap()
         }
@@ -129,13 +194,179 @@ impl<'a> Test<'a> {
         &self,
         defines: &[(&str, &str)],
     ) -> Result<werk_runner::Workspace<'_>, werk_runner::Error> {
+        let mut settings = WorkspaceSettings::new(self.output_dir.clone());
+
+        // Normally this would be covered by `.gitignore`, but we don't have that,
+        // so just use a manual ignore pattern.
+        let ignore_pattern = self.output_dir.join("**").unwrap();
+        settings.ignore_explicitly(
+            globset::GlobSet::builder()
+                .add(ignore_pattern.to_string_lossy().parse().unwrap())
+                .build()
+                .unwrap(),
+        );
+
+        for (key, value) in defines {
+            settings.define(*key, *value);
+        }
+
         werk_runner::Workspace::new(
             &self.ast,
             &*self.io,
             &*self.render,
-            test_workspace_dir().to_path_buf(),
-            &test_workspace_settings(defines),
+            self.workspace_dir.clone(),
+            &settings,
         )
+    }
+
+    pub fn workspace_path(
+        &self,
+        path: impl IntoIterator<Item: AsRef<OsStr>>,
+    ) -> Absolute<std::path::PathBuf> {
+        let mut workspace_path = self.workspace_dir.clone();
+        for c in path {
+            workspace_path
+                .push(std::path::Component::Normal(c.as_ref()))
+                .unwrap();
+        }
+        workspace_path
+    }
+
+    pub fn workspace_path_str(&self, path: impl IntoIterator<Item: AsRef<OsStr>>) -> String {
+        self.workspace_path(path)
+            .into_inner()
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    pub fn output_path(
+        &self,
+        path: impl IntoIterator<Item: AsRef<OsStr>>,
+    ) -> Absolute<std::path::PathBuf> {
+        let mut output_path = self.output_dir.clone();
+        for c in path {
+            output_path
+                .push(std::path::Component::Normal(c.as_ref()))
+                .unwrap();
+        }
+        output_path
+    }
+
+    pub fn output_path_str(&self, path: impl IntoIterator<Item: AsRef<OsStr>>) -> String {
+        self.output_path(path)
+            .into_inner()
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    pub fn set_workspace_file(
+        &self,
+        path: &[&str],
+        contents: impl AsRef<[u8]>,
+    ) -> std::io::Result<()> {
+        let mut fs = self.io.filesystem.lock();
+        let path = self.workspace_path(path);
+        create_parent_dirs(&mut fs, &path).unwrap();
+        insert_fs(
+            &mut fs,
+            path.as_ref(),
+            (
+                Metadata {
+                    mtime: self.io.now(),
+                    is_file: true,
+                    is_symlink: false,
+                },
+                Vec::from(contents.as_ref()),
+            ),
+        )
+    }
+
+    pub fn set_workspace_dir(&self, path: &[&str]) -> std::io::Result<()> {
+        let mut fs = self.io.filesystem.lock();
+        let path = self.workspace_path(path);
+        create_dirs(&mut fs, &path)
+    }
+
+    pub fn did_run_during_build(&self, command_line: &ShellCommandLine) -> bool {
+        self.io
+            .oplog
+            .lock()
+            .iter()
+            .any(|op| matches!(op, MockIoOp::RunDuringBuild(c) if c == command_line))
+    }
+
+    pub fn did_run_during_eval(&self, command_line: &ShellCommandLine) -> bool {
+        self.io
+            .oplog
+            .lock()
+            .iter()
+            .any(|op| matches!(op, MockIoOp::RunDuringEval(c) if c == command_line))
+    }
+
+    pub fn did_which(&self, command: &str) -> bool {
+        self.io
+            .oplog
+            .lock()
+            .iter()
+            .any(|op| matches!(op, MockIoOp::Which(c) if c == command))
+    }
+
+    pub fn did_read_workspace_file(&self, path: &[&str]) -> bool {
+        let workspace_file = self.workspace_path(path);
+        self.io
+            .oplog
+            .lock()
+            .iter()
+            .any(|op| matches!(op, MockIoOp::ReadFile(p) if *p == workspace_file))
+    }
+
+    pub fn did_read_output_file(&self, path: &[&str]) -> bool {
+        let workspace_file = self.output_path(path);
+        self.io
+            .oplog
+            .lock()
+            .iter()
+            .any(|op| matches!(op, MockIoOp::ReadFile(p) if *p == workspace_file))
+    }
+
+    pub fn did_write_output_file(&self, path: &[&str]) -> bool {
+        let path = self.output_path(path);
+        self.io
+            .oplog
+            .lock()
+            .iter()
+            .any(|op| matches!(op, MockIoOp::WriteFile(p) if *p == path))
+    }
+
+    pub fn did_copy_file(
+        &self,
+        src: impl AsRef<Absolute<std::path::Path>>,
+        dst: impl AsRef<Absolute<std::path::Path>>,
+    ) -> bool {
+        let src = src.as_ref().to_path_buf();
+        let dst = dst.as_ref().to_path_buf();
+        self
+            .io
+            .oplog
+            .lock()
+            .iter()
+            .any(|op| matches!(op, MockIoOp::CopyFile(op_src, op_dst) if *op_src == src && *op_dst == dst))
+    }
+
+    pub fn did_create_parent_dirs(&self, path: &std::path::Path) -> bool {
+        self.io
+            .oplog
+            .lock()
+            .iter()
+            .any(|op| matches!(op, MockIoOp::CreateParentDirs(p) if p == path))
+    }
+
+    pub fn did_read_env(&self, name: &str) -> bool {
+        self.io
+            .oplog
+            .lock()
+            .iter()
+            .any(|op| matches!(op, MockIoOp::ReadEnv(n) if n == name))
     }
 }
 
@@ -214,6 +445,10 @@ impl werk_runner::Render for MockRender {
     }
 
     fn message(&self, task_id: Option<TaskId>, message: &str) {
+        tracing::trace!(
+            "info({}) {message}",
+            task_id.map(|t| t.to_string()).unwrap_or_default()
+        );
         self.log
             .lock()
             .push(MockRenderEvent::Message(task_id, message.to_string()));
@@ -248,74 +483,6 @@ pub struct MockIo {
 }
 
 impl MockIo {
-    pub fn initialize_default_filesystem(&mut self) {
-        self.set_program("clang", program_path("clang"), |_cmd, _fs, _env| {
-            Ok(std::process::Output {
-                status: std::process::ExitStatus::default(),
-                stdout: vec![],
-                stderr: vec![],
-            })
-        })
-        .set_program("write", program_path("write"), |cmdline, fs, _env| {
-            let contents = cmdline.arguments[0].as_str();
-            let file = output_file(cmdline.arguments[1].as_str());
-            tracing::trace!("write {}", file.display());
-            insert_fs(
-                fs,
-                &file,
-                (
-                    Metadata {
-                        mtime: make_mtime(1),
-                        is_file: true,
-                        is_symlink: false,
-                    },
-                    contents.as_bytes().into(),
-                ),
-            )
-            .unwrap();
-            Ok(std::process::Output {
-                status: std::process::ExitStatus::default(),
-                stdout: vec![],
-                stderr: vec![],
-            })
-        })
-        .set_program(
-            "write-env",
-            program_path("write-env"),
-            |cmdline, fs, env| {
-                let varname = std::ffi::OsString::from(cmdline.arguments[0].as_str());
-                let file = output_file(cmdline.arguments[1].as_str());
-                tracing::trace!("write-env {}", file.display());
-
-                let contents = env
-                    .get(&varname)
-                    .cloned()
-                    .or_else(|| std::env::var_os(&varname))
-                    .unwrap_or_default();
-                let contents: String = contents.into_string().unwrap();
-                insert_fs(
-                    fs,
-                    &file,
-                    (
-                        Metadata {
-                            mtime: make_mtime(1),
-                            is_file: true,
-                            is_symlink: false,
-                        },
-                        contents.as_bytes().into(),
-                    ),
-                )
-                .unwrap();
-
-                Ok(std::process::Output {
-                    status: std::process::ExitStatus::default(),
-                    stdout: vec![],
-                    stderr: vec![],
-                })
-            },
-        );
-    }
-
     pub fn initialize_default_env(&mut self) {
         self.with_envs([("PROFILE", "debug")]);
     }
@@ -424,7 +591,7 @@ pub fn insert_fs(
                     } else {
                         Err(std::io::Error::new(
                             std::io::ErrorKind::NotFound,
-                            "parent directory not found",
+                            "parent directory not found (insert)",
                         ))
                     }
                 }
@@ -464,7 +631,7 @@ pub fn remove_fs(fs: &mut MockDir, path: &std::path::Path) -> std::io::Result<()
                 }
                 hash_map::Entry::Vacant(_) => Err(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    "parent directory not found",
+                    "parent directory not found (remove)",
                 )),
             }
         }
@@ -546,6 +713,11 @@ pub fn contains_file(fs: &MockDir, path: &Absolute<std::path::Path>) -> bool {
     read_fs(fs, path).is_ok()
 }
 
+pub fn contains_dir(fs: &MockDir, path: &Absolute<std::path::Path>) -> bool {
+    let entry = get_fs(fs, path);
+    matches!(entry, Some(MockDirEntry::Dir(_)))
+}
+
 impl MockIo {
     pub fn with_default_workspace_dir(&self) -> &Self {
         let mut fs = self.filesystem.lock();
@@ -610,46 +782,6 @@ impl MockIo {
         self
     }
 
-    #[must_use]
-    pub fn with_workspace_files<I, K>(self, iter: I) -> Self
-    where
-        I: IntoIterator<Item = (K, (Metadata, Vec<u8>))>,
-        K: Into<String>,
-    {
-        let mut filesystem = self.filesystem.lock();
-        for (path, (metadata, data)) in iter {
-            let path = path.into();
-            let path = workspace_file(&path);
-            tracing::trace!("inserting workspace file: {}", path.display());
-            create_parent_dirs(&mut filesystem, &path).unwrap();
-            insert_fs(&mut filesystem, &path, (metadata, data)).unwrap();
-        }
-        std::mem::drop(filesystem);
-        self
-    }
-
-    pub fn set_workspace_file(
-        &self,
-        path: &str,
-        contents: impl AsRef<[u8]>,
-    ) -> std::io::Result<()> {
-        let mut fs = self.filesystem.lock();
-        let path = workspace_file(path);
-        create_parent_dirs(&mut fs, &path).unwrap();
-        insert_fs(
-            &mut fs,
-            path.as_ref(),
-            (
-                Metadata {
-                    mtime: self.now(),
-                    is_file: true,
-                    is_symlink: false,
-                },
-                Vec::from(contents.as_ref()),
-            ),
-        )
-    }
-
     pub fn delete_file(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
         let mut fs = self.filesystem.lock();
         remove_fs(&mut fs, path.as_ref())
@@ -667,59 +799,12 @@ impl MockIo {
         self.now.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
-    pub fn did_run_during_build(&self, command_line: &ShellCommandLine) -> bool {
-        self.oplog
-            .lock()
-            .iter()
-            .any(|op| matches!(op, MockIoOp::RunDuringBuild(c) if c == command_line))
-    }
-
-    pub fn did_run_during_eval(&self, command_line: &ShellCommandLine) -> bool {
-        self.oplog
-            .lock()
-            .iter()
-            .any(|op| matches!(op, MockIoOp::RunDuringEval(c) if c == command_line))
-    }
-
-    pub fn did_which(&self, command: &str) -> bool {
-        self.oplog
-            .lock()
-            .iter()
-            .any(|op| matches!(op, MockIoOp::Which(c) if c == command))
-    }
-
-    pub fn did_read_file(&self, path: &str) -> bool {
-        let workspace_file = workspace_file(path);
-        let output_file = output_file(path);
-        self.oplog.lock().iter().any(
-            |op| matches!(op, MockIoOp::ReadFile(p) if *p == workspace_file || *p == output_file),
-        )
-    }
-
-    pub fn did_write_file(&self, path: &str) -> bool {
-        let path = output_file(path);
-        self.oplog
-            .lock()
-            .iter()
-            .any(|op| matches!(op, MockIoOp::WriteFile(p) if *p == path))
-    }
-
-    pub fn did_create_parent_dirs(&self, path: &std::path::Path) -> bool {
-        self.oplog
-            .lock()
-            .iter()
-            .any(|op| matches!(op, MockIoOp::CreateParentDirs(p) if p == path))
-    }
-
-    pub fn did_read_env(&self, name: &str) -> bool {
-        self.oplog
-            .lock()
-            .iter()
-            .any(|op| matches!(op, MockIoOp::ReadEnv(n) if n == name))
-    }
-
     pub fn contains_file(&self, path: impl AsRef<Absolute<std::path::Path>>) -> bool {
         contains_file(&self.filesystem.lock(), path.as_ref())
+    }
+
+    pub fn contains_dir(&self, path: impl AsRef<Absolute<std::path::Path>>) -> bool {
+        contains_dir(&self.filesystem.lock(), path.as_ref())
     }
 }
 
@@ -865,6 +950,16 @@ impl werk_runner::Io for MockIo {
                         }
                     }
                     MockDirEntry::Dir(subdir) => {
+                        if !ignore_explicitly.is_match(&*entry_path) {
+                            results.push(DirEntry {
+                                path: entry_path.clone(),
+                                metadata: Metadata {
+                                    mtime: SystemTime::UNIX_EPOCH,
+                                    is_file: false,
+                                    is_symlink: false,
+                                },
+                            });
+                        }
                         glob(&entry_path, subdir, results, ignore_explicitly)?;
                     }
                 }
@@ -976,57 +1071,12 @@ impl werk_runner::Io for MockIo {
 }
 
 #[must_use]
-pub fn test_workspace_dir() -> &'static Absolute<std::path::Path> {
+fn test_workspace_dir() -> &'static Absolute<std::path::Path> {
     if cfg!(windows) {
         Absolute::new_ref(std::path::Path::new("c:\\workspace")).unwrap()
     } else {
         Absolute::new_ref(std::path::Path::new("/workspace")).unwrap()
     }
-}
-
-#[must_use]
-pub fn output_dir() -> Absolute<std::path::PathBuf> {
-    test_workspace_dir().join("target").unwrap()
-}
-
-#[must_use]
-pub fn output_file(filename: &str) -> Absolute<std::path::PathBuf> {
-    output_dir().join(filename).unwrap()
-}
-
-#[must_use]
-pub fn workspace_file(filename: &str) -> Absolute<std::path::PathBuf> {
-    test_workspace_dir().join(filename).unwrap()
-}
-
-#[must_use]
-pub fn workspace_file_str(filename: &str) -> String {
-    test_workspace_dir()
-        .join(filename)
-        .unwrap()
-        .to_string_lossy()
-        .into_owned()
-}
-
-#[must_use]
-pub fn test_workspace_settings(defines: &[(&str, &str)]) -> WorkspaceSettings {
-    let mut settings = WorkspaceSettings::new(output_dir());
-
-    // Normally this would be covered by `.gitignore`, but we don't have that,
-    // so just use a manual ignore pattern.
-    let ignore_pattern = output_file("**");
-    settings.ignore_explicitly(
-        globset::GlobSet::builder()
-            .add(ignore_pattern.to_string_lossy().parse().unwrap())
-            .build()
-            .unwrap(),
-    );
-
-    for (key, value) in defines {
-        settings.define(*key, *value);
-    }
-
-    settings
 }
 
 #[must_use]

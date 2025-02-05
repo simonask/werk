@@ -3,7 +3,9 @@ use werk_fs::Absolute;
 use werk_parser::{ast, parser::Span};
 use werk_util::Symbol;
 
-use crate::{cache::Hash128, EvalError, GlobalVariables, Pattern, PatternMatchData};
+use crate::{
+    cache::Hash128, AmbiguousPatternError, EvalError, GlobalVariables, Pattern, PatternMatchData,
+};
 
 type Result<T, E = EvalError> = std::result::Result<T, E>;
 
@@ -30,7 +32,7 @@ impl<'a> Manifest<'a> {
     pub fn match_build_recipe<'b>(
         &'b self,
         path: &Absolute<werk_fs::Path>,
-    ) -> Result<Option<BuildRecipeMatch<'b>>, crate::Error> {
+    ) -> Result<Option<BuildRecipeMatch<'b>>, AmbiguousPatternError> {
         let matches = self.build_recipes.iter().filter_map(|recipe| {
             recipe
                 .pattern
@@ -69,12 +71,11 @@ impl<'a> Manifest<'a> {
                         _ => {
                             // Candidate and best have the same length, or both are
                             // exact.
-                            return Err(crate::AmbiguousPatternError {
+                            return Err(AmbiguousPatternError {
                                 pattern1: best_recipe.pattern.to_string(),
                                 pattern2: candidate_recipe.pattern.to_string(),
                                 path: path.to_string(),
-                            }
-                            .into());
+                            });
                         }
                     }
                 }

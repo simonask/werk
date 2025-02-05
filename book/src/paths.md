@@ -14,12 +14,13 @@ syntax](./language/strings.md#string-interpolation) `"<var>"`, the abstract path
 stored in `var` will be converted to a native absolute path within the
 workspace.
 
-Native path resolution may resolve to either an input file in the workspace or a
-generated file in the output directory. This check is based on existence: If the
-file is found in the workspace, it resolves to the file inside the workspace.
-Otherwise, it is assumed that a build recipe will generate the file in the
-output directory, and it resolves to an absolute path inside the output
-directory, mirroring the directory structure of the workspace.
+[Native path resolution](./language/path_resolution.md) may resolve to either an
+input file in the workspace or a generated file in the output directory. This
+check is based on existence: If the file is found in the workspace, it resolves
+to the file inside the workspace. Otherwise, it is assumed that a build recipe
+will generate the file in the output directory, and it resolves to an absolute
+path inside the output directory, mirroring the directory structure of the
+workspace.
 
 In general, build recipes should take care to not clobber the workspace and only
 generate files with paths that coincide with paths in the workspace.

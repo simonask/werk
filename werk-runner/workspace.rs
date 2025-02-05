@@ -379,17 +379,6 @@ impl<'a> Workspace<'a> {
         self.io.create_parent_dirs(&fs_path).map_err(Into::into)
     }
 
-    /// Resolve abstract path. If the path exists in the workspace, return the
-    /// input file path. Otherwise, return the file path in the output
-    /// directory, regardless of whether it exists.
-    pub fn resolve_path(&self, path: &Absolute<werk_fs::Path>) -> Absolute<std::path::PathBuf> {
-        if self.workspace_files.contains_key(path) {
-            path.resolve(&self.project_root)
-        } else {
-            path.resolve(&self.output_directory)
-        }
-    }
-
     pub fn unresolve_path(
         &self,
         path: &Absolute<std::path::Path>,
