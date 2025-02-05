@@ -1,14 +1,14 @@
 pub mod dry_run;
 mod render;
 
-use std::sync::Arc;
+use std::{borrow::Cow, path::Path, sync::Arc};
 
 use ahash::HashSet;
 use clap::Parser;
 use futures::future::Either;
 use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
-use render::AutoStream;
+use render::{AutoStream, ColorOutputKind};
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
 use werk_util::{Diagnostic, DiagnosticError, DiagnosticFileRepository, DiagnosticSource};
@@ -69,7 +69,7 @@ pub struct OutputArgs {
 }
 
 #[derive(Debug, clap::Parser)]
-#[command(version = version_string(),)]
+#[command(version = version_string(), bin_name = env!("CARGO_BIN_NAME"))]
 pub struct Args {
     /// The target to build.
     pub target: Option<String>,
@@ -143,7 +143,7 @@ pub enum OutputChoice {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum Error {
+pub enum Error {
     #[error("Parsing error")]
     Parse,
     #[error("Evaluation error")]
@@ -189,30 +189,14 @@ async fn try_main(args: Args) -> Result<(), Error> {
     let color_stdout = render::ColorOutputKind::initialize(&std::io::stdout(), args.output.color);
     let color_stderr = render::ColorOutputKind::initialize(&std::io::stderr(), args.output.color);
 
-    let werkfile = if let Some(file) = args.file {
-        file.normalize()?
-    } else {
-        find_werkfile()?
+    let werkfile = match &args.file {
+        Some(file) => file.clone().normalize()?,
+        _ => find_werkfile()?,
     };
     tracing::info!("Using werkfile: {}", werkfile.display());
 
     // Determine the workspace directory.
-    let workspace_dir_abs;
-    let workspace_dir = if let Some(ref workspace_dir) = args.workspace_dir {
-        workspace_dir_abs = workspace_dir.as_path().normalize()?;
-        if !workspace_dir_abs.is_dir() {
-            return Err(Error::WorkspaceDirectory(
-                workspace_dir.display().to_string(),
-                std::io::Error::new(std::io::ErrorKind::NotADirectory, "not a directory"),
-            ));
-        } else {
-            &workspace_dir_abs
-        }
-    } else {
-        werkfile
-            .parent()
-            .expect("normalized Werkfile path has no parent directory")
-    };
+    let workspace_dir = get_workspace_dir(&args, &werkfile)?;
 
     // Parse the werk manifest!
     let source_code = std::fs::read_to_string(&werkfile)?;
@@ -226,30 +210,10 @@ async fn try_main(args: Args) -> Result<(), Error> {
         print_eval_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
     })?;
 
-    let out_dir = find_output_directory(
-        workspace_dir,
-        args.output_dir.as_deref(),
-        config.output_directory.as_deref(),
-    )?;
+    let settings = get_workspace_settings(&config, &args, &workspace_dir, color_stdout)?;
 
     tracing::info!("Project directory: {}", workspace_dir.display());
-    tracing::info!("Output directory: {}", out_dir.display());
-
-    let mut settings = WorkspaceSettings::new(workspace_dir.to_owned());
-    settings.jobs = args.jobs.unwrap_or_else(num_cpus::get);
-    settings.output_directory = out_dir;
-    for def in &args.define {
-        let Some((key, value)) = def.split_once('=') else {
-            return Err(Error::InvalidDefineArg(def.clone()));
-        };
-        settings.define(key, value);
-    }
-    settings.force_color = color_stdout.supports_color();
-
-    settings.artificial_delay = std::env::var("_WERK_ARTIFICIAL_DELAY")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .map(std::time::Duration::from_millis);
+    tracing::info!("Output directory: {}", settings.output_directory.display());
 
     let io: Arc<dyn werk_runner::Io> = if args.dry_run || args.list {
         Arc::new(dry_run::DryRun::new())
@@ -277,7 +241,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
         &ast,
         &*io,
         &*renderer,
-        workspace_dir.to_owned(),
+        workspace_dir.into_owned(),
         &settings,
     )
     .map_err(print_error)?;
@@ -626,7 +590,7 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
     }
 }
 
-fn find_werkfile() -> Result<Absolute<std::path::PathBuf>, Error> {
+pub fn find_werkfile() -> Result<Absolute<std::path::PathBuf>, Error> {
     const WERKFILE_NAMES: &[&str] = &["Werkfile", "werkfile", "build.werk"];
 
     let mut current = Absolute::current_dir()?;
@@ -645,6 +609,58 @@ fn find_werkfile() -> Result<Absolute<std::path::PathBuf>, Error> {
             return Err(Error::NoWerkfile);
         }
     }
+}
+
+pub fn get_workspace_dir<'a>(
+    args: &'a Args,
+    werkfile: &'a Absolute<Path>,
+) -> Result<Cow<'a, Absolute<Path>>, Error> {
+    if let Some(ref workspace_dir) = args.workspace_dir {
+        let workspace_dir_abs = workspace_dir.as_path().normalize()?;
+        if !workspace_dir_abs.is_dir() {
+            return Err(Error::WorkspaceDirectory(
+                workspace_dir.display().to_string(),
+                std::io::Error::new(std::io::ErrorKind::NotADirectory, "not a directory"),
+            ));
+        }
+        Ok(workspace_dir_abs)
+    } else {
+        let workspace_dir = werkfile
+            .parent()
+            .expect("normalized Werkfile path has no parent directory");
+        Ok(Cow::Borrowed(workspace_dir))
+    }
+}
+
+pub fn get_workspace_settings(
+    config: &werk_runner::ir::Config,
+    args: &Args,
+    workspace_dir: &Absolute<std::path::Path>,
+    color_stdout: ColorOutputKind,
+) -> Result<WorkspaceSettings, Error> {
+    let out_dir = find_output_directory(
+        workspace_dir,
+        args.output_dir.as_deref(),
+        config.output_directory.as_deref(),
+    )?;
+
+    let mut settings = WorkspaceSettings::new(workspace_dir.to_owned());
+    settings.jobs = args.jobs.unwrap_or_else(num_cpus::get);
+    settings.output_directory = out_dir;
+    for def in &args.define {
+        let Some((key, value)) = def.split_once('=') else {
+            return Err(Error::InvalidDefineArg(def.clone()));
+        };
+        settings.define(key, value);
+    }
+    settings.force_color = color_stdout.supports_color();
+
+    settings.artificial_delay = std::env::var("_WERK_ARTIFICIAL_DELAY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .map(std::time::Duration::from_millis);
+
+    Ok(settings)
 }
 
 fn find_output_directory(
