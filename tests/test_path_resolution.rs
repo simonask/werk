@@ -104,7 +104,7 @@ build "explicit" {
     from "explicit"
     run {
         # Cannot get here.
-        copy "<in>" to "<out>"
+        copy "{in}" to "{out}"
     }
 }
     "#;
