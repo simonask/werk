@@ -1,0 +1,7 @@
+error[E0009]: capture group with index 2 is out of bounds in the current scope
+ --> INPUT:2:21
+  |
+2 |     "(a|b)(c|d)" => "{2}"
+  |                     ^^^^^ capture group with index 2 is out of bounds in the current scope
+  |
+  = help: pattern capture groups are zero-indexed, starting from 0

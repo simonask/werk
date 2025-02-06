@@ -108,3 +108,5 @@ success_case!(read);
 success_case!(env);
 
 error_case!(ambiguous_build_recipe);
+error_case!(ambiguous_path_resolution);
+error_case!(capture_group_out_of_bounds);

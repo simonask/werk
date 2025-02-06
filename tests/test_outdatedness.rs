@@ -476,7 +476,7 @@ async fn test_outdated_global_constant() -> anyhow::Result<()> {
     std::mem::drop(runner);
 
     test.reload(WERK_GLOBAL_CHANGED).map_err(anyhow_msg)?;
-    let workspace = test.create_workspace(&[])?;
+    let workspace = test.create_workspace(&[]).map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
     let status = runner
         .build_file(Path::new("output")?)

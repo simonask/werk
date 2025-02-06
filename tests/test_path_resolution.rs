@@ -147,11 +147,10 @@ task build {
     match runner.build_or_run("build").await {
         Ok(_) => panic!("expected error"),
         Err(DiagnosticError {
-            error:
-                werk_runner::Error::Eval(werk_runner::EvalError::AmbiguousPathResolution(_, path)),
+            error: werk_runner::Error::Eval(werk_runner::EvalError::AmbiguousPathResolution(_, err)),
             ..
         }) => {
-            assert_eq!(path, Absolute::try_from("/bar").unwrap());
+            assert_eq!(err.path, Absolute::try_from("/bar").unwrap());
         }
         Err(err) => panic!("unexpected error: {err}"),
     }

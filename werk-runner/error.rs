@@ -244,6 +244,15 @@ pub struct AmbiguousPatternError {
     pub path: String,
 }
 
+#[derive(Debug, thiserror::Error, PartialEq)]
+#[error(
+    "ambiguous path resolution: {path} exists in the workspace, but also matches a build recipe"
+)]
+pub struct AmbiguousPathError {
+    pub path: Absolute<werk_fs::PathBuf>,
+    pub build_recipe: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct ShellError {
     pub command: ShellCommandLine,
@@ -297,7 +306,7 @@ pub enum EvalError {
     DuplicatePattern(Span, Span),
     #[error("no implied interpolation value in this context; provide an identifier or a capture group index")]
     NoImpliedValue(Span),
-    #[error("no capture group with index {1}")]
+    #[error("capture group with index {1} is out of bounds in the current scope")]
     NoSuchCaptureGroup(Span, u32),
     #[error("no identifier with name {1}")]
     NoSuchIdentifier(Span, String),
@@ -346,8 +355,8 @@ pub enum EvalError {
     AssertMatchFailed(Span, Box<(String, String)>),
     #[error("assertion failed: {1}")]
     AssertCustomFailed(Span, String),
-    #[error("path matches both a file in the workspace and a build recipe; use `:out-dir` or `:workspace` to disambiguate: {1}")]
-    AmbiguousPathResolution(Span, Absolute<werk_fs::PathBuf>),
+    #[error("{1}")]
+    AmbiguousPathResolution(Span, Arc<AmbiguousPathError>),
 }
 
 impl werk_parser::parser::Spanned for EvalError {
@@ -451,11 +460,29 @@ impl werk_util::Diagnostic for EvalError {
     }
 
     fn context_snippets(&self) -> Vec<DiagnosticSnippet> {
-        vec![]
+        match self {
+            EvalError::AmbiguousPathResolution(_, err) => {
+                vec![DiagnosticSnippet {
+                    file_id: DiagnosticFileId::default(), // TODO: might come from another file
+                    span: err.build_recipe.into(),
+                    message: String::from("matched this build recipe"),
+                    info: vec![],
+                }]
+            }
+            _ => vec![],
+        }
     }
 
     fn help(&self) -> Vec<String> {
-        vec![]
+        match self {
+            EvalError::NoSuchCaptureGroup(..) => vec![String::from(
+                "pattern capture groups are zero-indexed, starting from 0",
+            )],
+            EvalError::AmbiguousPathResolution(..) => vec![String::from(
+                "use `<...:out-dir>` or `<...:workspace>` to disambiguate between paths in the workspace and the output directory",
+            )],
+            _ => vec![],
+        }
     }
 }
 

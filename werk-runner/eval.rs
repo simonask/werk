@@ -1355,10 +1355,20 @@ fn resolve_path_infer(
     if let Some(workspace_file) = workspace.get_project_file(path) {
         // Check if the path also matches a build recipe, and must be disambiguated.
         match workspace.manifest.match_build_recipe(path) {
-            Ok(Some(_recipe)) => Err(EvalError::AmbiguousPathResolution(span, path.to_path_buf())),
-            Err(AmbiguousPatternError { .. }) => {
-                Err(EvalError::AmbiguousPathResolution(span, path.to_path_buf()))
-            }
+            Ok(Some(recipe)) => Err(EvalError::AmbiguousPathResolution(
+                span,
+                Arc::new(crate::AmbiguousPathError {
+                    path: path.to_path_buf(),
+                    build_recipe: recipe.recipe.pattern.span,
+                }),
+            )),
+            Err(AmbiguousPatternError { pattern1, .. }) => Err(EvalError::AmbiguousPathResolution(
+                span,
+                Arc::new(crate::AmbiguousPathError {
+                    path: path.to_path_buf(),
+                    build_recipe: pattern1,
+                }),
+            )),
             Ok(None) => Ok(workspace_file.path.clone()),
         }
     } else {

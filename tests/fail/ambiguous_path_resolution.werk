@@ -1,0 +1,16 @@
+config default = "build"
+
+# Directories should not participate in the lookup that happens as part
+# of build recipe matching.
+build "bar" {
+    info "<out>"
+}
+build "foo" {
+    info "<out>"
+}
+
+task build {
+    build ["foo", "bar"]
+}
+
+#!dir bar

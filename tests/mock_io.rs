@@ -14,7 +14,7 @@ use werk_runner::{
     globset, BuildStatus, DirEntry, Env, Error, GlobSettings, Io, Metadata, Outdatedness,
     ShellCommandLine, TaskId, WhichError, WorkspaceSettings,
 };
-use werk_util::{Diagnostic as _, DiagnosticSource};
+use werk_util::{Diagnostic as _, DiagnosticError, DiagnosticSource};
 use winnow::stream::Offset as _;
 
 #[inline]
@@ -258,6 +258,10 @@ impl<'a> Test<'a> {
                         ),
                     )
                     .unwrap();
+                } else if let Some(captures) = regexes.dir.captures(line) {
+                    let dirname = captures.get(1).unwrap().as_str();
+                    let path = self.workspace_path(dirname.split('/'));
+                    create_dirs(&mut fs, &path).unwrap();
                 } else if let Some(captures) = regexes.assert_file.captures(line) {
                     let filename = captures.get(1).unwrap().as_str();
                     let content = captures.get(2).unwrap().as_str();
@@ -291,10 +295,13 @@ impl<'a> Test<'a> {
         Ok(())
     }
 
-    pub fn create_workspace(
-        &self,
+    pub fn create_workspace<'b>(
+        &'b self,
         defines: &[(&str, &str)],
-    ) -> Result<werk_runner::Workspace<'_>, werk_runner::Error> {
+    ) -> Result<
+        werk_runner::Workspace<'b>,
+        DiagnosticError<'b, werk_runner::Error, &'b werk_parser::Document<'b>>,
+    > {
         let mut settings = WorkspaceSettings::new(self.output_dir.clone());
 
         // Normally this would be covered by `.gitignore`, but we don't have that,
@@ -311,7 +318,7 @@ impl<'a> Test<'a> {
             settings.define(*key, *value);
         }
 
-        werk_runner::Workspace::new(
+        werk_runner::Workspace::new_with_diagnostics(
             &self.ast,
             &*self.io,
             &*self.render,
@@ -1197,6 +1204,7 @@ pub fn program_path(program: &str) -> Absolute<std::path::PathBuf> {
 
 struct PragmaRegexes {
     pub file: regex::Regex,
+    pub dir: regex::Regex,
     pub assert_file: regex::Regex,
     pub env: regex::Regex,
 }
@@ -1205,6 +1213,7 @@ impl Default for PragmaRegexes {
     fn default() -> Self {
         Self {
             file: regex::Regex::new(r"^#\!file (.*)=(.*)$").unwrap(),
+            dir: regex::Regex::new(r"^#\!dir (.*)$").unwrap(),
             assert_file: regex::Regex::new(r"^#\!assert-file (.*)=(.*)$").unwrap(),
             env: regex::Regex::new(r"^#\!env (.*)=(.*)$").unwrap(),
         }

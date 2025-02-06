@@ -1,0 +1,4 @@
+let a = "ac" | match {
+    "(a|b)(c|d)" => "{2}"
+    "%" => error "no match"
+}
