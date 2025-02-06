@@ -3,7 +3,7 @@ use std::{
     collections::{hash_map, HashMap},
     ffi::{OsStr, OsString},
     pin::Pin,
-    sync::{atomic::AtomicU64, Arc},
+    sync::{atomic::AtomicU64, Arc, OnceLock},
     time::SystemTime,
 };
 
@@ -170,6 +170,7 @@ impl<'a> TestBuilder<'a> {
             output_dir: self.output_dir.clone(),
             ast,
             source: self.werkfile,
+            pragma_check_files: vec![],
         })
     }
 }
@@ -181,6 +182,7 @@ pub struct Test<'a> {
     pub output_dir: Absolute<std::path::PathBuf>,
     pub ast: werk_parser::Document<'a>,
     pub source: &'a str,
+    pragma_check_files: Vec<(String, Vec<u8>)>,
 }
 
 impl<'a> Test<'a> {
@@ -188,7 +190,7 @@ impl<'a> Test<'a> {
         source: &'a str,
     ) -> Result<Self, werk_util::DiagnosticError<'a, werk_parser::Error, DiagnosticSource<'a>>>
     {
-        TestBuilder::default()
+        let mut test = TestBuilder::default()
             .werkfile(source)
             .build()
             .map_err(|err| {
@@ -196,7 +198,9 @@ impl<'a> Test<'a> {
                     std::path::Path::new("input"),
                     source,
                 ))
-            })
+            })?;
+        test.reload_test_pragmas();
+        Ok(test)
     }
 
     pub fn reload(
@@ -207,7 +211,64 @@ impl<'a> Test<'a> {
             err.into_diagnostic_error(DiagnosticSource::new(std::path::Path::new("input"), source))
         })?;
         self.source = source;
+        self.reload_test_pragmas();
         Ok(())
+    }
+
+    fn reload_test_pragmas(&mut self) {
+        self.pragma_check_files.clear();
+
+        // Interpret pragmas in the trailing comment of the werkfile.
+        let trailing_whitespace = self
+            .ast
+            .get_whitespace(self.ast.root.ws_trailing)
+            .trim()
+            .lines();
+        let regexes = regexes();
+        {
+            let mut fs = self.io.filesystem.lock();
+            for line in trailing_whitespace {
+                if let Some(captures) = regexes.file.captures(line) {
+                    let filename = captures.get(1).unwrap().as_str();
+                    let content = captures.get(2).unwrap().as_str();
+                    let path = self.workspace_path(filename.split('/'));
+                    insert_fs(
+                        &mut fs,
+                        &path,
+                        (
+                            Metadata {
+                                mtime: default_mtime(),
+                                is_file: true,
+                                is_symlink: false,
+                            },
+                            content.as_bytes().to_owned(),
+                        ),
+                    )
+                    .unwrap();
+                } else if let Some(captures) = regexes.assert_file.captures(line) {
+                    let filename = captures.get(1).unwrap().as_str();
+                    let content = captures.get(2).unwrap().as_str();
+                    self.pragma_check_files
+                        .push((filename.to_owned(), content.as_bytes().to_owned()));
+                } else if let Some(captures) = regexes.env.captures(line) {
+                    let key = captures.get(1).unwrap().as_str();
+                    let value = captures.get(2).unwrap().as_str();
+                    self.io.set_env(key, value);
+                }
+            }
+        }
+    }
+
+    pub fn run_pragma_tests(&self) {
+        let fs = self.io.filesystem.lock();
+        for (filename, contents) in &self.pragma_check_files {
+            let out_file = self.output_path(filename.split('/'));
+            let (_entry, data) = read_fs(&fs, &out_file).unwrap();
+            assert_eq!(
+                data, *contents,
+                "assert-file failed: contents of output file `{filename}` do not match"
+            );
+        }
     }
 
     pub fn create_workspace(
@@ -1112,4 +1173,25 @@ pub fn program_path(program: &str) -> Absolute<std::path::PathBuf> {
             .join(program)
             .unwrap()
     }
+}
+
+struct PragmaRegexes {
+    pub file: regex::Regex,
+    pub assert_file: regex::Regex,
+    pub env: regex::Regex,
+}
+
+impl Default for PragmaRegexes {
+    fn default() -> Self {
+        Self {
+            file: regex::Regex::new(r"^#\!file (.*)=(.*)$").unwrap(),
+            assert_file: regex::Regex::new(r"^#\!assert-file (.*)=(.*)$").unwrap(),
+            env: regex::Regex::new(r"^#\!env (.*)=(.*)$").unwrap(),
+        }
+    }
+}
+
+fn regexes() -> &'static PragmaRegexes {
+    static REGEXES: OnceLock<PragmaRegexes> = OnceLock::new();
+    REGEXES.get_or_init(PragmaRegexes::default)
 }

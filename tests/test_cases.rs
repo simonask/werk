@@ -1,70 +1,11 @@
-use std::sync::OnceLock;
-
 use tests::mock_io::*;
 use werk_parser::ast;
-use werk_runner::{Metadata, Runner};
-
-struct PragmaRegexes {
-    pub file: regex::Regex,
-    pub assert_file: regex::Regex,
-    pub env: regex::Regex,
-}
-
-impl Default for PragmaRegexes {
-    fn default() -> Self {
-        Self {
-            file: regex::Regex::new(r"^#\!file (.*)=(.*)$").unwrap(),
-            assert_file: regex::Regex::new(r"^#\!assert-file (.*)=(.*)$").unwrap(),
-            env: regex::Regex::new(r"^#\!env (.*)=(.*)$").unwrap(),
-        }
-    }
-}
-
-fn regexes() -> &'static PragmaRegexes {
-    static REGEXES: OnceLock<PragmaRegexes> = OnceLock::new();
-    REGEXES.get_or_init(PragmaRegexes::default)
-}
+use werk_runner::Runner;
 
 async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
     let source = std::fs::read_to_string(file).unwrap();
     let test = Test::new(&source).map_err(|err| anyhow::Error::msg(err.to_string()))?;
     let ast = &test.ast;
-
-    // Interpret pragmas in the trailing comment of the werkfile.
-    let trailing_whitespace = ast.get_whitespace(ast.root.ws_trailing).trim().lines();
-    let regexes = regexes();
-    let mut check_files = Vec::new();
-    {
-        let mut fs = test.io.filesystem.lock();
-        for line in trailing_whitespace {
-            if let Some(captures) = regexes.file.captures(line) {
-                let filename = captures.get(1).unwrap().as_str();
-                let content = captures.get(2).unwrap().as_str();
-                let path = test.workspace_path(filename.split('/'));
-                insert_fs(
-                    &mut fs,
-                    &path,
-                    (
-                        Metadata {
-                            mtime: default_mtime(),
-                            is_file: true,
-                            is_symlink: false,
-                        },
-                        content.as_bytes().to_owned(),
-                    ),
-                )
-                .unwrap();
-            } else if let Some(captures) = regexes.assert_file.captures(line) {
-                let filename = captures.get(1).unwrap().as_str();
-                let content = captures.get(2).unwrap().as_str();
-                check_files.push((filename, content.as_bytes()));
-            } else if let Some(captures) = regexes.env.captures(line) {
-                let key = captures.get(1).unwrap().as_str();
-                let value = captures.get(2).unwrap().as_str();
-                test.io.set_env(key, value);
-            }
-        }
-    }
 
     let workspace = match test.create_workspace(&[]) {
         Ok(workspace) => workspace,
@@ -82,16 +23,7 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
     {
         let runner = Runner::new(&workspace);
         runner.build_or_run(default_target).await?;
-
-        let fs = test.io.filesystem.lock();
-        for (filename, contents) in &check_files {
-            let out_file = test.output_path(filename.split('/'));
-            let (_entry, data) = read_fs(&fs, &out_file)?;
-            assert_eq!(
-                data, *contents,
-                "assert-file failed: contents of output file `{filename}` do not match"
-            );
-        }
+        test.run_pragma_tests();
     }
 
     Ok(())
