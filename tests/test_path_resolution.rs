@@ -2,7 +2,7 @@ use macro_rules_attribute::apply;
 use tests::mock_io::*;
 use werk_fs::Absolute;
 use werk_runner::{Runner, TaskId, Value};
-use werk_util::Symbol;
+use werk_util::{DiagnosticError, Symbol};
 
 #[test]
 fn test_path_resolution() {
@@ -24,7 +24,7 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
     let test = match Test::new(WERK) {
         Ok(test) => test,
         Err(err) => {
-            eprintln!("{}", err.with_location(std::path::Path::new("input"), WERK));
+            eprintln!("{err}");
             panic!("parse error")
         }
     };
@@ -32,14 +32,7 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
     let workspace = match test.create_workspace(&[]) {
         Ok(workspace) => workspace,
         Err(err) => {
-            eprintln!(
-                "{}",
-                werk_parser::LocatedError {
-                    file_name: std::path::Path::new("input"),
-                    source_code: WERK,
-                    error: err
-                }
-            );
+            eprintln!("{err}");
             panic!("could not create workspace")
         }
     };
@@ -113,7 +106,10 @@ build "explicit" {
     let runner = Runner::new(&workspace);
     match runner.build_or_run("explicit").await {
         Ok(_) => panic!("expected circular dependency error"),
-        Err(werk_runner::Error::CircularDependency(chain)) => {
+        Err(DiagnosticError {
+            error: werk_runner::Error::CircularDependency(chain),
+            ..
+        }) => {
             let id = TaskId::try_build("/explicit").unwrap();
             let chain = chain.into_inner();
             assert_eq!(chain, [id, id]);
@@ -150,8 +146,11 @@ task build {
     let runner = Runner::new(&workspace);
     match runner.build_or_run("build").await {
         Ok(_) => panic!("expected error"),
-        Err(werk_runner::Error::Eval(werk_runner::EvalError::AmbiguousPathResolution(_, path))) => {
-            assert_eq!(path, Absolute::try_from("/bar").unwrap());
+        Err(DiagnosticError {
+            error: werk_runner::Error::Eval(werk_runner::EvalError::AmbiguousPathResolution(_, err)),
+            ..
+        }) => {
+            assert_eq!(err.path, Absolute::try_from("/bar").unwrap());
         }
         Err(err) => panic!("unexpected error: {err}"),
     }

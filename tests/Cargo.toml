@@ -22,6 +22,9 @@ toml_edit.workspace = true
 futures.workspace = true
 regex.workspace = true
 werk-util.workspace = true
+anstream.workspace = true
+# Hijacking winnow for the Offset trait
+winnow.workspace = true
 
 [dev-dependencies]
 criterion = "0.3"

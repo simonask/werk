@@ -65,15 +65,22 @@ build "output" {
 }
 "#;
 
+fn anyhow_msg<E: ToString>(err: E) -> anyhow::Error {
+    anyhow::Error::msg(err.to_string())
+}
+
 #[apply(smol_macros::test)]
 async fn test_outdated_env() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
 
     let test = Test::new(WERK)?;
-    let workspace = test.create_workspace(&[])?;
+    let workspace = test.create_workspace(&[]).map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
 
-    let status = runner.build_file(Path::new("env-dep")?).await?;
+    let status = runner
+        .build_file(Path::new("env-dep")?)
+        .await
+        .map_err(anyhow_msg)?;
 
     assert_eq!(
         status,
@@ -112,10 +119,13 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     test.io.clear_oplog();
 
     // Initialize a new workspace.
-    let workspace = test.create_workspace(&[])?;
+    let workspace = test.create_workspace(&[]).map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
 
-    let status = runner.build_file(Path::new("env-dep")?).await?;
+    let status = runner
+        .build_file(Path::new("env-dep")?)
+        .await
+        .map_err(anyhow_msg)?;
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert_eq!(
         status,
@@ -133,10 +143,13 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
 
     let test = Test::new(WERK)?;
-    let workspace = test.create_workspace(&[])?;
+    let workspace = test.create_workspace(&[]).map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
 
-    let status = runner.build_file(Path::new("which-dep")?).await?;
+    let status = runner
+        .build_file(Path::new("which-dep")?)
+        .await
+        .map_err(anyhow_msg)?;
 
     assert_eq!(
         status,
@@ -174,10 +187,13 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     test.io.clear_oplog();
 
     // Initialize a new workspace.
-    let workspace = test.create_workspace(&[])?;
+    let workspace = test.create_workspace(&[]).map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
 
-    let status = runner.build_file(Path::new("which-dep")?).await?;
+    let status = runner
+        .build_file(Path::new("which-dep")?)
+        .await
+        .map_err(anyhow_msg)?;
 
     assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("path/to/clang"),
@@ -204,10 +220,13 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
 
     let mut test = Test::new(WERK)?;
-    let workspace = test.create_workspace(&[])?;
+    let workspace = test.create_workspace(&[]).map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
 
-    let status = runner.build_file(Path::new("which-dep")?).await?;
+    let status = runner
+        .build_file(Path::new("which-dep")?)
+        .await
+        .map_err(anyhow_msg)?;
 
     assert_eq!(
         status,
@@ -238,11 +257,14 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     std::mem::drop(runner);
 
     // Initialize a new workspace.
-    test.reload(WERK_RECIPE_CHANGED)?;
-    let workspace = test.create_workspace(&[])?;
+    test.reload(WERK_RECIPE_CHANGED).map_err(anyhow_msg)?;
+    let workspace = test.create_workspace(&[]).map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
 
-    let status = runner.build_file(Path::new("which-dep")?).await?;
+    let status = runner
+        .build_file(Path::new("which-dep")?)
+        .await
+        .map_err(anyhow_msg)?;
 
     assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
@@ -275,10 +297,13 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     test.set_workspace_file(&["a.c"], "void foo() {}").unwrap();
     test.set_workspace_file(&["b.c"], "int main() { return 0; }\n")
         .unwrap();
-    let workspace = test.create_workspace(&[])?;
+    let workspace = test.create_workspace(&[]).map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
 
-    let status = runner.build_file(Path::new("glob-dep")?).await?;
+    let status = runner
+        .build_file(Path::new("glob-dep")?)
+        .await
+        .map_err(anyhow_msg)?;
 
     assert_eq!(
         status,
@@ -309,10 +334,13 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     test.io.clear_oplog();
 
     // Initialize a new workspace.
-    let workspace = test.create_workspace(&[])?;
+    let workspace = test.create_workspace(&[]).map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
 
-    let status = runner.build_file(Path::new("glob-dep")?).await?;
+    let status = runner
+        .build_file(Path::new("glob-dep")?)
+        .await
+        .map_err(anyhow_msg)?;
 
     assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
@@ -339,10 +367,13 @@ async fn test_outdated_define() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
 
     let test = Test::new(WERK)?;
-    let workspace = test.create_workspace(&[])?;
+    let workspace = test.create_workspace(&[]).map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
 
-    let status = runner.build_file(Path::new("env-dep")?).await?;
+    let status = runner
+        .build_file(Path::new("env-dep")?)
+        .await
+        .map_err(anyhow_msg)?;
 
     assert_eq!(
         status,
@@ -378,9 +409,14 @@ async fn test_outdated_define() -> anyhow::Result<()> {
     test.io.clear_oplog();
 
     // Initialize a new workspace with an overridden `profile` variable.
-    let workspace = test.create_workspace(&[("profile", "release")])?;
+    let workspace = test
+        .create_workspace(&[("profile", "release")])
+        .map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
-    let status = runner.build_file(Path::new("env-dep")?).await?;
+    let status = runner
+        .build_file(Path::new("env-dep")?)
+        .await
+        .map_err(anyhow_msg)?;
     assert_eq!(
         status,
         BuildStatus::Complete(
@@ -396,9 +432,14 @@ async fn test_outdated_define() -> anyhow::Result<()> {
 
     // Initialize a new workspace with the same overridden `profile` variable,
     // which should then not trigger a rebuild.
-    let workspace = test.create_workspace(&[("profile", "release")])?;
+    let workspace = test
+        .create_workspace(&[("profile", "release")])
+        .map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
-    let status = runner.build_file(Path::new("env-dep")?).await?;
+    let status = runner
+        .build_file(Path::new("env-dep")?)
+        .await
+        .map_err(anyhow_msg)?;
     assert_eq!(
         status,
         BuildStatus::Complete(
@@ -415,9 +456,12 @@ async fn test_outdated_global_constant() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
 
     let mut test = Test::new(WERK_GLOBAL)?;
-    let workspace = test.create_workspace(&[])?;
+    let workspace = test.create_workspace(&[]).map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
-    let status = runner.build_file(Path::new("output")?).await?;
+    let status = runner
+        .build_file(Path::new("output")?)
+        .await
+        .map_err(anyhow_msg)?;
 
     assert_eq!(
         status,
@@ -431,10 +475,13 @@ async fn test_outdated_global_constant() -> anyhow::Result<()> {
     workspace.finalize().await?;
     std::mem::drop(runner);
 
-    test.reload(WERK_GLOBAL_CHANGED)?;
-    let workspace = test.create_workspace(&[])?;
+    test.reload(WERK_GLOBAL_CHANGED).map_err(anyhow_msg)?;
+    let workspace = test.create_workspace(&[]).map_err(anyhow_msg)?;
     let runner = werk_runner::Runner::new(&workspace);
-    let status = runner.build_file(Path::new("output")?).await?;
+    let status = runner
+        .build_file(Path::new("output")?)
+        .await
+        .map_err(anyhow_msg)?;
 
     assert_eq!(
         status,

@@ -13,7 +13,7 @@ path = "main.rs"
 [dependencies]
 ahash.workspace = true
 annotate-snippets = "0.11.5"
-anstream = "0.6.18"
+anstream.workspace = true
 anstyle-query = "1.1.2"
 anyhow = "1.0.93"
 clap = { version = "4.5.20", features = ["derive", "string"] }
@@ -32,6 +32,7 @@ tracing.workspace = true
 werk-fs.workspace = true
 werk-parser.workspace = true
 werk-runner.workspace = true
+werk-util.workspace = true
 anstyle = "1.0.10"
 serde.workspace = true
 serde_json = "1.0.137"

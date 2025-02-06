@@ -2,6 +2,7 @@ use crate::ast;
 
 pub struct Document<'a> {
     pub root: ast::Root<'a>,
+    pub origin: &'a std::path::Path,
     pub source: &'a str,
     /// "Whitespace" smuggled from TOML decorations.
     pub smuggled_whitespace: Option<String>,
@@ -10,11 +11,13 @@ pub struct Document<'a> {
 impl<'a> Document<'a> {
     pub(crate) fn new(
         root: ast::Root<'a>,
+        origin: &'a std::path::Path,
         source: &'a str,
         smuggled_whitespace: Option<String>,
     ) -> Self {
         Self {
             root,
+            origin,
             source,
             smuggled_whitespace,
         }
@@ -103,5 +106,19 @@ impl<'a> Document<'a> {
     #[must_use]
     pub fn find_task_recipe(&self, name: &str) -> Option<&ast::CommandRecipe<'_>> {
         self.task_recipes().find(|stmt| stmt.name == name)
+    }
+}
+
+impl<'a> werk_util::DiagnosticFileRepository for &'a Document<'a> {
+    #[inline]
+    fn get_source(
+        &self,
+        id: werk_util::DiagnosticFileId,
+    ) -> Option<werk_util::DiagnosticSource<'_>> {
+        if id.0 == 0 {
+            Some(werk_util::DiagnosticSource::new(self.origin, self.source))
+        } else {
+            None
+        }
     }
 }

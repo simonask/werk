@@ -4,94 +4,10 @@ use winnow::{error::AddContext, stream::Location};
 
 use crate::parser::{Input, Offset, Parser, Span};
 
-/// Owned version of `annotate_snippets::Message`.
-pub trait DisplayError: std::fmt::Display {
-    fn annotations(&self) -> Vec<DisplayAnnotation>;
-}
-
-/// Owned version of `annotate_snippets::Annotation`.
-///
-/// Note that parser errors pertain to a specific location in the input, so the
-/// parser will only ever need one snippet per error.
-pub struct DisplayAnnotation {
-    pub level: annotate_snippets::Level,
-    pub message: String,
-    pub span: Span,
-}
-
 impl Error {
-    #[must_use]
-    pub fn with_location<'a>(
-        self,
-        file_name: &'a std::path::Path,
-        source_code: &'a str,
-    ) -> LocatedError<'a, Self> {
-        LocatedError {
-            file_name,
-            source_code,
-            error: self,
-        }
-    }
-
     #[must_use]
     pub fn span(&self) -> Span {
         Span::from_offset_and_len(self.offset, 0)
-    }
-}
-
-#[derive(Debug)]
-pub struct LocatedError<'a, E> {
-    pub file_name: &'a std::path::Path,
-    pub source_code: &'a str,
-    pub error: E,
-}
-
-impl<E: DisplayError> std::fmt::Display for LocatedError<'_, E> {
-    #[allow(clippy::too_many_lines)]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use annotate_snippets::Level;
-
-        // Collect all annotations into an owned structure, because
-        // `annotate-snippets` requires references, but we want to operate in
-        // terms of `Display`.
-        let annotations = self.error.annotations();
-
-        let title = self.error.to_string();
-        let origin = self.file_name.to_string_lossy();
-        let mut message = Level::Error.title(&title);
-        if !annotations.is_empty() {
-            message = message.snippet(
-                annotate_snippets::Snippet::source(self.source_code)
-                    .origin(&origin)
-                    .fold(true)
-                    .annotations(
-                        annotations
-                            .iter()
-                            .map(|a| a.level.span(a.span.into()).label(&a.message)),
-                    ),
-            );
-        }
-
-        let renderer = annotate_snippets::Renderer::styled();
-        let render = renderer.render(message);
-        render.fmt(f)
-    }
-}
-
-impl<E: DisplayError + std::fmt::Debug> std::error::Error for LocatedError<'_, E> {}
-
-impl LocatedError<'_, Error> {
-    #[must_use]
-    pub fn render(&self) -> String {
-        self.to_string()
-    }
-}
-
-impl<E> std::ops::Deref for LocatedError<'_, E> {
-    type Target = E;
-
-    fn deref(&self) -> &Self::Target {
-        &self.error
     }
 }
 
@@ -133,31 +49,86 @@ impl Error {
     }
 }
 
-impl DisplayError for Error {
-    fn annotations(&self) -> Vec<DisplayAnnotation> {
-        let mut annotations = self.context().iter().map(Into::into).collect::<Vec<_>>();
-        annotations.push(DisplayAnnotation {
-            level: annotate_snippets::Level::Error,
-            message: self.to_string(),
-            span: self.offset.into(),
-        });
-        annotations
+impl werk_util::Diagnostic for Error {
+    #[inline]
+    fn id_prefix(&self) -> &'static str {
+        "P"
     }
-}
 
-impl From<&(Offset, ErrContext)> for DisplayAnnotation {
-    fn from((offset, context): &(Offset, ErrContext)) -> Self {
-        use annotate_snippets::Level;
-        let level = match *context {
-            ErrContext::Error(_) => Level::Error,
-            ErrContext::WhileParsing(_) => Level::Info,
-            ErrContext::Hint(_) => Level::Help,
-            ErrContext::Note(_) => Level::Note,
-        };
-        DisplayAnnotation {
-            level,
-            message: context.to_string(),
-            span: Span::from_offset_and_len(*offset, 0),
+    #[inline]
+    fn level(&self) -> annotate_snippets::Level {
+        annotate_snippets::Level::Error
+    }
+
+    #[inline]
+    fn id(&self) -> u32 {
+        match self.fail {
+            Failure::Unknown => 9999,
+            Failure::Expected(_) => 1001,
+            Failure::ExpectedKeyword(_) => 1002,
+            Failure::InvalidEscapeChar(_) => 1003,
+            Failure::InvalidInterpolationOp => 1004,
+            Failure::ExpectedChar(_) => 1005,
+            Failure::ValidRegex(_) => 100,
+            Failure::ParseInt(_) => 101,
+        }
+    }
+
+    #[inline]
+    fn title(&self) -> String {
+        String::from("parse error")
+    }
+
+    #[inline]
+    fn snippet(&self) -> Option<werk_util::DiagnosticSnippet> {
+        Some(werk_util::DiagnosticSnippet {
+            file_id: werk_util::DiagnosticFileId::default(), // TODO
+            span: self.span().into(),
+            message: self.to_string(),
+            info: if let Some(ref context) = self.context {
+                context
+                    .iter()
+                    .filter_map(|(offset, c)| match c {
+                        ErrContext::WhileParsing(thing) => {
+                            Some(werk_util::DiagnosticAnnotationInfo {
+                                span: offset.0 as usize..offset.0 as usize,
+                                message: format!("while parsing {thing}"),
+                            })
+                        }
+                        ErrContext::Note(note) => Some(werk_util::DiagnosticAnnotationInfo {
+                            span: offset.0 as usize..offset.0 as usize,
+                            message: (*note).to_string(),
+                        }),
+                        _ => None,
+                    })
+                    .collect()
+            } else {
+                vec![]
+            },
+        })
+    }
+
+    #[inline]
+    fn context_snippets(&self) -> Vec<werk_util::DiagnosticSnippet> {
+        // Parse errors are always local.
+        vec![]
+    }
+
+    #[inline]
+    fn help(&self) -> Vec<String> {
+        if let Some(ref context) = self.context {
+            context
+                .iter()
+                .filter_map(|c| {
+                    if let ErrContext::Hint(h) = c.1 {
+                        Some(h.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            vec![]
         }
     }
 }

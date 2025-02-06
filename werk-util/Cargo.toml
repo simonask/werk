@@ -13,6 +13,7 @@ ahash.workspace = true
 hashbrown = "0.15.2"
 parking_lot.workspace = true
 serde.workspace = true
+annotate-snippets.workspace = true
 
 [lints]
 workspace = true

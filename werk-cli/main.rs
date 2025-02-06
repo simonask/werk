@@ -10,8 +10,8 @@ use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
 use render::AutoStream;
 use werk_fs::{Absolute, Normalize as _, PathError};
-use werk_parser::parser::Spanned as _;
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
+use werk_util::{Diagnostic, DiagnosticError, DiagnosticFileRepository, DiagnosticSource};
 
 shadow_rs::shadow!(build);
 
@@ -209,16 +209,15 @@ async fn try_main(args: Args) -> Result<(), Error> {
 
     // Parse the werk manifest!
     let source_code = std::fs::read_to_string(&werkfile)?;
-    let display_error = |err: werk_runner::Error| print_error(werkfile.as_ref(), &source_code, err);
-    let display_parse_error =
-        |err: werk_parser::Error| print_parse_error(werkfile.as_ref(), &source_code, err);
-    let display_root_eval_error =
-        |err: werk_runner::EvalError| print_eval_error(werkfile.as_ref(), &source_code, err);
 
-    let ast = werk_parser::parse_werk(&source_code).map_err(display_parse_error)?;
+    let ast = werk_parser::parse_werk(&werkfile, &source_code).map_err(|err| {
+        print_parse_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
+    })?;
 
     // Read the configuration statements from the AST.
-    let config = werk_runner::ir::Config::new(&ast).map_err(display_root_eval_error)?;
+    let config = werk_runner::ir::Config::new(&ast).map_err(|err| {
+        print_eval_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
+    })?;
 
     let out_dir = find_output_directory(
         workspace_dir,
@@ -267,8 +266,14 @@ async fn try_main(args: Args) -> Result<(), Error> {
         explain: args.explain | args.verbose,
     });
 
-    let workspace = Workspace::new(&ast, &*io, &*renderer, workspace_dir.to_owned(), &settings)
-        .map_err(display_error)?;
+    let workspace = Workspace::new_with_diagnostics(
+        &ast,
+        &*io,
+        &*renderer,
+        workspace_dir.to_owned(),
+        &settings,
+    )
+    .map_err(print_error)?;
 
     if args.list {
         let mut output = AutoStream::new(std::io::stdout(), color_stdout);
@@ -289,7 +294,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
 
     let write_cache = match result {
         Ok(_) => true,
-        Err(ref err) => err.should_still_write_werk_cache(),
+        Err(ref err) => err.error.should_still_write_werk_cache(),
     };
 
     if write_cache {
@@ -304,7 +309,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
         autowatch_loop(
             std::time::Duration::from_millis(args.watch_delay),
             workspace,
-            werkfile,
+            werkfile.clone(),
             args.target,
             args.output_dir.as_deref(),
             &settings,
@@ -312,7 +317,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
         .await?;
         Ok(())
     } else {
-        result.map(|_| ()).map_err(display_error)
+        result.map(|_| ()).map_err(print_error)
     }
 }
 
@@ -392,22 +397,22 @@ async fn autowatch_loop(
             }
         };
 
-        let ast = werk_parser::parse_werk(&source_code);
+        let ast = werk_parser::parse_werk_with_diagnostics(&werkfile, &source_code);
 
         let ast = match ast {
             Ok(ast) => ast,
             Err(err) => {
-                print_parse_error(werkfile.as_ref(), &source_code, err);
+                print_parse_error(err);
                 watch_set = watch_manifest.clone();
                 continue;
             }
         };
 
         // Reload config.
-        let config = match werk_runner::ir::Config::new(&ast) {
+        let config = match werk_runner::ir::Config::new_with_diagnostics(&ast) {
             Ok(config) => config,
             Err(err) => {
-                print_eval_error(werkfile.as_ref(), &source_code, err);
+                print_eval_error(err);
                 watch_set = watch_manifest.clone();
                 continue;
             }
@@ -447,10 +452,16 @@ async fn autowatch_loop(
             continue;
         };
 
-        let workspace = match Workspace::new(&ast, io, render, workspace_dir.clone(), &settings) {
+        let workspace = match Workspace::new_with_diagnostics(
+            &ast,
+            io,
+            render,
+            workspace_dir.clone(),
+            &settings,
+        ) {
             Ok(workspace) => workspace,
             Err(err) => {
-                print_error(werkfile.as_ref(), &source_code, err);
+                print_error(err);
                 // Workspace evaluation may depend on other files, so just keep
                 // the current watchset.
                 continue;
@@ -473,8 +484,8 @@ async fn autowatch_loop(
         let write_cache = match runner.build_or_run(&target).await {
             Ok(_) => true,
             Err(err) => {
-                let write_cache = err.should_still_write_werk_cache();
-                print_error(werkfile.as_ref(), &source_code, err);
+                let write_cache = err.error.should_still_write_werk_cache();
+                print_error(err);
                 write_cache
             }
         };
@@ -647,44 +658,31 @@ fn find_output_directory(
     }
 }
 
-fn print_error(path: &std::path::Path, werkfile: &str, err: werk_runner::Error) -> Error {
-    match err {
-        werk_runner::Error::Eval(eval_error) => {
-            print_eval_error(path, werkfile, eval_error);
-            Error::Eval
-        }
-        otherwise => {
-            anstream::eprintln!("{otherwise}");
-            Error::Runner
-        }
-    }
+fn print_error<E: Diagnostic, R: DiagnosticFileRepository>(err: DiagnosticError<E, R>) -> Error {
+    print_diagnostic(err);
+    Error::Runner
 }
 
-fn print_eval_error(path: &std::path::Path, werkfile: &str, err: werk_runner::EvalError) -> Error {
-    use annotate_snippets::{renderer::DEFAULT_TERM_WIDTH, Level, Snippet};
+fn print_eval_error<E: Diagnostic, R: DiagnosticFileRepository>(
+    err: DiagnosticError<E, R>,
+) -> Error {
+    print_diagnostic(err);
+    Error::Eval
+}
 
-    let file_name = path.display().to_string();
-    let span = err.span();
+fn print_parse_error<E: Diagnostic, R: DiagnosticFileRepository>(
+    err: DiagnosticError<E, R>,
+) -> Error {
+    print_diagnostic(err);
+    Error::Parse
+}
 
-    let err_string = err.to_string();
-    let err = Level::Error.title("evaluation error").snippet(
-        Snippet::source(werkfile)
-            .origin(&file_name)
-            .fold(true)
-            .annotation(Level::Error.span(span.into()).label(&err_string)),
-    );
+fn print_diagnostic<E: Diagnostic, R: DiagnosticFileRepository>(err: DiagnosticError<E, R>) {
+    use annotate_snippets::renderer::DEFAULT_TERM_WIDTH;
     let renderer = annotate_snippets::Renderer::styled().term_width(
         render::stderr_width()
             .diagnostic_terminal_width()
             .unwrap_or(DEFAULT_TERM_WIDTH),
     );
-    let render = renderer.render(err);
-    anstream::eprintln!("{}", render);
-    Error::Eval
-}
-
-fn print_parse_error(path: &std::path::Path, werkfile: &str, err: werk_parser::Error) -> Error {
-    let err = err.with_location(path, werkfile);
-    anstream::eprintln!("{}", err);
-    Error::Parse
+    anstream::eprintln!("{}", err.with_renderer(&renderer));
 }

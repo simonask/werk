@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::{borrow::Cow, collections::hash_map};
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_parser::ast;
-use werk_util::Symbol;
+use werk_util::{Diagnostic, DiagnosticError, Symbol};
 
 use crate::{
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
@@ -114,6 +114,9 @@ pub struct Workspace<'a> {
     pub render: &'a dyn Render,
     pub(crate) runner_state: crate::runner::RunnerState,
     pub(crate) artificial_delay: Option<std::time::Duration>,
+
+    pub werkfile_path: std::path::PathBuf,
+    pub werkfile_source: &'a str,
 }
 
 #[derive(Default)]
@@ -127,6 +130,17 @@ struct Caches {
 pub const WERK_CACHE_FILENAME: &str = ".werk-cache";
 
 impl<'a> Workspace<'a> {
+    pub fn new_with_diagnostics(
+        ast: &'a werk_parser::Document<'a>,
+        io: &'a dyn Io,
+        render: &'a dyn Render,
+        project_root: Absolute<std::path::PathBuf>,
+        settings: &WorkspaceSettings,
+    ) -> Result<Self, DiagnosticError<'a, Error, &'a werk_parser::Document<'a>>> {
+        Self::new(ast, io, render, project_root, settings)
+            .map_err(|err| err.into_diagnostic_error(ast))
+    }
+
     pub fn new(
         ast: &'a werk_parser::Document<'a>,
         io: &'a dyn Io,
@@ -187,6 +201,8 @@ impl<'a> Workspace<'a> {
             render,
             runner_state: crate::RunnerState::new(settings.jobs),
             artificial_delay: settings.artificial_delay,
+            werkfile_path: ast.origin.to_path_buf(),
+            werkfile_source: ast.source,
         };
 
         // Manifest document is currently empty - populate it by evaluating the AST.
@@ -263,7 +279,7 @@ impl<'a> Workspace<'a> {
                             span: command_recipe.span,
                             name: command_recipe.name.ident,
                             doc_comment,
-                            body: &command_recipe.body.statements,
+                            ast: command_recipe,
                             hash,
                         },
                     );
@@ -281,7 +297,7 @@ impl<'a> Workspace<'a> {
                         span: build_recipe.span,
                         pattern: pattern_builder.build(),
                         doc_comment,
-                        body: &build_recipe.body.statements,
+                        ast: build_recipe,
                         hash,
                     });
                 }
@@ -613,6 +629,24 @@ fn write_workspace_cache(
         Err(err) => {
             tracing::error!("Error writing .werk-cache: {err}");
             Err(err)
+        }
+    }
+}
+
+impl<'a> werk_util::DiagnosticFileRepository for &'a Workspace<'a> {
+    #[inline]
+    fn get_source(
+        &self,
+        id: werk_util::DiagnosticFileId,
+    ) -> Option<werk_util::DiagnosticSource<'_>> {
+        // TODO: Multiple input files
+        if id.0 == 0 {
+            Some(werk_util::DiagnosticSource::new(
+                &self.werkfile_path,
+                self.werkfile_source,
+            ))
+        } else {
+            None
         }
     }
 }

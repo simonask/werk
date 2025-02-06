@@ -1813,6 +1813,7 @@ name = "tests"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "anstream",
  "anyhow",
  "criterion",
  "futures",
@@ -1829,6 +1830,7 @@ dependencies = [
  "werk-parser",
  "werk-runner",
  "werk-util",
+ "winnow",
 ]
 
 [[package]]
@@ -2231,6 +2233,7 @@ dependencies = [
  "werk-fs",
  "werk-parser",
  "werk-runner",
+ "werk-util",
  "windows-sys 0.59.0",
 ]
 
@@ -2294,6 +2297,7 @@ name = "werk-util"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "annotate-snippets",
  "hashbrown",
  "parking_lot",
  "serde",

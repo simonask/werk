@@ -1,4 +1,4 @@
-error: invalid escape sequence: 'p'
+error[P1003]: parse error
  --> INPUT:1:9
   |
 1 | let a = "\p"

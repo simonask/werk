@@ -4,7 +4,7 @@ use futures::{channel::oneshot, StreamExt};
 use indexmap::{map::Entry, IndexMap};
 use parking_lot::Mutex;
 use werk_fs::{Absolute, Normalize as _, Path, SymPath};
-use werk_util::Symbol;
+use werk_util::{Diagnostic, DiagnosticError, Symbol};
 
 use crate::{
     depfile::Depfile,
@@ -211,40 +211,62 @@ impl<'a> Runner<'a> {
         }
     }
 
-    pub async fn build_file(&self, target: &Path) -> Result<BuildStatus, Error> {
+    pub async fn build_file(
+        &self,
+        target: &Path,
+    ) -> Result<BuildStatus, DiagnosticError<'a, Error, &'a Workspace<'a>>> {
         let target = target
             .absolutize(werk_fs::Path::ROOT)
-            .map_err(|err| Error::InvalidTargetPath(target.to_string(), err))?;
+            .map_err(|err| Error::InvalidTargetPath(target.to_string(), err))
+            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))?;
         tracing::debug!("Build: {target}");
-        let spec = self.inner.get_build_spec(&target)?;
+        let spec = self
+            .inner
+            .get_build_spec(&target)
+            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))?;
         let inner = self.inner.clone();
         // TODO: Run the executor with multiple threads.
         self.inner
             .executor
             .run(async move { inner.run_task(spec, DepChain::Empty).await })
             .await
+            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))
     }
 
-    pub async fn run_command(&self, target: &str) -> Result<BuildStatus, Error> {
+    pub async fn run_command(
+        &self,
+        target: &str,
+    ) -> Result<BuildStatus, DiagnosticError<'a, Error, &'a Workspace<'a>>> {
         tracing::debug!("Run: {target}");
-        let spec = self.inner.get_command_spec(target)?;
+        let spec = self
+            .inner
+            .get_command_spec(target)
+            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))?;
         let inner = self.inner.clone();
         // TODO: Run the executor with multiple threads.
         self.inner
             .executor
             .run(async move { inner.run_task(spec, DepChain::Empty).await })
             .await
+            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))
     }
 
-    pub async fn build_or_run(&self, target: &str) -> Result<BuildStatus, Error> {
+    pub async fn build_or_run(
+        &self,
+        target: &str,
+    ) -> Result<BuildStatus, DiagnosticError<'a, Error, &'a Workspace<'a>>> {
         tracing::debug!("Build or run: {target}");
-        let spec = self.inner.get_build_or_command_spec(target)?;
+        let spec = self
+            .inner
+            .get_build_or_command_spec(target)
+            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))?;
         let inner = self.inner.clone();
         // TODO: Run the executor with multiple threads.
         self.inner
             .executor
             .run(async move { inner.run_task(spec, DepChain::Empty).await })
             .await
+            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))
     }
 }
 
@@ -293,8 +315,8 @@ impl<'a> Inner<'a> {
             if let Some(build_recipe_match) = self.workspace.manifest.match_build_recipe(&path)? {
                 if let Some(task_recipe) = task_recipe_match {
                     return Err(AmbiguousPatternError {
-                        pattern1: task_recipe.name.as_str().to_owned(),
-                        pattern2: build_recipe_match.recipe.pattern.string.clone(),
+                        pattern1: task_recipe.ast.name.span,
+                        pattern2: build_recipe_match.recipe.pattern.span,
                         path: path.to_string(),
                     }
                     .into());
@@ -429,7 +451,10 @@ impl<'a> Inner<'a> {
         );
 
         // Evaluate recipe body (`out` is available and in scope).
-        let evaluated = eval::eval_build_recipe_statements(&mut scope, recipe_match.recipe.body)?;
+        let evaluated = eval::eval_build_recipe_statements(
+            &mut scope,
+            &recipe_match.recipe.ast.body.statements,
+        )?;
         outdatedness.did_use(evaluated.used);
         let evaluated = evaluated.value;
 
@@ -589,7 +614,7 @@ impl<'a> Inner<'a> {
 
         // Evaluate dependencies (`out` is not available in commands).
 
-        let evaluated = eval::eval_task_recipe_statements(&mut scope, recipe.body)?;
+        let evaluated = eval::eval_task_recipe_statements(&mut scope, &recipe.ast.body.statements)?;
         let dependency_specs = evaluated
             .build
             .iter()

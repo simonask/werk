@@ -1,6 +1,7 @@
 use std::io::Write as _;
 
 use werk_parser::*;
+use werk_util::{Diagnostic as _, DiagnosticSource};
 
 fn strip_colors(s: &str) -> String {
     let mut buf = Vec::new();
@@ -32,16 +33,13 @@ macro_rules! error_case {
 
             let input = std::fs::read_to_string(input_path).unwrap();
             let expected = std::fs::read_to_string(expected_path).unwrap();
-            let Err(err) = parse_werk(&input) else {
+            let Err(err) = parse_werk(std::path::Path::new(input_path), &input) else {
                 panic!("expected error, got Ok")
             };
 
-            let rendered = LocatedError {
-                file_name: std::path::Path::new("INPUT"),
-                source_code: &input,
-                error: err,
-            }
-            .to_string();
+            let rendered = err
+                .into_diagnostic_error(DiagnosticSource::new(std::path::Path::new("INPUT"), &input))
+                .to_string();
 
             let rendered_stripped = fix_newlines(&strip_colors(&rendered));
             let expected_lf = fix_newlines(&expected);
@@ -75,15 +73,15 @@ macro_rules! success_case {
 
             let input = std::fs::read_to_string(input_path).unwrap();
             let expected_json = std::fs::read_to_string(expected_path).unwrap();
-            let input = match parse_werk(&input) {
+            let input = match parse_werk(std::path::Path::new(input_path), &input) {
                 Ok(input) => input,
                 Err(err) => {
-                    let rendered = LocatedError {
-                        file_name: std::path::Path::new("INPUT"),
-                        source_code: &input,
-                        error: err,
-                    }
-                    .to_string();
+                    let rendered = err
+                        .into_diagnostic_error(DiagnosticSource::new(
+                            std::path::Path::new("INPUT"),
+                            &input,
+                        ))
+                        .to_string();
                     eprintln!("Error message:\n{}", rendered);
                     panic!("error parsing input");
                 }

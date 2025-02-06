@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use werk_fs::Absolute;
 use werk_parser::parser::Span;
+use werk_util::{DiagnosticFileId, DiagnosticSnippet};
 
 use crate::{depfile::DepfileError, OwnedDependencyChain, ShellCommandLine, TaskId, Value};
 
@@ -146,22 +147,110 @@ impl From<ignore::Error> for Error {
     }
 }
 
-impl werk_parser::DisplayError for Error {
-    fn annotations(&self) -> Vec<werk_parser::DisplayAnnotation> {
+impl werk_util::Diagnostic for Error {
+    fn id_prefix(&self) -> &'static str {
+        if let Error::Eval(ref err) = self {
+            err.id_prefix()
+        } else {
+            "R"
+        }
+    }
+
+    fn level(&self) -> annotate_snippets::Level {
+        if let Error::Eval(ref err) = self {
+            err.level()
+        } else {
+            annotate_snippets::Level::Error
+        }
+    }
+
+    fn id(&self) -> u32 {
         match self {
-            Error::Eval(eval_error) => eval_error.annotations(),
-            // TODO: Provide annotations for more error cases.
+            Error::Io(_) => 1,
+            Error::CommandNotFound(..) => 2,
+            Error::NoRuleToBuildTarget(_) => 3,
+            Error::CircularDependency(..) => 4,
+            Error::DependencyFailed(..) => 5,
+            Error::Cancelled(..) => 6,
+            Error::Eval(ref err) => err.id(),
+            Error::Walk(..) => 7,
+            Error::Glob(..) => 8,
+            Error::DuplicateCommand(_) => 9,
+            Error::DuplicateTarget(_) => 10,
+            Error::AmbiguousPattern(..) => 11,
+            Error::CommandFailed(..) => 12,
+            Error::OutputDirectoryNotAvailable => 13,
+            Error::DepfileNotFound(..) => 14,
+            Error::DepfileError(..) => 15,
+            Error::ClobberedWorkspace(..) => 16,
+            Error::InvalidTargetPath(..) => 17,
+            Error::InvalidPathInDepfile(..) => 18,
+            Error::Custom(..) => 9999,
+        }
+    }
+
+    fn title(&self) -> String {
+        match self {
+            Error::Eval(eval_error) => eval_error.title(),
+            _ => self.to_string(),
+        }
+    }
+
+    fn snippet(&self) -> Option<DiagnosticSnippet> {
+        if let Error::Eval(ref err) = self {
+            err.snippet()
+        } else {
+            None
+        }
+    }
+
+    fn context_snippets(&self) -> Vec<DiagnosticSnippet> {
+        match self {
+            Error::Eval(ref err) => err.context_snippets(),
+            Error::AmbiguousPattern(ref err) => {
+                vec![
+                    DiagnosticSnippet {
+                        file_id: DiagnosticFileId::default(), // TODO
+                        span: err.pattern1.into(),
+                        message: String::from("first pattern here"),
+                        info: vec![],
+                    },
+                    DiagnosticSnippet {
+                        file_id: DiagnosticFileId::default(), // TODO
+                        span: err.pattern2.into(),
+                        message: String::from("second pattern here"),
+                        info: vec![],
+                    },
+                ]
+            }
             _ => vec![],
+        }
+    }
+
+    fn help(&self) -> Vec<String> {
+        if let Error::Eval(ref err) = self {
+            err.help()
+        } else {
+            vec![]
         }
     }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
-#[error("ambiguous pattern; both `{pattern1}` and `{pattern2}` would match `{path}`")]
+#[error("ambiguous pattern match: {path}")]
 pub struct AmbiguousPatternError {
-    pub pattern1: String,
-    pub pattern2: String,
+    pub pattern1: Span,
+    pub pattern2: Span,
     pub path: String,
+}
+
+#[derive(Debug, thiserror::Error, PartialEq)]
+#[error(
+    "ambiguous path resolution: {path} exists in the workspace, but also matches a build recipe"
+)]
+pub struct AmbiguousPathError {
+    pub path: Absolute<werk_fs::PathBuf>,
+    pub build_recipe: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -217,7 +306,7 @@ pub enum EvalError {
     DuplicatePattern(Span, Span),
     #[error("no implied interpolation value in this context; provide an identifier or a capture group index")]
     NoImpliedValue(Span),
-    #[error("no capture group with index {1}")]
+    #[error("capture group with index {1} is out of bounds in the current scope")]
     NoSuchCaptureGroup(Span, u32),
     #[error("no identifier with name {1}")]
     NoSuchIdentifier(Span, String),
@@ -237,7 +326,7 @@ pub enum EvalError {
     EmptyCommand(Span),
     #[error("empty list")]
     EmptyList(Span),
-    #[error("unterminated quote")]
+    #[error("unterminated quote in shell argument")]
     UnterminatedQuote(Span),
     #[error("`{1}` expressions are not allowed in this context")]
     UnexpectedExpressionType(Span, &'static str),
@@ -261,21 +350,13 @@ pub enum EvalError {
     #[error("{1}")]
     ErrorExpression(Span, String),
     #[error("assertion failed: {} != {}", .1 .0, .1 .1)]
-    AssertionFailed(Span, Box<(Value, Value)>),
+    AssertEqFailed(Span, Box<(Value, Value)>),
     #[error("assertion failed: \"{}\" does not match the pattern '{}'", .1 .0.escape_default(), .1 .1)]
-    AssertionMatchFailed(Span, Box<(String, String)>),
-    #[error("path matches both a file in the workspace and a build recipe; use `:out-dir` or `:workspace` to disambiguate: {1}")]
-    AmbiguousPathResolution(Span, Absolute<werk_fs::PathBuf>),
-}
-
-impl werk_parser::DisplayError for EvalError {
-    fn annotations(&self) -> Vec<werk_parser::DisplayAnnotation> {
-        vec![werk_parser::DisplayAnnotation {
-            level: annotate_snippets::Level::Error,
-            message: self.to_string(),
-            span: werk_parser::parser::Spanned::span(self),
-        }]
-    }
+    AssertMatchFailed(Span, Box<(String, String)>),
+    #[error("assertion failed: {1}")]
+    AssertCustomFailed(Span, String),
+    #[error("{1}")]
+    AmbiguousPathResolution(Span, Arc<AmbiguousPathError>),
 }
 
 impl werk_parser::parser::Spanned for EvalError {
@@ -310,9 +391,97 @@ impl werk_parser::parser::Spanned for EvalError {
             | EvalError::Path(span, _)
             | EvalError::Io(span, _)
             | EvalError::ErrorExpression(span, _)
-            | EvalError::AssertionFailed(span, _)
-            | EvalError::AssertionMatchFailed(span, _)
+            | EvalError::AssertEqFailed(span, _)
+            | EvalError::AssertMatchFailed(span, _)
+            | EvalError::AssertCustomFailed(span, _)
             | EvalError::AmbiguousPathResolution(span, _) => *span,
+        }
+    }
+}
+
+impl werk_util::Diagnostic for EvalError {
+    fn id_prefix(&self) -> &'static str {
+        "E"
+    }
+
+    fn level(&self) -> annotate_snippets::Level {
+        annotate_snippets::Level::Error
+    }
+
+    fn id(&self) -> u32 {
+        match self {
+            EvalError::InvalidEdition(..) => 1,
+            EvalError::ExpectedConfigString(..) => 2,
+            EvalError::ExpectedConfigBool(..) => 3,
+            EvalError::UnknownConfigKey(..) => 4,
+            EvalError::NoPatternStem(..) => 5,
+            EvalError::IllegalOneOfPattern(..) => 6,
+            EvalError::DuplicatePattern(..) => 7,
+            EvalError::NoImpliedValue(..) => 8,
+            EvalError::NoSuchCaptureGroup(..) => 9,
+            EvalError::NoSuchIdentifier(..) => 10,
+            EvalError::UnexpectedList(..) => 11,
+            EvalError::PatternStemInterpolationInPattern(..) => 12,
+            EvalError::ResolvePathInPattern(..) => 13,
+            EvalError::JoinInPattern(..) => 14,
+            EvalError::ListInPattern(..) => 15,
+            EvalError::PathWithinQuotes(..) => 16,
+            EvalError::EmptyCommand(..) => 17,
+            EvalError::EmptyList(..) => 18,
+            EvalError::UnterminatedQuote(..) => 19,
+            EvalError::UnexpectedExpressionType(..) => 20,
+            EvalError::CommandNotFound(..) => 21,
+            EvalError::NonUtf8Which(..) => 22,
+            EvalError::NonUtf8Read(..) => 23,
+            EvalError::Glob(..) => 24,
+            EvalError::Shell(..) => 25,
+            EvalError::Path(..) => 26,
+            EvalError::Io(..) => 27,
+            EvalError::ErrorExpression(..) => 28,
+            EvalError::AssertEqFailed(..) => 29,
+            EvalError::AssertMatchFailed(..) => 30,
+            EvalError::AssertCustomFailed(..) => 31,
+            EvalError::AmbiguousPathResolution(..) => 32,
+        }
+    }
+
+    fn title(&self) -> String {
+        self.to_string()
+    }
+
+    fn snippet(&self) -> Option<DiagnosticSnippet> {
+        use werk_parser::parser::Spanned;
+        Some(DiagnosticSnippet {
+            file_id: werk_util::DiagnosticFileId::default(), // TODO
+            span: self.span().into(),
+            message: self.to_string(),
+            info: vec![],
+        })
+    }
+
+    fn context_snippets(&self) -> Vec<DiagnosticSnippet> {
+        match self {
+            EvalError::AmbiguousPathResolution(_, err) => {
+                vec![DiagnosticSnippet {
+                    file_id: DiagnosticFileId::default(), // TODO: might come from another file
+                    span: err.build_recipe.into(),
+                    message: String::from("matched this build recipe"),
+                    info: vec![],
+                }]
+            }
+            _ => vec![],
+        }
+    }
+
+    fn help(&self) -> Vec<String> {
+        match self {
+            EvalError::NoSuchCaptureGroup(..) => vec![String::from(
+                "pattern capture groups are zero-indexed, starting from 0",
+            )],
+            EvalError::AmbiguousPathResolution(..) => vec![String::from(
+                "use `<...:out-dir>` or `<...:workspace>` to disambiguate between paths in the workspace and the output directory",
+            )],
+            _ => vec![],
         }
     }
 }

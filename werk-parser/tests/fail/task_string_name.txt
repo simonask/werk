@@ -1,10 +1,9 @@
-error: expected identifier
- --> INPUT:1:6
+error[P1001]: parse error
+ --> INPUT:1:1
   |
 1 | task "hello" {}
-  | -    ^
-  | |    |
-  | |    help: `task` must be followed by an identifier
-  | |    expected identifier
+  | -    ^ expected identifier
+  | |
   | info: while parsing task recipe
   |
+  = help: `task` must be followed by an identifier
