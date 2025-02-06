@@ -938,6 +938,15 @@ fn eval_string_interpolation_ops(
 
     for op in ops {
         match op {
+            ast::InterpolationOp::Filename => {
+                recursive_into_filename(value);
+            }
+            ast::InterpolationOp::Dirname => {
+                recursive_into_dirname(value);
+            }
+            ast::InterpolationOp::Ext => {
+                recursive_into_ext(value);
+            }
             ast::InterpolationOp::ReplaceExtension { from, to } => {
                 recursive_replace_extension(value, from, to);
             }
@@ -1381,6 +1390,50 @@ fn recursive_replace_extension(value: &mut Value, from: &str, to: &str) {
         if s.ends_with(from) {
             s.truncate(s.len() - from.len());
             s.push_str(to);
+        }
+    });
+}
+
+fn recursive_into_filename(value: &mut Value) {
+    value.recursive_modify(|s| {
+        if let Ok(path) = werk_fs::Path::new(s) {
+            let filename = path.file_name();
+            *s = filename.to_string();
+        } else {
+            let path = std::path::Path::new(s);
+            if let Some(filename) = path.file_name() {
+                *s = filename.to_string_lossy().into_owned();
+            }
+        }
+    });
+}
+
+fn recursive_into_dirname(value: &mut Value) {
+    value.recursive_modify(|s| {
+        if let Ok(path) = werk_fs::Path::new(s) {
+            if let Some(dirname) = path.parent() {
+                *s = dirname.to_string();
+            }
+        } else {
+            let path = std::path::Path::new(s);
+            if let Some(dirname) = path.parent() {
+                *s = dirname.to_string_lossy().into_owned();
+            }
+        }
+    });
+}
+
+fn recursive_into_ext(value: &mut Value) {
+    value.recursive_modify(|s| {
+        if let Ok(path) = werk_fs::Path::new(s) {
+            if let Some(ext) = path.extension() {
+                *s = ext.to_string();
+            }
+        } else {
+            let path = std::path::Path::new(s);
+            if let Some(ext) = path.extension() {
+                *s = ext.to_string_lossy().into_owned();
+            }
         }
     });
 }

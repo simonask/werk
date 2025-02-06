@@ -210,6 +210,25 @@ impl Path {
         Some(Self::new_unchecked(parent))
     }
 
+    #[inline]
+    #[must_use]
+    pub fn file_name(&self) -> &Path {
+        let Some((_parent, tail)) = self.path.rsplit_once(Self::SEPARATOR) else {
+            return self;
+        };
+        if tail.is_empty() {
+            return self;
+        }
+        Self::new_unchecked(tail)
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn extension(&self) -> Option<&str> {
+        let (_, ext) = self.path.rsplit_once('.')?;
+        Some(ext)
+    }
+
     #[must_use]
     pub fn is_parent_of(&self, other: &Path) -> bool {
         if self.is_absolute() != other.is_absolute() {

@@ -372,9 +372,10 @@ fn interpolation_inner_with_stem<'a, const TERMINATE: char>(
             // {stem*}, {stem:...}, or {stem*:...}
             interpolation_options.map(|options| options.map(Box::new)),
             // No options
-            preceded(space0, peek(TERMINATE)).value(None),
-        ))
-        .expect(&"interpolation options or end of interpolation"),
+            preceded(space0, peek(TERMINATE))
+                .value(None)
+                .expect(&"interpolation options or end of interpolation"),
+        )),
     )
         .map(|(stem, options)| ast::Interpolation { stem, options })
         .parse_next(input)
@@ -427,9 +428,11 @@ fn interpolation_join<'a>(input: &mut Input<'a>) -> PResult<Cow<'a, str>> {
 
 // At least one interpolation option
 fn interpolation_ops<'a>(input: &mut Input<'a>) -> PResult<Vec<ast::InterpolationOp<'a>>> {
-    preceded(':', separated(0.., interpolation_op, ','))
-        .expect(&"interpolation options")
-        .parse_next(input)
+    preceded(
+        ':'.expect(&"interpolation options"),
+        separated(0.., interpolation_op, ','),
+    )
+    .parse_next(input)
 }
 
 fn interpolation_op<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationOp<'a>> {
@@ -448,6 +451,9 @@ fn interpolation_op_kw<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationO
     let location = input.current_token_start();
     let ident = ident_str.parse_next(input)?;
     match ident {
+        "filename" => Ok(ast::InterpolationOp::Filename),
+        "dir" => Ok(ast::InterpolationOp::Dirname),
+        "ext" => Ok(ast::InterpolationOp::Ext),
         "out-dir" => Ok(ast::InterpolationOp::ResolveOutDir),
         "workspace" => Ok(ast::InterpolationOp::ResolveWorkspace),
         _ => Err(ModalErr::Error(Error::new(
