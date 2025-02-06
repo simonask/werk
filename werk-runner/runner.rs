@@ -390,7 +390,7 @@ impl<'a> Inner<'a> {
     }
 
     fn check_exists(&self, path: &Absolute<werk_fs::Path>) -> Result<BuildStatus, Error> {
-        let Some(entry) = self.workspace.get_project_file(path) else {
+        let Some(entry) = self.workspace.get_existing_project_or_output_file(path)? else {
             return Err(Error::NoRuleToBuildTarget(path.to_string()));
         };
         let mtime = entry.metadata.mtime;
