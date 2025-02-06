@@ -10,22 +10,5 @@ using `tar`.
 Werkfile:
 
 ```werk
-let glslc = which "glslc"
-let tar = which "tar"
-
-build "%.(frag|vert|comp).spv" {
-    from "{%}.{0}"
-    depfile "{%}.{0}.d"
-    run "{glslc} -MD -MF <depfile> -o <out> <in>"
-}
-
-build "shaders.tar.gz" {
-    # Note: Using "native" glob syntax.
-    from glob "*.\{frag,vert,comp\}" | map "{}.spv"
-    run "{tar} -zcf <out> <in*>"
-}
-
-task build-shaders {
-    build "shaders.tar.gz"
-}
+{{#include shaders/Werkfile}}
 ```
