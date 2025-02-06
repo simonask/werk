@@ -223,6 +223,10 @@ pub fn eval_op(
             let subscope = SubexprScope::new(scope, &param);
             eval_chain(&subscope, &expr.expr)
         }
+        ast::ExprOp::StringExpr(expr) => {
+            let subscope = SubexprScope::new(scope, &param);
+            eval_string_expr(&subscope, expr).map(|eval| eval.map(Value::String))
+        }
         ast::ExprOp::Match(match_expr) => eval_match_expr(scope, match_expr, param).map(Into::into),
         ast::ExprOp::Map(expr) => eval_map(scope, expr, param),
         ast::ExprOp::Flatten(_) => Ok(eval_flatten(scope, param)),

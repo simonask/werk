@@ -582,6 +582,7 @@ impl<'a> Parse<'a> for ast::SubExpr<'a> {
 fn expression_chain_op<'a>(input: &mut Input<'a>) -> PResult<ast::ExprOp<'a>> {
     alt((
         parse.map(ast::ExprOp::SubExpr),
+        parse.map(ast::ExprOp::StringExpr),
         parse.map(ast::ExprOp::Match),
         parse.map(ast::ExprOp::Map),
         parse.map(ast::ExprOp::Flatten),

@@ -100,6 +100,7 @@ pub struct SubExpr<'a> {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ExprOp<'a> {
     SubExpr(SubExpr<'a>),
+    StringExpr(StringExpr<'a>),
     Match(MatchExpr<'a>),
     Map(MapExpr<'a>),
     Flatten(FlattenExpr<'a>),
@@ -121,6 +122,7 @@ impl Spanned for ExprOp<'_> {
     fn span(&self) -> Span {
         match self {
             ExprOp::SubExpr(expr) => expr.span,
+            ExprOp::StringExpr(expr) => expr.span,
             ExprOp::Match(expr) => expr.span,
             ExprOp::Map(expr) => expr.span,
             ExprOp::Flatten(expr) => expr.span(),
@@ -144,6 +146,7 @@ impl SemanticHash for ExprOp<'_> {
         std::mem::discriminant(self).hash(state);
         match self {
             ExprOp::SubExpr(expr) => expr.expr.semantic_hash(state),
+            ExprOp::StringExpr(expr) => expr.semantic_hash(state),
             ExprOp::Match(expr) => expr.semantic_hash(state),
             ExprOp::Map(expr) => expr.semantic_hash(state),
             ExprOp::Filter(expr) => expr.semantic_hash(state),
