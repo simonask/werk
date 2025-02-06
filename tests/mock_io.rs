@@ -13,6 +13,7 @@ use werk_runner::{
     globset, BuildStatus, DirEntry, Env, Error, GlobSettings, Io, Metadata, Outdatedness,
     ShellCommandLine, TaskId, WhichError, WorkspaceSettings,
 };
+use werk_util::{Diagnostic as _, DiagnosticSource};
 
 #[inline]
 #[must_use]
@@ -168,6 +169,7 @@ impl<'a> TestBuilder<'a> {
             workspace_dir: self.workspace_dir.clone(),
             output_dir: self.output_dir.clone(),
             ast,
+            source: self.werkfile,
         })
     }
 }
@@ -178,15 +180,33 @@ pub struct Test<'a> {
     pub workspace_dir: Absolute<std::path::PathBuf>,
     pub output_dir: Absolute<std::path::PathBuf>,
     pub ast: werk_parser::Document<'a>,
+    pub source: &'a str,
 }
 
 impl<'a> Test<'a> {
-    pub fn new(werk_source: &'a str) -> Result<Self, werk_parser::Error> {
-        TestBuilder::default().werkfile(werk_source).build()
+    pub fn new(
+        source: &'a str,
+    ) -> Result<Self, werk_util::DiagnosticError<'a, werk_parser::Error, DiagnosticSource<'a>>>
+    {
+        TestBuilder::default()
+            .werkfile(source)
+            .build()
+            .map_err(|err| {
+                err.into_diagnostic_error(DiagnosticSource::new(
+                    std::path::Path::new("input"),
+                    source,
+                ))
+            })
     }
 
-    pub fn reload(&mut self, werkfile: &'a str) -> Result<(), werk_parser::Error> {
-        self.ast = werk_parser::parse_werk(werkfile)?;
+    pub fn reload(
+        &mut self,
+        source: &'a str,
+    ) -> Result<(), werk_util::DiagnosticError<'a, werk_parser::Error, DiagnosticSource<'a>>> {
+        self.ast = werk_parser::parse_werk(source).map_err(|err| {
+            err.into_diagnostic_error(DiagnosticSource::new(std::path::Path::new("input"), source))
+        })?;
+        self.source = source;
         Ok(())
     }
 

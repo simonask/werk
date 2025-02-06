@@ -10,8 +10,8 @@ use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
 use render::AutoStream;
 use werk_fs::{Absolute, Normalize as _, PathError};
-use werk_parser::parser::Spanned as _;
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
+use werk_util::{Diagnostic, DiagnosticSource};
 
 shadow_rs::shadow!(build);
 
@@ -647,44 +647,31 @@ fn find_output_directory(
     }
 }
 
-fn print_error(path: &std::path::Path, werkfile: &str, err: werk_runner::Error) -> Error {
-    match err {
-        werk_runner::Error::Eval(eval_error) => {
-            print_eval_error(path, werkfile, eval_error);
-            Error::Eval
-        }
-        otherwise => {
-            anstream::eprintln!("{otherwise}");
-            Error::Runner
-        }
-    }
+fn print_error(path: &std::path::Path, source: &str, err: werk_runner::Error) -> Error {
+    print_diagnostic(path, source, err);
+    Error::Runner
 }
 
-fn print_eval_error(path: &std::path::Path, werkfile: &str, err: werk_runner::EvalError) -> Error {
-    use annotate_snippets::{renderer::DEFAULT_TERM_WIDTH, Level, Snippet};
+fn print_eval_error(path: &std::path::Path, source: &str, err: werk_runner::EvalError) -> Error {
+    print_diagnostic(path, source, err);
+    Error::Eval
+}
 
-    let file_name = path.display().to_string();
-    let span = err.span();
+fn print_parse_error(path: &std::path::Path, source: &str, err: werk_parser::Error) -> Error {
+    print_diagnostic(path, source, err);
+    Error::Parse
+}
 
-    let err_string = err.to_string();
-    let err = Level::Error.title("evaluation error").snippet(
-        Snippet::source(werkfile)
-            .origin(&file_name)
-            .fold(true)
-            .annotation(Level::Error.span(span.into()).label(&err_string)),
-    );
+fn print_diagnostic<E: Diagnostic>(path: &std::path::Path, source: &str, err: E) {
+    use annotate_snippets::renderer::DEFAULT_TERM_WIDTH;
+    let source = DiagnosticSource::new(path, source);
     let renderer = annotate_snippets::Renderer::styled().term_width(
         render::stderr_width()
             .diagnostic_terminal_width()
             .unwrap_or(DEFAULT_TERM_WIDTH),
     );
-    let render = renderer.render(err);
-    anstream::eprintln!("{}", render);
-    Error::Eval
-}
-
-fn print_parse_error(path: &std::path::Path, werkfile: &str, err: werk_parser::Error) -> Error {
-    let err = err.with_location(path, werkfile);
-    anstream::eprintln!("{}", err);
-    Error::Parse
+    anstream::eprintln!(
+        "{}",
+        err.into_diagnostic_error_with_renderer(source, &renderer)
+    );
 }

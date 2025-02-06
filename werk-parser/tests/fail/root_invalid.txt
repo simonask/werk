@@ -1,9 +1,7 @@
-error: expected statement
+error[P1001]: parse error
  --> INPUT:2:1
   |
 2 | foo
-  | ^
-  | |
-  | help: one of `config`, `let`, `task`, or `build`
-  | expected statement
+  | ^ expected statement
   |
+  = help: one of `config`, `let`, `task`, or `build`

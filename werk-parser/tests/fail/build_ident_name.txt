@@ -1,11 +1,10 @@
-error: expected pattern literal
- --> INPUT:1:7
+error[P1001]: parse error
+ --> INPUT:1:1
   |
 1 | build foo {}
-  | -     ^
-  | |     |
-  | |     help: `build` must be followed by a pattern literal
-  | |     help: use string interpolation to use variables in recipe names
-  | |     expected pattern literal
+  | -     ^ expected pattern literal
+  | |
   | info: while parsing build recipe
   |
+  = help: `build` must be followed by a pattern literal
+  = help: use string interpolation to use variables in recipe names

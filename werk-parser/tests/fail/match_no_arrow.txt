@@ -1,11 +1,10 @@
-error: expected keyword `=>`
- --> INPUT:1:31
+error[P1002]: parse error
+ --> INPUT:1:17
   |
 1 | let foo = bar | match { "foo" }
-  | -               -             ^
-  | |               |             |
-  | |               |             help: pattern must be followed by `=>` in `match`
-  | |               |             expected keyword `=>`
+  | -               -             ^ expected keyword `=>`
+  | |               |
   | |               info: while parsing match
   | info: while parsing `let` statement
   |
+  = help: pattern must be followed by `=>` in `match`

@@ -146,12 +146,76 @@ impl From<ignore::Error> for Error {
     }
 }
 
-impl werk_parser::DisplayError for Error {
-    fn annotations(&self) -> Vec<werk_parser::DisplayAnnotation> {
+impl werk_util::Diagnostic for Error {
+    fn id_prefix(&self) -> &'static str {
+        if let Error::Eval(ref err) = self {
+            err.id_prefix()
+        } else {
+            "R"
+        }
+    }
+
+    fn level(&self) -> annotate_snippets::Level {
+        if let Error::Eval(ref err) = self {
+            err.level()
+        } else {
+            annotate_snippets::Level::Error
+        }
+    }
+
+    fn id(&self) -> u32 {
         match self {
-            Error::Eval(eval_error) => eval_error.annotations(),
-            // TODO: Provide annotations for more error cases.
-            _ => vec![],
+            Error::Io(_) => 1,
+            Error::CommandNotFound(..) => 2,
+            Error::NoRuleToBuildTarget(_) => 3,
+            Error::CircularDependency(..) => 4,
+            Error::DependencyFailed(..) => 5,
+            Error::Cancelled(..) => 6,
+            Error::Eval(ref err) => err.id(),
+            Error::Walk(..) => 7,
+            Error::Glob(..) => 8,
+            Error::DuplicateCommand(_) => 9,
+            Error::DuplicateTarget(_) => 10,
+            Error::AmbiguousPattern(..) => 11,
+            Error::CommandFailed(..) => 12,
+            Error::OutputDirectoryNotAvailable => 13,
+            Error::DepfileNotFound(..) => 14,
+            Error::DepfileError(..) => 15,
+            Error::ClobberedWorkspace(..) => 16,
+            Error::InvalidTargetPath(..) => 17,
+            Error::InvalidPathInDepfile(..) => 18,
+            Error::Custom(..) => 9999,
+        }
+    }
+
+    fn title(&self) -> String {
+        match self {
+            Error::Eval(eval_error) => eval_error.title(),
+            _ => self.to_string(),
+        }
+    }
+
+    fn snippet(&self) -> Option<werk_util::DiagnosticSnippet> {
+        if let Error::Eval(ref err) = self {
+            err.snippet()
+        } else {
+            None
+        }
+    }
+
+    fn context_snippets(&self) -> Vec<werk_util::DiagnosticSnippet> {
+        if let Error::Eval(ref err) = self {
+            err.context_snippets()
+        } else {
+            vec![]
+        }
+    }
+
+    fn help(&self) -> Vec<String> {
+        if let Error::Eval(ref err) = self {
+            err.help()
+        } else {
+            vec![]
         }
     }
 }
@@ -268,16 +332,6 @@ pub enum EvalError {
     AmbiguousPathResolution(Span, Absolute<werk_fs::PathBuf>),
 }
 
-impl werk_parser::DisplayError for EvalError {
-    fn annotations(&self) -> Vec<werk_parser::DisplayAnnotation> {
-        vec![werk_parser::DisplayAnnotation {
-            level: annotate_snippets::Level::Error,
-            message: self.to_string(),
-            span: werk_parser::parser::Spanned::span(self),
-        }]
-    }
-}
-
 impl werk_parser::parser::Spanned for EvalError {
     #[inline]
     fn span(&self) -> Span {
@@ -314,6 +368,74 @@ impl werk_parser::parser::Spanned for EvalError {
             | EvalError::AssertionMatchFailed(span, _)
             | EvalError::AmbiguousPathResolution(span, _) => *span,
         }
+    }
+}
+
+impl werk_util::Diagnostic for EvalError {
+    fn id_prefix(&self) -> &'static str {
+        "E"
+    }
+
+    fn level(&self) -> annotate_snippets::Level {
+        annotate_snippets::Level::Error
+    }
+
+    fn id(&self) -> u32 {
+        match self {
+            EvalError::InvalidEdition(..) => 1,
+            EvalError::ExpectedConfigString(..) => 2,
+            EvalError::ExpectedConfigBool(..) => 3,
+            EvalError::UnknownConfigKey(..) => 4,
+            EvalError::NoPatternStem(..) => 5,
+            EvalError::IllegalOneOfPattern(..) => 6,
+            EvalError::DuplicatePattern(..) => 7,
+            EvalError::NoImpliedValue(..) => 8,
+            EvalError::NoSuchCaptureGroup(..) => 9,
+            EvalError::NoSuchIdentifier(..) => 10,
+            EvalError::UnexpectedList(..) => 11,
+            EvalError::PatternStemInterpolationInPattern(..) => 12,
+            EvalError::ResolvePathInPattern(..) => 13,
+            EvalError::JoinInPattern(..) => 14,
+            EvalError::ListInPattern(..) => 15,
+            EvalError::PathWithinQuotes(..) => 16,
+            EvalError::EmptyCommand(..) => 17,
+            EvalError::EmptyList(..) => 18,
+            EvalError::UnterminatedQuote(..) => 19,
+            EvalError::UnexpectedExpressionType(..) => 20,
+            EvalError::CommandNotFound(..) => 21,
+            EvalError::NonUtf8Which(..) => 22,
+            EvalError::NonUtf8Read(..) => 23,
+            EvalError::Glob(..) => 24,
+            EvalError::Shell(..) => 25,
+            EvalError::Path(..) => 26,
+            EvalError::Io(..) => 27,
+            EvalError::ErrorExpression(..) => 28,
+            EvalError::AssertionFailed(..) => 29,
+            EvalError::AssertionMatchFailed(..) => 30,
+            EvalError::AmbiguousPathResolution(..) => 31,
+        }
+    }
+
+    fn title(&self) -> String {
+        self.to_string()
+    }
+
+    fn snippet(&self) -> Option<werk_util::DiagnosticSnippet> {
+        use werk_parser::parser::Spanned;
+        Some(werk_util::DiagnosticSnippet {
+            file_id: werk_util::DiagnosticFileId::default(), // TODO
+            span: self.span().into(),
+            message: self.to_string(),
+            info: vec![],
+        })
+    }
+
+    fn context_snippets(&self) -> Vec<werk_util::DiagnosticSnippet> {
+        vec![]
+    }
+
+    fn help(&self) -> Vec<String> {
+        vec![]
     }
 }
 

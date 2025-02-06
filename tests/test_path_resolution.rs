@@ -24,7 +24,7 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
     let test = match Test::new(WERK) {
         Ok(test) => test,
         Err(err) => {
-            eprintln!("{}", err.with_location(std::path::Path::new("input"), WERK));
+            eprintln!("{err}");
             panic!("parse error")
         }
     };
@@ -32,14 +32,7 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
     let workspace = match test.create_workspace(&[]) {
         Ok(workspace) => workspace,
         Err(err) => {
-            eprintln!(
-                "{}",
-                werk_parser::LocatedError {
-                    file_name: std::path::Path::new("input"),
-                    source_code: WERK,
-                    error: err
-                }
-            );
+            eprintln!("{err}");
             panic!("could not create workspace")
         }
     };
