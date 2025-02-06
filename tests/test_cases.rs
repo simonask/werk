@@ -107,6 +107,7 @@ success_case!(copy);
 success_case!(read);
 success_case!(env);
 success_case!(string_interp);
+success_case!(dedup);
 
 error_case!(ambiguous_build_recipe);
 error_case!(ambiguous_path_resolution);

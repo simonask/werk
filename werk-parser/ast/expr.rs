@@ -110,6 +110,7 @@ pub enum ExprOp<'a> {
     Join(JoinExpr<'a>),
     Split(SplitExpr<'a>),
     Lines(LinesExpr<'a>),
+    Dedup(DedupExpr<'a>),
     Info(InfoExpr<'a>),
     Warn(WarnExpr<'a>),
     Error(ErrorExpr<'a>),
@@ -131,6 +132,7 @@ impl Spanned for ExprOp<'_> {
             ExprOp::Discard(expr) => expr.span,
             ExprOp::Join(expr) => expr.span,
             ExprOp::Split(expr) => expr.span,
+            ExprOp::Dedup(expr) => expr.span(),
             ExprOp::Lines(expr) => expr.span(),
             ExprOp::Info(expr) => expr.span,
             ExprOp::Warn(expr) => expr.span,
@@ -160,8 +162,8 @@ impl SemanticHash for ExprOp<'_> {
             | ExprOp::Error(_)
             | ExprOp::AssertEq(_)
             | ExprOp::AssertMatch(_)
-            // `flatten` and `lines` are caught by the discriminant
-            | ExprOp::Flatten(_) | ExprOp::Lines(_)
+            // Covered by the discriminant:
+            | ExprOp::Dedup(_) | ExprOp::Flatten(_) | ExprOp::Lines(_)
             => (),
         }
     }
@@ -375,6 +377,7 @@ pub type AssertEqExpr<'a> = KwExpr<keyword::AssertEq, Box<Expr<'a>>>;
 pub type AssertMatchExpr<'a> = KwExpr<keyword::AssertEq, Box<PatternExpr<'a>>>;
 pub type FlattenExpr<'a> = keyword::Flatten;
 pub type SplitExpr<'a> = KwExpr<keyword::Split, PatternExpr<'a>>;
+pub type DedupExpr<'a> = keyword::Dedup;
 pub type LinesExpr<'a> = keyword::Lines;
 pub type FilterExpr<'a> = KwExpr<keyword::Filter, PatternExpr<'a>>;
 pub type FilterMatchExpr<'a> = KwExpr<keyword::FilterMatch, MatchBody<'a>>;

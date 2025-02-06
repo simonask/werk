@@ -451,6 +451,7 @@ fn interpolation_op_kw<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationO
     let location = input.current_token_start();
     let ident = ident_str.parse_next(input)?;
     match ident {
+        "dedup" => Ok(ast::InterpolationOp::Dedup),
         "filename" => Ok(ast::InterpolationOp::Filename),
         "dir" => Ok(ast::InterpolationOp::Dirname),
         "ext" => Ok(ast::InterpolationOp::Ext),

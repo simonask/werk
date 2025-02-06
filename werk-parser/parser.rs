@@ -591,6 +591,7 @@ fn expression_chain_op<'a>(input: &mut Input<'a>) -> PResult<ast::ExprOp<'a>> {
         parse.map(ast::ExprOp::Discard),
         parse.map(ast::ExprOp::Join),
         parse.map(ast::ExprOp::Split),
+        parse.map(ast::ExprOp::Dedup),
         parse.map(ast::ExprOp::Lines),
         parse.map(ast::ExprOp::Info),
         parse.map(ast::ExprOp::Warn),

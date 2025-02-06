@@ -1,0 +1,11 @@
+let a = "a" | dedup | assert-eq "a"
+let b = ["b"] | dedup | assert-eq ["b"]
+let c = ["c", "c"] | dedup | assert-eq ["c"]
+let d = ["d", ["d", ["d"]]] | dedup | assert-eq ["d"]
+let abcd = ["a", ["b", "a"], ["c", "d"], "d"] | dedup | assert-eq ["a", "b", "c", "d"]
+
+let a = "a" | "{:dedup}" | assert-eq "a"
+let b = ["b"] | "{,*:dedup}" | assert-eq "b"
+let c = ["c", "c"] | "{,*:dedup}" | assert-eq "c"
+let d = ["d", ["d", ["d"]]] | "{,*:dedup}" | assert-eq "d"
+let abcd = ["a", ["b", "a"], ["c", "d"], "d"] | "{,*:dedup}" | assert-eq "a,b,c,d"

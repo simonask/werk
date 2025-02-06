@@ -325,6 +325,7 @@ impl std::fmt::Display for Interpolation<'_> {
                         regex_interpolation_op.replacer
                     )?,
                     InterpolationOp::ResolveOsPath => unreachable!(),
+                    InterpolationOp::Dedup => f.write_str("dedup")?,
                     InterpolationOp::Filename => f.write_str("filename")?,
                     InterpolationOp::Dirname => f.write_str("dir")?,
                     InterpolationOp::Ext => f.write_str("ext")?,
@@ -392,6 +393,7 @@ impl SemanticHash for InterpolationStem {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum InterpolationOp<'a> {
+    Dedup,
     /// Get the filename part of a path.
     Filename,
     /// Get the directory part of a path (wihout a final path separator).
@@ -425,6 +427,7 @@ impl InterpolationOp<'_> {
             InterpolationOp::PrependEach(s) => InterpolationOp::PrependEach(s.into_owned().into()),
             InterpolationOp::AppendEach(s) => InterpolationOp::AppendEach(s.into_owned().into()),
             InterpolationOp::RegexReplace(r) => InterpolationOp::RegexReplace(r.into_static()),
+            InterpolationOp::Dedup => InterpolationOp::Dedup,
             InterpolationOp::Filename => InterpolationOp::Filename,
             InterpolationOp::Dirname => InterpolationOp::Dirname,
             InterpolationOp::Ext => InterpolationOp::Ext,
@@ -446,7 +449,8 @@ impl SemanticHash for InterpolationOp<'_> {
             InterpolationOp::PrependEach(s) | InterpolationOp::AppendEach(s) => s.hash(state),
             InterpolationOp::RegexReplace(r) => r.hash(state),
             // Covered by discriminant.
-            InterpolationOp::Filename
+            InterpolationOp::Dedup
+            | InterpolationOp::Filename
             | InterpolationOp::Dirname
             | InterpolationOp::Ext
             | InterpolationOp::ResolveOsPath

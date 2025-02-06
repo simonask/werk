@@ -1,4 +1,5 @@
 mod used;
+use indexmap::IndexSet;
 pub use used::*;
 use werk_fs::Absolute;
 use werk_util::Symbol;
@@ -235,6 +236,7 @@ pub fn eval_op(
         ast::ExprOp::Discard(expr) => eval_discard(scope, expr, param),
         ast::ExprOp::Join(expr) => eval_join(scope, expr, param),
         ast::ExprOp::Split(expr) => eval_split(scope, expr, param),
+        ast::ExprOp::Dedup(_) => Ok(eval_dedup(param)),
         ast::ExprOp::Lines(_) => Ok(eval_split_lines(scope, param)),
         ast::ExprOp::Info(expr) => {
             let scope = SubexprScope::new(scope, &param);
@@ -562,6 +564,14 @@ fn eval_split(
         value: Value::List(result),
         used,
     })
+}
+
+fn eval_dedup(param: Eval<Value>) -> Eval<Value> {
+    let new_value = dedup_recursive(param.value);
+    Eval {
+        value: new_value,
+        used: param.used,
+    }
 }
 
 fn eval_split_lines(_scope: &dyn Scope, param: Eval<Value>) -> Eval<Value> {
@@ -942,6 +952,9 @@ fn eval_string_interpolation_ops(
 
     for op in ops {
         match op {
+            ast::InterpolationOp::Dedup => {
+                *value = dedup_recursive(std::mem::replace(value, Value::List(Vec::new())));
+            }
             ast::InterpolationOp::Filename => {
                 recursive_into_filename(value);
             }
@@ -1462,6 +1475,28 @@ fn recursive_regex_replace(value: &mut Value, regex: &regex::Regex, replacer: &s
         };
         *s = replaced;
     });
+}
+
+fn dedup_recursive(value: Value) -> Value {
+    fn dedup_recursive(set: &mut IndexSet<String>, values: Vec<Value>) {
+        for value in values {
+            match value {
+                Value::List(values) => dedup_recursive(set, values),
+                Value::String(s) => {
+                    set.insert(s);
+                }
+            }
+        }
+    }
+
+    match value {
+        Value::String(_) => value,
+        Value::List(values) => {
+            let mut set = IndexSet::default();
+            dedup_recursive(&mut set, values);
+            Value::List(set.into_iter().map(Value::String).collect())
+        }
+    }
 }
 
 fn find_first_string(list: &[Value]) -> Option<&str> {
