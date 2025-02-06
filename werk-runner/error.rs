@@ -326,7 +326,7 @@ pub enum EvalError {
     EmptyCommand(Span),
     #[error("empty list")]
     EmptyList(Span),
-    #[error("unterminated quote")]
+    #[error("unterminated quote in shell argument")]
     UnterminatedQuote(Span),
     #[error("`{1}` expressions are not allowed in this context")]
     UnexpectedExpressionType(Span, &'static str),
