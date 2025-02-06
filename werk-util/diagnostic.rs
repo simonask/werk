@@ -7,6 +7,27 @@ pub struct DiagnosticError<'a, T, R> {
     pub renderer: Option<&'a annotate_snippets::Renderer>,
 }
 
+impl<'a, T, R> DiagnosticError<'a, T, R> {
+    pub fn map_err<F: FnOnce(T) -> U, U>(self, f: F) -> DiagnosticError<'a, U, R> {
+        DiagnosticError {
+            repository: self.repository,
+            error: f(self.error),
+            renderer: self.renderer,
+        }
+    }
+
+    pub fn with_renderer(
+        self,
+        renderer: &annotate_snippets::Renderer,
+    ) -> DiagnosticError<'_, T, R> {
+        DiagnosticError {
+            repository: self.repository,
+            error: self.error,
+            renderer: Some(renderer),
+        }
+    }
+}
+
 impl<T: std::fmt::Debug, R> std::fmt::Debug for DiagnosticError<'_, T, R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.error.fmt(f)

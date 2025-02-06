@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use werk_fs::Absolute;
 use werk_parser::{ast, parser::Span};
-use werk_util::Symbol;
+use werk_util::{Diagnostic, DiagnosticError, Symbol};
 
 use crate::{
     cache::Hash128, AmbiguousPatternError, EvalError, GlobalVariables, Pattern, PatternMatchData,
@@ -69,11 +69,9 @@ impl<'a> Manifest<'a> {
                             // Candidate has a longer stem, so it's worse; do nothing.
                         }
                         _ => {
-                            // Candidate and best have the same length, or both are
-                            // exact.
                             return Err(AmbiguousPatternError {
-                                pattern1: best_recipe.pattern.to_string(),
-                                pattern2: candidate_recipe.pattern.to_string(),
+                                pattern1: best_recipe.pattern.span,
+                                pattern2: candidate_recipe.pattern.span,
                                 path: path.to_string(),
                             });
                         }
@@ -98,10 +96,10 @@ impl<'a> Manifest<'a> {
         if let Ok(path) = werk_fs::Path::new(name) {
             if let Ok(path) = path.normalize() {
                 if let Some(build_recipe_match) = self.match_build_recipe(&path)? {
-                    if task.is_some() {
+                    if let Some(task) = task {
                         return Err(crate::AmbiguousPatternError {
-                            pattern1: build_recipe_match.recipe.pattern.to_string(),
-                            pattern2: name.to_owned(),
+                            pattern1: build_recipe_match.recipe.pattern.span,
+                            pattern2: task.ast.name.span,
                             path: name.to_owned(),
                         }
                         .into());
@@ -138,7 +136,7 @@ pub struct TaskRecipe<'a> {
     pub span: Span,
     pub name: Symbol,
     pub doc_comment: String,
-    pub body: &'a [ast::BodyStmt<ast::TaskRecipeStmt<'a>>],
+    pub ast: &'a ast::CommandRecipe<'a>,
     pub hash: Hash128,
 }
 
@@ -147,7 +145,7 @@ pub struct BuildRecipe<'a> {
     pub span: Span,
     pub pattern: Pattern<'a>,
     pub doc_comment: String,
-    pub body: &'a [ast::BodyStmt<ast::BuildRecipeStmt<'a>>],
+    pub ast: &'a ast::BuildRecipe<'a>,
     pub hash: Hash128,
 }
 
@@ -160,6 +158,12 @@ pub struct Config {
 }
 
 impl Config {
+    pub fn new_with_diagnostics<'a>(
+        doc: &'a werk_parser::Document<'a>,
+    ) -> Result<Self, DiagnosticError<'a, EvalError, &'a werk_parser::Document<'a>>> {
+        Self::new(doc).map_err(|err| err.into_diagnostic_error(doc))
+    }
+
     pub fn new(doc: &werk_parser::Document) -> Result<Self> {
         let mut config = Self::default();
         for stmt in &doc.root.statements {

@@ -188,14 +188,22 @@ impl From<Option<std::ops::Range<usize>>> for Span {
 impl From<Span> for std::ops::Range<u32> {
     #[inline]
     fn from(value: Span) -> Self {
-        value.start.0..value.end.0
+        if value.is_ignored() {
+            0..0
+        } else {
+            value.start.0..value.end.0
+        }
     }
 }
 
 impl From<Span> for std::ops::Range<usize> {
     #[inline]
     fn from(value: Span) -> Self {
-        value.start.0 as usize..value.end.0 as usize
+        if value.is_ignored() {
+            0..0
+        } else {
+            value.start.0 as usize..value.end.0 as usize
+        }
     }
 }
 

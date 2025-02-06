@@ -33,7 +33,7 @@ macro_rules! error_case {
 
             let input = std::fs::read_to_string(input_path).unwrap();
             let expected = std::fs::read_to_string(expected_path).unwrap();
-            let Err(err) = parse_werk(&input) else {
+            let Err(err) = parse_werk(std::path::Path::new(input_path), &input) else {
                 panic!("expected error, got Ok")
             };
 
@@ -73,7 +73,7 @@ macro_rules! success_case {
 
             let input = std::fs::read_to_string(input_path).unwrap();
             let expected_json = std::fs::read_to_string(expected_path).unwrap();
-            let input = match parse_werk(&input) {
+            let input = match parse_werk(std::path::Path::new(input_path), &input) {
                 Ok(input) => input,
                 Err(err) => {
                     let rendered = err

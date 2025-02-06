@@ -590,6 +590,7 @@ pub fn eval_pattern_builder<'a, P: Scope + ?Sized>(
     expr: &ast::PatternExpr<'a>,
 ) -> Result<Eval<PatternBuilder<'a>>, EvalError> {
     let mut pattern_builder = PatternBuilder::default();
+    pattern_builder.set_span(expr.span);
 
     let mut used = Used::none();
 
@@ -1242,7 +1243,7 @@ fn eval_assert_eq(
     let rhs = eval(&scope, &expr.param)?;
     let used = param.used | rhs.used;
     if param.value != rhs.value {
-        return Err(EvalError::AssertionFailed(
+        return Err(EvalError::AssertEqFailed(
             expr.span,
             Box::new((param.value, rhs.value)),
         ));
@@ -1276,7 +1277,7 @@ fn eval_assert_match(
     let used = param.used | pattern.used;
 
     if let Some(mismatch) = get_mismatch(&pattern.value, &param.value) {
-        return Err(EvalError::AssertionMatchFailed(
+        return Err(EvalError::AssertMatchFailed(
             expr.span,
             Box::new((mismatch.clone(), pattern.value.string)),
         ));

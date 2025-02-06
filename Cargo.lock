@@ -1813,6 +1813,7 @@ name = "tests"
 version = "0.1.0"
 dependencies = [
  "ahash",
+ "anstream",
  "anyhow",
  "criterion",
  "futures",
@@ -1829,6 +1830,7 @@ dependencies = [
  "werk-parser",
  "werk-runner",
  "werk-util",
+ "winnow",
 ]
 
 [[package]]

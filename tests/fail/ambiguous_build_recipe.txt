@@ -1,0 +1,11 @@
+error[R0011]: ambiguous pattern match: /foofoo
+ --> INPUT:3:7
+  |
+3 | build "%foo" {
+  |       ------ note: first pattern here
+  |
+ ::: INPUT:7:7
+  |
+7 | build "foo%" {
+  |       ------ note: second pattern here
+  |

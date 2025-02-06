@@ -1,0 +1,9 @@
+config default = "foofoo"
+
+build "%foo" {
+    info "<out>"
+}
+
+build "foo%" {
+    info "<out>"
+}

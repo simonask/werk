@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use werk_util::Diagnostic as _;
 use winnow::{
     ascii::{line_ending, till_line_ending},
     combinator::{alt, cut_err, delimited, empty, eof, opt, peek, preceded, repeat, seq},
@@ -94,11 +95,26 @@ fn parse<'a, T: Parse<'a>>(input: &mut Input<'a>) -> Result<T, ModalErr> {
     T::parse(input)
 }
 
-pub fn parse_werk(source_code: &str) -> Result<crate::Document<'_>, crate::Error> {
+pub fn parse_werk<'a>(
+    origin: &'a std::path::Path,
+    source_code: &'a str,
+) -> Result<crate::Document<'a>, crate::Error> {
     let root = root
         .parse(Input::new(source_code))
         .map_err(winnow::error::ParseError::into_inner)?;
-    Ok(crate::Document::new(root, source_code, None))
+    Ok(crate::Document::new(root, origin, source_code, None))
+}
+
+pub fn parse_werk_with_diagnostics<'a>(
+    origin: &'a std::path::Path,
+    source_code: &'a str,
+) -> Result<
+    crate::Document<'a>,
+    werk_util::DiagnosticError<'a, crate::Error, werk_util::DiagnosticSource<'a>>,
+> {
+    parse_werk(origin, source_code).map_err(|err| {
+        err.into_diagnostic_error(werk_util::DiagnosticSource::new(origin, source_code))
+    })
 }
 
 fn root<'a>(input: &mut Input<'a>) -> PResult<ast::Root<'a>> {

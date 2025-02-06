@@ -9,11 +9,13 @@ use std::{
 
 use parking_lot::Mutex;
 use werk_fs::Absolute;
+use werk_parser::parser::{Offset, Span};
 use werk_runner::{
     globset, BuildStatus, DirEntry, Env, Error, GlobSettings, Io, Metadata, Outdatedness,
     ShellCommandLine, TaskId, WhichError, WorkspaceSettings,
 };
 use werk_util::{Diagnostic as _, DiagnosticSource};
+use winnow::stream::Offset as _;
 
 #[inline]
 #[must_use]
@@ -46,6 +48,7 @@ pub struct TestBuilder<'a> {
     pub default_filesystem: bool,
     pub create_workspace_dir: bool,
     pub werkfile: &'a str,
+    pub werkfile_path: &'a std::path::Path,
 }
 
 pub fn native_path<I: IntoIterator<Item: AsRef<OsStr>>>(
@@ -71,6 +74,7 @@ impl Default for TestBuilder<'_> {
             default_filesystem: true,
             create_workspace_dir: true,
             werkfile: "",
+            werkfile_path: std::path::Path::new("INPUT"),
         }
     }
 }
@@ -97,7 +101,7 @@ impl<'a> TestBuilder<'a> {
     }
 
     pub fn build(&self) -> Result<Test<'a>, werk_parser::Error> {
-        let ast = werk_parser::parse_werk(self.werkfile)?;
+        let ast = werk_parser::parse_werk(self.werkfile_path, self.werkfile)?;
 
         let io = MockIo::default();
         io.set_env("PROFILE", "debug");
@@ -182,7 +186,7 @@ pub struct Test<'a> {
     pub output_dir: Absolute<std::path::PathBuf>,
     pub ast: werk_parser::Document<'a>,
     pub source: &'a str,
-    pragma_check_files: Vec<(String, Vec<u8>)>,
+    pragma_check_files: Vec<(Span, String, Vec<u8>)>,
 }
 
 impl<'a> Test<'a> {
@@ -207,7 +211,7 @@ impl<'a> Test<'a> {
         &mut self,
         source: &'a str,
     ) -> Result<(), werk_util::DiagnosticError<'a, werk_parser::Error, DiagnosticSource<'a>>> {
-        self.ast = werk_parser::parse_werk(source).map_err(|err| {
+        self.ast = werk_parser::parse_werk(self.ast.origin, source).map_err(|err| {
             err.into_diagnostic_error(DiagnosticSource::new(std::path::Path::new("input"), source))
         })?;
         self.source = source;
@@ -219,15 +223,24 @@ impl<'a> Test<'a> {
         self.pragma_check_files.clear();
 
         // Interpret pragmas in the trailing comment of the werkfile.
-        let trailing_whitespace = self
-            .ast
-            .get_whitespace(self.ast.root.ws_trailing)
-            .trim()
-            .lines();
+        let trailing_whitespace = self.ast.get_whitespace(self.ast.root.ws_trailing);
+        let trailing_whitespace_lines = trailing_whitespace.trim().lines();
+        let trailing_ws_span_start = if self.ast.root.ws_trailing.0.is_ignored() {
+            0
+        } else {
+            self.ast.root.ws_trailing.0.start.0 as usize
+        };
+
         let regexes = regexes();
         {
             let mut fs = self.io.filesystem.lock();
-            for line in trailing_whitespace {
+            for line in trailing_whitespace_lines {
+                let offset = line.offset_from(&trailing_whitespace);
+                let span = Span {
+                    start: Offset((trailing_ws_span_start + offset) as u32),
+                    end: Offset((trailing_ws_span_start + offset + line.len()) as u32),
+                };
+
                 if let Some(captures) = regexes.file.captures(line) {
                     let filename = captures.get(1).unwrap().as_str();
                     let content = captures.get(2).unwrap().as_str();
@@ -248,8 +261,11 @@ impl<'a> Test<'a> {
                 } else if let Some(captures) = regexes.assert_file.captures(line) {
                     let filename = captures.get(1).unwrap().as_str();
                     let content = captures.get(2).unwrap().as_str();
-                    self.pragma_check_files
-                        .push((filename.to_owned(), content.as_bytes().to_owned()));
+                    self.pragma_check_files.push((
+                        span,
+                        filename.to_owned(),
+                        content.as_bytes().to_owned(),
+                    ));
                 } else if let Some(captures) = regexes.env.captures(line) {
                     let key = captures.get(1).unwrap().as_str();
                     let value = captures.get(2).unwrap().as_str();
@@ -259,16 +275,20 @@ impl<'a> Test<'a> {
         }
     }
 
-    pub fn run_pragma_tests(&self) {
+    pub fn run_pragma_tests(&self) -> Result<(), werk_runner::EvalError> {
         let fs = self.io.filesystem.lock();
-        for (filename, contents) in &self.pragma_check_files {
+        for (span, filename, expected) in &self.pragma_check_files {
             let out_file = self.output_path(filename.split('/'));
-            let (_entry, data) = read_fs(&fs, &out_file).unwrap();
-            assert_eq!(
-                data, *contents,
-                "assert-file failed: contents of output file `{filename}` do not match"
-            );
+            let (_entry, actual) = read_fs(&fs, &out_file).unwrap();
+            if actual != expected {
+                return Err(werk_runner::EvalError::AssertCustomFailed(
+                    *span,
+                    format!("contents of output file `{filename}` do not match\nexpected: {expected:?}\n  actual: {actual:?}"),
+                ));
+            }
         }
+
+        Ok(())
     }
 
     pub fn create_workspace(

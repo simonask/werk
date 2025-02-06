@@ -9,6 +9,6 @@ mod semantic_hash;
 
 pub use document::*;
 pub use error::*;
-pub use parser::parse_werk;
+pub use parser::{parse_werk, parse_werk_with_diagnostics};
 pub use pattern::*;
 pub use semantic_hash::*;

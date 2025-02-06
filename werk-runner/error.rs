@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use werk_fs::Absolute;
 use werk_parser::parser::Span;
+use werk_util::{DiagnosticFileId, DiagnosticSnippet};
 
 use crate::{depfile::DepfileError, OwnedDependencyChain, ShellCommandLine, TaskId, Value};
 
@@ -195,7 +196,7 @@ impl werk_util::Diagnostic for Error {
         }
     }
 
-    fn snippet(&self) -> Option<werk_util::DiagnosticSnippet> {
+    fn snippet(&self) -> Option<DiagnosticSnippet> {
         if let Error::Eval(ref err) = self {
             err.snippet()
         } else {
@@ -203,11 +204,26 @@ impl werk_util::Diagnostic for Error {
         }
     }
 
-    fn context_snippets(&self) -> Vec<werk_util::DiagnosticSnippet> {
-        if let Error::Eval(ref err) = self {
-            err.context_snippets()
-        } else {
-            vec![]
+    fn context_snippets(&self) -> Vec<DiagnosticSnippet> {
+        match self {
+            Error::Eval(ref err) => err.context_snippets(),
+            Error::AmbiguousPattern(ref err) => {
+                vec![
+                    DiagnosticSnippet {
+                        file_id: DiagnosticFileId::default(), // TODO
+                        span: err.pattern1.into(),
+                        message: String::from("first pattern here"),
+                        info: vec![],
+                    },
+                    DiagnosticSnippet {
+                        file_id: DiagnosticFileId::default(), // TODO
+                        span: err.pattern2.into(),
+                        message: String::from("second pattern here"),
+                        info: vec![],
+                    },
+                ]
+            }
+            _ => vec![],
         }
     }
 
@@ -221,10 +237,10 @@ impl werk_util::Diagnostic for Error {
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
-#[error("ambiguous pattern; both `{pattern1}` and `{pattern2}` would match `{path}`")]
+#[error("ambiguous pattern match: {path}")]
 pub struct AmbiguousPatternError {
-    pub pattern1: String,
-    pub pattern2: String,
+    pub pattern1: Span,
+    pub pattern2: Span,
     pub path: String,
 }
 
@@ -325,9 +341,11 @@ pub enum EvalError {
     #[error("{1}")]
     ErrorExpression(Span, String),
     #[error("assertion failed: {} != {}", .1 .0, .1 .1)]
-    AssertionFailed(Span, Box<(Value, Value)>),
+    AssertEqFailed(Span, Box<(Value, Value)>),
     #[error("assertion failed: \"{}\" does not match the pattern '{}'", .1 .0.escape_default(), .1 .1)]
-    AssertionMatchFailed(Span, Box<(String, String)>),
+    AssertMatchFailed(Span, Box<(String, String)>),
+    #[error("assertion failed: {1}")]
+    AssertCustomFailed(Span, String),
     #[error("path matches both a file in the workspace and a build recipe; use `:out-dir` or `:workspace` to disambiguate: {1}")]
     AmbiguousPathResolution(Span, Absolute<werk_fs::PathBuf>),
 }
@@ -364,8 +382,9 @@ impl werk_parser::parser::Spanned for EvalError {
             | EvalError::Path(span, _)
             | EvalError::Io(span, _)
             | EvalError::ErrorExpression(span, _)
-            | EvalError::AssertionFailed(span, _)
-            | EvalError::AssertionMatchFailed(span, _)
+            | EvalError::AssertEqFailed(span, _)
+            | EvalError::AssertMatchFailed(span, _)
+            | EvalError::AssertCustomFailed(span, _)
             | EvalError::AmbiguousPathResolution(span, _) => *span,
         }
     }
@@ -410,9 +429,10 @@ impl werk_util::Diagnostic for EvalError {
             EvalError::Path(..) => 26,
             EvalError::Io(..) => 27,
             EvalError::ErrorExpression(..) => 28,
-            EvalError::AssertionFailed(..) => 29,
-            EvalError::AssertionMatchFailed(..) => 30,
-            EvalError::AmbiguousPathResolution(..) => 31,
+            EvalError::AssertEqFailed(..) => 29,
+            EvalError::AssertMatchFailed(..) => 30,
+            EvalError::AssertCustomFailed(..) => 31,
+            EvalError::AmbiguousPathResolution(..) => 32,
         }
     }
 
@@ -420,9 +440,9 @@ impl werk_util::Diagnostic for EvalError {
         self.to_string()
     }
 
-    fn snippet(&self) -> Option<werk_util::DiagnosticSnippet> {
+    fn snippet(&self) -> Option<DiagnosticSnippet> {
         use werk_parser::parser::Spanned;
-        Some(werk_util::DiagnosticSnippet {
+        Some(DiagnosticSnippet {
             file_id: werk_util::DiagnosticFileId::default(), // TODO
             span: self.span().into(),
             message: self.to_string(),
@@ -430,7 +450,7 @@ impl werk_util::Diagnostic for EvalError {
         })
     }
 
-    fn context_snippets(&self) -> Vec<werk_util::DiagnosticSnippet> {
+    fn context_snippets(&self) -> Vec<DiagnosticSnippet> {
         vec![]
     }
 

@@ -4,7 +4,13 @@ use tests::mock_io::Test;
 pub fn parse_c_example(c: &mut Criterion) {
     static SOURCE: &str = include_str!("../../examples/c/Werkfile");
     c.bench_function("parse c example", |b| {
-        b.iter(|| black_box(werk_parser::parse_werk(SOURCE)).unwrap())
+        b.iter(|| {
+            black_box(werk_parser::parse_werk(
+                std::path::Path::new("../../examples/c/Werkfile"),
+                SOURCE,
+            ))
+            .unwrap()
+        })
     });
 }
 
@@ -25,7 +31,13 @@ pub fn parse_1000_lets(c: &mut Criterion) {
         source.push_str(&format!("let a{} = a{}\n", i, i - 1));
     }
     c.bench_function("parse 1000 lets", |b| {
-        b.iter(|| black_box(werk_parser::parse_werk(&source)).unwrap())
+        b.iter(|| {
+            black_box(werk_parser::parse_werk(
+                std::path::Path::new("INPUT"),
+                &source,
+            ))
+            .unwrap()
+        })
     });
 }
 
