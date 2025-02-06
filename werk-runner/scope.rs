@@ -406,6 +406,7 @@ pub fn default_global_constants() -> &'static HashMap<Symbol, Value> {
 pub struct SymCache {
     pub symbol_in: Symbol,
     pub symbol_out: Symbol,
+    pub symbol_color: Symbol,
 }
 
 impl SymCache {
@@ -416,6 +417,7 @@ impl SymCache {
             SymCache {
                 symbol_in: sym.insert("in"),
                 symbol_out: sym.insert("out"),
+                symbol_color: sym.insert("COLOR"),
             }
         })
     }
@@ -429,10 +431,24 @@ impl Scope for RootScope<'_> {
         };
 
         let Some(global) = self.workspace.manifest.globals.get(&name) else {
-            return default_global_constants()
+            // Global build-time constants.
+            if let Some(global_constant) = default_global_constants()
                 .get(&name)
                 .map(Eval::inherent)
-                .map(LookupValue::ValueRef);
+                .map(LookupValue::ValueRef)
+            {
+                return Some(global_constant);
+            }
+
+            // Runtime constants.
+            let cache = SymCache::get();
+            if name == cache.symbol_color {
+                return Some(LookupValue::Owned(Eval::inherent(Value::String(
+                    if self.workspace.force_color { "1" } else { "0" }.to_owned(),
+                ))));
+            }
+
+            return None;
         };
 
         Some(LookupValue::Ref(&global.value.value, &global.value.used))
