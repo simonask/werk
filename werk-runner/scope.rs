@@ -233,17 +233,172 @@ impl<'a> MatchScope<'a> {
     }
 }
 
+#[must_use]
+pub const fn current_os() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "ios") {
+        "ios"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "android") {
+        "android"
+    } else if cfg!(target_os = "freebsd") {
+        "freebsd"
+    } else if cfg!(target_os = "dragonfly") {
+        "dragonfly"
+    } else if cfg!(target_os = "openbsd") {
+        "openbsd"
+    } else if cfg!(target_os = "netbsd") {
+        "netbsd"
+    } else if cfg!(target_family = "wasm") {
+        "wasm-wasi"
+    } else {
+        "none"
+    }
+}
+
+#[must_use]
+pub const fn current_os_family() -> &'static str {
+    if cfg!(target_family = "unix") {
+        "unix"
+    } else if cfg!(target_family = "windows") {
+        "windows"
+    } else if cfg!(target_family = "wasm") {
+        "wasm"
+    } else {
+        "none"
+    }
+}
+
+#[must_use]
+pub const fn current_arch() -> &'static str {
+    if cfg!(target_arch = "x86") {
+        "x86"
+    } else if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else if cfg!(target_arch = "mips") {
+        "mips"
+    } else if cfg!(target_arch = "powerpc") {
+        "powerpc"
+    } else if cfg!(target_arch = "powerpc64") {
+        "powerpc64"
+    } else if cfg!(target_arch = "arm") {
+        "arm"
+    } else if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else if cfg!(target_family = "wasm") {
+        "wasm"
+    } else {
+        "none"
+    }
+}
+
+#[must_use]
+pub const fn current_arch_family() -> &'static str {
+    if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+        "x86"
+    } else if cfg!(target_arch = "mips") {
+        "mips"
+    } else if cfg!(any(target_arch = "powerpc", target_arch = "powerpc64")) {
+        "powerpc"
+    } else if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
+        "arm"
+    } else if cfg!(target_family = "wasm") {
+        "wasm"
+    } else {
+        "none"
+    }
+}
+
+#[must_use]
+pub const fn exe_suffix() -> &'static str {
+    if cfg!(windows) {
+        ".exe"
+    } else {
+        ""
+    }
+}
+
+#[must_use]
+pub const fn dylib_prefix() -> &'static str {
+    if cfg!(windows) {
+        ""
+    } else {
+        "lib"
+    }
+}
+
+#[must_use]
+pub const fn dylib_suffix() -> &'static str {
+    if cfg!(windows) {
+        ".dll"
+    } else if cfg!(any(target_os = "macos", target_os = "ios")) {
+        ".dylib"
+    } else {
+        ".so"
+    }
+}
+
+#[must_use]
+pub const fn staticlib_prefix() -> &'static str {
+    if cfg!(windows) {
+        ""
+    } else {
+        "lib"
+    }
+}
+
+#[must_use]
+pub const fn staticlib_suffix() -> &'static str {
+    if cfg!(windows) {
+        ".lib"
+    } else {
+        ".a"
+    }
+}
+
 pub fn default_global_constants() -> &'static HashMap<Symbol, Value> {
     static GLOBAL_CONSTANTS: std::sync::OnceLock<HashMap<Symbol, Value>> =
         std::sync::OnceLock::new();
     GLOBAL_CONSTANTS.get_or_init(|| {
         let mut map = HashMap::default();
         let mut sym = SymbolRegistryLock::lock();
-        map.insert(
-            sym.insert("EXE_SUFFIX"),
-            Value::String(if cfg!(windows) { ".exe" } else { "" }.to_owned()),
-        );
-        map.insert(sym.insert("EMPTY"), Value::String(String::new()));
+        map.extend([
+            (sym.insert("EMPTY"), Value::String(String::new())),
+            (
+                sym.insert("EXE_SUFFIX"),
+                Value::String(exe_suffix().to_owned()),
+            ),
+            (
+                sym.insert("DYLIB_PREFIX"),
+                Value::String(dylib_prefix().to_owned()),
+            ),
+            (
+                sym.insert("DYLIB_SUFFIX"),
+                Value::String(dylib_suffix().to_owned()),
+            ),
+            (
+                sym.insert("STATICLIB_PREFIX"),
+                Value::String(staticlib_prefix().to_owned()),
+            ),
+            (
+                sym.insert("STATICLIB_SUFFIX"),
+                Value::String(staticlib_suffix().to_owned()),
+            ),
+            (sym.insert("OS"), Value::String(current_os().to_owned())),
+            (
+                sym.insert("OS_FAMILY"),
+                Value::String(current_os_family().to_owned()),
+            ),
+            (sym.insert("ARCH"), Value::String(current_arch().to_owned())),
+            (
+                sym.insert("ARCH_FAMILY"),
+                Value::String(current_arch_family().to_owned()),
+            ),
+        ]);
         map
     })
 }
@@ -251,6 +406,7 @@ pub fn default_global_constants() -> &'static HashMap<Symbol, Value> {
 pub struct SymCache {
     pub symbol_in: Symbol,
     pub symbol_out: Symbol,
+    pub symbol_color: Symbol,
 }
 
 impl SymCache {
@@ -261,6 +417,7 @@ impl SymCache {
             SymCache {
                 symbol_in: sym.insert("in"),
                 symbol_out: sym.insert("out"),
+                symbol_color: sym.insert("COLOR"),
             }
         })
     }
@@ -274,10 +431,24 @@ impl Scope for RootScope<'_> {
         };
 
         let Some(global) = self.workspace.manifest.globals.get(&name) else {
-            return default_global_constants()
+            // Global build-time constants.
+            if let Some(global_constant) = default_global_constants()
                 .get(&name)
                 .map(Eval::inherent)
-                .map(LookupValue::ValueRef);
+                .map(LookupValue::ValueRef)
+            {
+                return Some(global_constant);
+            }
+
+            // Runtime constants.
+            let cache = SymCache::get();
+            if name == cache.symbol_color {
+                return Some(LookupValue::Owned(Eval::inherent(Value::String(
+                    if self.workspace.force_color { "1" } else { "0" }.to_owned(),
+                ))));
+            }
+
+            return None;
         };
 
         Some(LookupValue::Ref(&global.value.value, &global.value.used))

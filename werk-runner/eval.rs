@@ -1,4 +1,5 @@
 mod used;
+use indexmap::IndexSet;
 pub use used::*;
 use werk_fs::Absolute;
 use werk_util::Symbol;
@@ -223,6 +224,10 @@ pub fn eval_op(
             let subscope = SubexprScope::new(scope, &param);
             eval_chain(&subscope, &expr.expr)
         }
+        ast::ExprOp::StringExpr(expr) => {
+            let subscope = SubexprScope::new(scope, &param);
+            eval_string_expr(&subscope, expr).map(|eval| eval.map(Value::String))
+        }
         ast::ExprOp::Match(match_expr) => eval_match_expr(scope, match_expr, param).map(Into::into),
         ast::ExprOp::Map(expr) => eval_map(scope, expr, param),
         ast::ExprOp::Flatten(_) => Ok(eval_flatten(scope, param)),
@@ -231,6 +236,7 @@ pub fn eval_op(
         ast::ExprOp::Discard(expr) => eval_discard(scope, expr, param),
         ast::ExprOp::Join(expr) => eval_join(scope, expr, param),
         ast::ExprOp::Split(expr) => eval_split(scope, expr, param),
+        ast::ExprOp::Dedup(_) => Ok(eval_dedup(param)),
         ast::ExprOp::Lines(_) => Ok(eval_split_lines(scope, param)),
         ast::ExprOp::Info(expr) => {
             let scope = SubexprScope::new(scope, &param);
@@ -558,6 +564,14 @@ fn eval_split(
         value: Value::List(result),
         used,
     })
+}
+
+fn eval_dedup(param: Eval<Value>) -> Eval<Value> {
+    let new_value = dedup_recursive(param.value);
+    Eval {
+        value: new_value,
+        used: param.used,
+    }
 }
 
 fn eval_split_lines(_scope: &dyn Scope, param: Eval<Value>) -> Eval<Value> {
@@ -938,6 +952,18 @@ fn eval_string_interpolation_ops(
 
     for op in ops {
         match op {
+            ast::InterpolationOp::Dedup => {
+                *value = dedup_recursive(std::mem::replace(value, Value::List(Vec::new())));
+            }
+            ast::InterpolationOp::Filename => {
+                recursive_into_filename(value);
+            }
+            ast::InterpolationOp::Dirname => {
+                recursive_into_dirname(value);
+            }
+            ast::InterpolationOp::Ext => {
+                recursive_into_ext(value);
+            }
             ast::InterpolationOp::ReplaceExtension { from, to } => {
                 recursive_replace_extension(value, from, to);
             }
@@ -1385,6 +1411,50 @@ fn recursive_replace_extension(value: &mut Value, from: &str, to: &str) {
     });
 }
 
+fn recursive_into_filename(value: &mut Value) {
+    value.recursive_modify(|s| {
+        if let Ok(path) = werk_fs::Path::new(s) {
+            let filename = path.file_name();
+            *s = filename.to_string();
+        } else {
+            let path = std::path::Path::new(s);
+            if let Some(filename) = path.file_name() {
+                *s = filename.to_string_lossy().into_owned();
+            }
+        }
+    });
+}
+
+fn recursive_into_dirname(value: &mut Value) {
+    value.recursive_modify(|s| {
+        if let Ok(path) = werk_fs::Path::new(s) {
+            if let Some(dirname) = path.parent() {
+                *s = dirname.to_string();
+            }
+        } else {
+            let path = std::path::Path::new(s);
+            if let Some(dirname) = path.parent() {
+                *s = dirname.to_string_lossy().into_owned();
+            }
+        }
+    });
+}
+
+fn recursive_into_ext(value: &mut Value) {
+    value.recursive_modify(|s| {
+        if let Ok(path) = werk_fs::Path::new(s) {
+            if let Some(ext) = path.extension() {
+                *s = ext.to_string();
+            }
+        } else {
+            let path = std::path::Path::new(s);
+            if let Some(ext) = path.extension() {
+                *s = ext.to_string_lossy().into_owned();
+            }
+        }
+    });
+}
+
 fn recursive_prepend_each(value: &mut Value, prefix: &str) {
     value.recursive_modify(|s| {
         s.insert_str(0, prefix);
@@ -1405,6 +1475,28 @@ fn recursive_regex_replace(value: &mut Value, regex: &regex::Regex, replacer: &s
         };
         *s = replaced;
     });
+}
+
+fn dedup_recursive(value: Value) -> Value {
+    fn dedup_recursive(set: &mut IndexSet<String>, values: Vec<Value>) {
+        for value in values {
+            match value {
+                Value::List(values) => dedup_recursive(set, values),
+                Value::String(s) => {
+                    set.insert(s);
+                }
+            }
+        }
+    }
+
+    match value {
+        Value::String(_) => value,
+        Value::List(values) => {
+            let mut set = IndexSet::default();
+            dedup_recursive(&mut set, values);
+            Value::List(set.into_iter().map(Value::String).collect())
+        }
+    }
 }
 
 fn find_first_string(list: &[Value]) -> Option<&str> {

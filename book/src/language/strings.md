@@ -91,6 +91,8 @@ they are applied in order.
 - `{...:s/regex/replacement/}` replaces occurrences matching `regex` with
   `replacement`. The regex is passed verbatim to the `regex` crate, and the
   replacement string follows the normal conventions.
+- `{...:dedup}`: When interpolating a list, deduplicate entries in the list
+  (removing duplicate entries recursively), preserving the original order.
 - `{...:dir}`: When the stem refers to an [abstract path](../paths.md), produces
   the directory part of the path.
 - `{...:filename}`: When the stem refers to an [abstract path](../paths.md),

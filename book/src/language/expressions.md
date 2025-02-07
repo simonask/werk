@@ -345,6 +345,19 @@ Example:
 let filtered = ["a.c", "b.cpp"] | detain "%.cpp"   # ["a.c"]
 ```
 
+### `dedup`
+
+Deduplicate strings in a list (recursively), preserving the original order. This
+implies `flatten`.
+
+When given a single string, returns the string unmodified.
+
+Example:
+
+```werk
+let deduplicated = ["a", ["a"], "b", "a"] | dedup    # ["a", "b"]
+```
+
 ### `map`
 
 Given a list expression, pass each element through a string expression where the

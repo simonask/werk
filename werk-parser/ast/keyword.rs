@@ -129,6 +129,7 @@ def_keyword!(Filter, "filter");
 def_keyword!(FilterMatch, "filter-match");
 def_keyword!(Discard, "discard");
 def_keyword!(Split, "split");
+def_keyword!(Dedup, "dedup");
 def_keyword!(Lines, "lines");
 
 def_keyword!(AssertEq, "assert-eq");

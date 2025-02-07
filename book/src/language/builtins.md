@@ -13,14 +13,6 @@ In build recipes:
   scope and that pattern has a `%` in scope. When defining patterns in a scope
   where another pattern is already present, the interpolated `{%}` may be used
   to unambiguously refer to the stem of the "outer" pattern.
-- `{+}` or `<+>`: Same as `in`, except that duplicate entries are preserved in
-  the order they were declared. This is primarily useful for use in linking
-  commands where it is meaningful to repeat library file names in a particular
-  order.
-- `{@D}`: The directory part of the file name of the target. Same as
-  `{out:dir}`.
-- `{@F}`: The file-within-directory part of the file name of the target. Same as
-  `{out:filename}`.
 
 ## Global constants
 
