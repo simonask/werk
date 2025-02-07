@@ -83,7 +83,29 @@ fn command_argument_splitting() {
         cmd.value,
         ShellCommandLine {
             program: program_path("a"),
-            arguments: vec![String::from("abc")],
+            arguments: vec![String::from("a b c")],
+        }
+    );
+
+    // Support single-quoting, for things like `sh -c 'foo bar'`.
+    let expr = parse.parse(Input::new(r#""a -c 'a b'""#)).unwrap();
+    let cmd = eval::eval_shell_command(&RootScope::new(&workspace), &expr).unwrap();
+    assert_eq!(
+        cmd.value,
+        ShellCommandLine {
+            program: program_path("a"),
+            arguments: vec![String::from("-c"), String::from("a b")],
+        }
+    );
+
+    // Argument expansion within single quotes
+    let expr = parse.parse(Input::new(r#""a -c '{abc*}'""#)).unwrap();
+    let cmd = eval::eval_shell_command(&RootScope::new(&workspace), &expr).unwrap();
+    assert_eq!(
+        cmd.value,
+        ShellCommandLine {
+            program: program_path("a"),
+            arguments: vec![String::from("-c"), String::from("a b c")],
         }
     );
 }
