@@ -81,7 +81,7 @@ impl<'a, P, O> Parser<'a, O> for P where P: winnow::Parser<Input<'a>, O, ModalEr
 /// including comments and whitespace, which means that any syntactical
 /// difference must also be captured in the AST, which implies that there is, in
 /// fact, a single rule per AST node.
-pub(crate) trait Parse<'a>: Sized {
+pub trait Parse<'a>: Sized {
     fn parse(input: &mut Input<'a>) -> PResult<Self>;
 }
 
@@ -91,7 +91,7 @@ impl<'a, T: Parse<'a>> Parse<'a> for Box<T> {
     }
 }
 
-fn parse<'a, T: Parse<'a>>(input: &mut Input<'a>) -> Result<T, ModalErr> {
+pub fn parse<'a, T: Parse<'a>>(input: &mut Input<'a>) -> Result<T, ModalErr> {
     T::parse(input)
 }
 

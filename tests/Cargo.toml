@@ -53,6 +53,10 @@ path = "test_path_resolution.rs"
 name = "test_cases"
 path = "test_cases.rs"
 
+[[test]]
+name = "test_eval"
+path = "test_eval.rs"
+
 [[bench]]
 name = "bench_eval"
 harness = false

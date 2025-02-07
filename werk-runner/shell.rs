@@ -63,19 +63,24 @@ impl std::fmt::Display for ShellCommandLineBuilder {
 
 #[derive(Default, Debug)]
 pub struct ShellCommandLineBuilder {
-    in_quotes: bool,
+    in_quotes: Option<InQuotes>,
     escape: bool,
     parts: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum InQuotes {
+    Single,
+    Double,
+}
+
 impl ShellCommandLineBuilder {
-    fn push_char(&mut self, ch: char) -> &mut Self {
+    fn push_char(&mut self, ch: char) {
         if let Some(last) = self.parts.last_mut() {
             last.push(ch);
         } else {
             self.parts.push(ch.to_string());
         }
-        self
     }
 
     /// Push literal string. Any double-quote char enters/exits a quoted
@@ -88,8 +93,18 @@ impl ShellCommandLineBuilder {
             } else if ch == '\\' {
                 self.escape = true;
             } else if ch == '"' {
-                self.in_quotes = !self.in_quotes;
-            } else if ch.is_whitespace() && !self.in_quotes {
+                match self.in_quotes {
+                    Some(InQuotes::Single) => self.push_char('"'),
+                    Some(InQuotes::Double) => self.in_quotes = None,
+                    None => self.in_quotes = Some(InQuotes::Double),
+                }
+            } else if ch == '\'' {
+                match self.in_quotes {
+                    Some(InQuotes::Single) => self.in_quotes = None,
+                    Some(InQuotes::Double) => self.push_char('\''),
+                    None => self.in_quotes = Some(InQuotes::Single),
+                }
+            } else if ch.is_whitespace() && self.in_quotes.is_none() {
                 if !self.parts.last().is_some_and(std::string::String::is_empty) {
                     self.parts.push(String::new());
                 }
@@ -118,12 +133,8 @@ impl ShellCommandLineBuilder {
     /// 2. Otherwise, split the string by whitespace and pass each part as a
     ///    separate argument.
     pub fn push_arg(&mut self, s: &str) -> &mut Self {
-        if self.in_quotes {
-            if let Some(last) = self.parts.last_mut() {
-                last.push_str(s);
-            } else if !s.is_empty() {
-                self.parts.push(s.to_owned());
-            }
+        if self.in_quotes.is_some() {
+            self.push_str(s);
         } else {
             let trimmed = s.trim();
             if !trimmed.is_empty() {
@@ -144,9 +155,24 @@ impl ShellCommandLineBuilder {
     /// passed as a single argument. Otherwise, each value is passed as a
     /// separate argument.
     pub fn push_all(&mut self, value: &Value) -> &mut Self {
-        value.for_each_string_recursive(|s| {
-            self.push_arg(s);
-        });
+        if self.in_quotes.is_some() {
+            let mut first = true;
+            value.for_each_string_recursive(|s| {
+                let s = s.trim();
+                if !s.is_empty() {
+                    if first {
+                        first = false;
+                    } else {
+                        self.push_char(' ');
+                    }
+                    self.push_str(s);
+                }
+            });
+        } else {
+            value.for_each_string_recursive(|s| {
+                self.push_arg(s);
+            });
+        }
         self
     }
 
@@ -155,7 +181,7 @@ impl ShellCommandLineBuilder {
         span: Span,
         workspace: &Workspace,
     ) -> Result<(ShellCommandLine, Option<UsedVariable>), EvalError> {
-        if self.in_quotes {
+        if self.in_quotes.is_some() {
             Err(EvalError::UnterminatedQuote(span))
         } else {
             let mut parts = self.parts.drain(..);
