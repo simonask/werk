@@ -5,7 +5,7 @@ use winnow::Parser as _;
 
 #[test]
 fn command_argument_splitting() {
-    let test = Test::new(r#"let foo = "a"; let abc = ["a", "b", "c"]"#).unwrap();
+    let test = Test::new(r#"let foo = "a"; let abc = ["a", "b", "c"]; let q = "\"""#).unwrap();
     test.io
         .set_program("a", program_path("a"), |_, _, _| Ok(empty_program_output()));
     let workspace = test.create_workspace(&[]).unwrap();
@@ -106,6 +106,17 @@ fn command_argument_splitting() {
         ShellCommandLine {
             program: program_path("a"),
             arguments: vec![String::from("-c"), String::from("a b c")],
+        }
+    );
+
+    // Quotes in interpolated variables do not terminate a quoted argument.
+    let expr = parse.parse(Input::new(r#""a \"{q}\"""#)).unwrap();
+    let cmd = eval::eval_shell_command(&RootScope::new(&workspace), &expr).unwrap();
+    assert_eq!(
+        cmd.value,
+        ShellCommandLine {
+            program: program_path("a"),
+            arguments: vec![String::from("\"")],
         }
     );
 }
