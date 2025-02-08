@@ -1,14 +1,16 @@
+mod complete;
 pub mod dry_run;
 mod render;
 
-use std::sync::Arc;
+use std::{borrow::Cow, path::Path, sync::Arc};
 
 use ahash::HashSet;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::ArgValueCandidates;
 use futures::future::Either;
 use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
-use render::AutoStream;
+use render::{AutoStream, ColorOutputKind};
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
 use werk_util::{Diagnostic, DiagnosticError, DiagnosticFileRepository, DiagnosticSource};
@@ -24,26 +26,9 @@ fn version_string() -> String {
     )
 }
 
-#[derive(Debug, clap::Parser)]
-#[command(version = version_string())]
-pub struct Args {
-    /// The target to build.
-    pub target: Option<String>,
-
-    #[clap(short, long)]
-    /// The path to the Werkfile. Defaults to searching for `Werkfile` in the
-    /// current working directory and its parents.
-    pub file: Option<std::path::PathBuf>,
-
-    /// List the available recipes.
-    #[clap(short, long)]
-    pub list: bool,
-
-    /// Dry run; do not execute any recipe commands. Note: Shell commands used
-    /// in global variables are still executed!
-    #[clap(long)]
-    pub dry_run: bool,
-
+#[derive(clap::Args, Debug)]
+#[command(next_help_heading = "Output options")]
+pub struct OutputArgs {
     /// Print recipe commands as they are executed. Implied by `--verbose`.
     #[clap(long)]
     pub print_commands: bool,
@@ -72,6 +57,40 @@ pub struct Args {
     #[clap(long, short)]
     pub verbose: bool,
 
+    #[clap(long, default_value = "auto")]
+    pub color: ColorChoice,
+
+    #[clap(long, default_value = "ansi")]
+    pub output_format: OutputChoice,
+
+    /// Enable debug logging to stdout.
+    ///
+    /// This takes a logging directive like `RUST_LOG`.
+    #[clap(long)]
+    pub log: Option<Option<String>>,
+}
+
+#[derive(Debug, clap::Parser)]
+#[command(version = version_string(), bin_name = env!("CARGO_BIN_NAME"))]
+pub struct Args {
+    /// The target to build.
+    #[clap(add = ArgValueCandidates::new(complete::targets))]
+    pub target: Option<String>,
+
+    /// The path to the Werkfile. Defaults to searching for `Werkfile` in the
+    /// current working directory and its parents.
+    #[clap(short, long)]
+    pub file: Option<std::path::PathBuf>,
+
+    /// List the available recipes.
+    #[clap(short, long)]
+    pub list: bool,
+
+    /// Dry run; do not execute any recipe commands. Note: Shell commands used
+    /// in global variables are still executed!
+    #[clap(long)]
+    pub dry_run: bool,
+
     /// Build the target, then keep rebuilding it when the workspace changes.
     #[clap(long, short)]
     pub watch: bool,
@@ -80,12 +99,6 @@ pub struct Args {
     /// rebuilding. Implies `--watch`.
     #[clap(long, default_value = "250")]
     pub watch_delay: u64,
-
-    #[clap(long, default_value = "auto")]
-    pub color: ColorChoice,
-
-    #[clap(long, default_value = "ansi")]
-    pub output_format: OutputChoice,
 
     /// Number of tasks to execute in parallel. Defaults to the number of CPU cores.
     #[clap(long, short)]
@@ -101,14 +114,11 @@ pub struct Args {
     pub output_dir: Option<std::path::PathBuf>,
 
     /// Override global variable. This takes the form `name=value`.
-    #[clap(long, short = 'D')]
+    #[clap(long, short = 'D', add = ArgValueCandidates::new(complete::defines))]
     pub define: Vec<String>,
 
-    /// Enable debug logging to stdout.
-    ///
-    /// This takes a logging directive like `RUST_LOG`.
-    #[clap(long)]
-    pub log: Option<Option<String>>,
+    #[command(flatten)]
+    pub output: OutputArgs,
 }
 
 /// Color mode.
@@ -136,7 +146,7 @@ pub enum OutputChoice {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum Error {
+pub enum Error {
     #[error("Parsing error")]
     Parse,
     #[error("Evaluation error")]
@@ -160,8 +170,10 @@ enum Error {
 }
 
 fn main() -> Result<(), Error> {
+    clap_complete::CompleteEnv::with_factory(Args::command).complete();
+
     let args = Args::parse();
-    match args.log {
+    match args.output.log {
         Some(Some(ref directive)) => tracing_subscriber::fmt::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::new(directive))
             .init(),
@@ -179,33 +191,17 @@ fn main() -> Result<(), Error> {
 async fn try_main(args: Args) -> Result<(), Error> {
     anstyle_query::windows::enable_ansi_colors();
 
-    let color_stdout = render::ColorOutputKind::initialize(&std::io::stdout(), args.color);
-    let color_stderr = render::ColorOutputKind::initialize(&std::io::stderr(), args.color);
+    let color_stdout = render::ColorOutputKind::initialize(&std::io::stdout(), args.output.color);
+    let color_stderr = render::ColorOutputKind::initialize(&std::io::stderr(), args.output.color);
 
-    let werkfile = if let Some(file) = args.file {
-        file.normalize()?
-    } else {
-        find_werkfile()?
+    let werkfile = match &args.file {
+        Some(file) => file.clone().normalize()?,
+        _ => find_werkfile()?,
     };
     tracing::info!("Using werkfile: {}", werkfile.display());
 
     // Determine the workspace directory.
-    let workspace_dir_abs;
-    let workspace_dir = if let Some(ref workspace_dir) = args.workspace_dir {
-        workspace_dir_abs = workspace_dir.as_path().normalize()?;
-        if !workspace_dir_abs.is_dir() {
-            return Err(Error::WorkspaceDirectory(
-                workspace_dir.display().to_string(),
-                std::io::Error::new(std::io::ErrorKind::NotADirectory, "not a directory"),
-            ));
-        } else {
-            &workspace_dir_abs
-        }
-    } else {
-        werkfile
-            .parent()
-            .expect("normalized Werkfile path has no parent directory")
-    };
+    let workspace_dir = get_workspace_dir(&args, &werkfile)?;
 
     // Parse the werk manifest!
     let source_code = std::fs::read_to_string(&werkfile)?;
@@ -219,30 +215,10 @@ async fn try_main(args: Args) -> Result<(), Error> {
         print_eval_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
     })?;
 
-    let out_dir = find_output_directory(
-        workspace_dir,
-        args.output_dir.as_deref(),
-        config.output_directory.as_deref(),
-    )?;
+    let settings = get_workspace_settings(&config, &args, &workspace_dir, color_stdout)?;
 
     tracing::info!("Project directory: {}", workspace_dir.display());
-    tracing::info!("Output directory: {}", out_dir.display());
-
-    let mut settings = WorkspaceSettings::new(workspace_dir.to_owned());
-    settings.jobs = args.jobs.unwrap_or_else(num_cpus::get);
-    settings.output_directory = out_dir;
-    for def in &args.define {
-        let Some((key, value)) = def.split_once('=') else {
-            return Err(Error::InvalidDefineArg(def.clone()));
-        };
-        settings.define(key, value);
-    }
-    settings.force_color = color_stdout.supports_color();
-
-    settings.artificial_delay = std::env::var("_WERK_ARTIFICIAL_DELAY")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .map(std::time::Duration::from_millis);
+    tracing::info!("Output directory: {}", settings.output_directory.display());
 
     let io: Arc<dyn werk_runner::Io> = if args.dry_run || args.list {
         Arc::new(dry_run::DryRun::new())
@@ -251,26 +227,26 @@ async fn try_main(args: Args) -> Result<(), Error> {
     };
 
     let renderer = render::make_renderer(render::OutputSettings {
-        logging_enabled: args.log.is_some() || args.list,
+        logging_enabled: args.output.log.is_some() || args.list,
         color: color_stderr,
-        output: if args.log.is_some() {
+        output: if args.output.log.is_some() {
             OutputChoice::Log
         } else {
-            args.output_format
+            args.output.output_format
         },
-        print_recipe_commands: args.print_commands | args.verbose,
-        print_fresh: args.print_fresh | args.verbose,
+        print_recipe_commands: args.output.print_commands | args.output.verbose,
+        print_fresh: args.output.print_fresh | args.output.verbose,
         dry_run: args.dry_run,
-        quiet: args.quiet && !args.verbose && !args.loud,
-        loud: args.loud | args.verbose,
-        explain: args.explain | args.verbose,
+        quiet: args.output.quiet && !args.output.verbose && !args.output.loud,
+        loud: args.output.loud | args.output.verbose,
+        explain: args.output.explain | args.output.verbose,
     });
 
     let workspace = Workspace::new_with_diagnostics(
         &ast,
         &*io,
         &*renderer,
-        workspace_dir.to_owned(),
+        workspace_dir.into_owned(),
         &settings,
     )
     .map_err(print_error)?;
@@ -619,7 +595,7 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
     }
 }
 
-fn find_werkfile() -> Result<Absolute<std::path::PathBuf>, Error> {
+pub fn find_werkfile() -> Result<Absolute<std::path::PathBuf>, Error> {
     const WERKFILE_NAMES: &[&str] = &["Werkfile", "werkfile", "build.werk"];
 
     let mut current = Absolute::current_dir()?;
@@ -638,6 +614,58 @@ fn find_werkfile() -> Result<Absolute<std::path::PathBuf>, Error> {
             return Err(Error::NoWerkfile);
         }
     }
+}
+
+pub fn get_workspace_dir<'a>(
+    args: &'a Args,
+    werkfile: &'a Absolute<Path>,
+) -> Result<Cow<'a, Absolute<Path>>, Error> {
+    if let Some(ref workspace_dir) = args.workspace_dir {
+        let workspace_dir_abs = workspace_dir.as_path().normalize()?;
+        if !workspace_dir_abs.is_dir() {
+            return Err(Error::WorkspaceDirectory(
+                workspace_dir.display().to_string(),
+                std::io::Error::new(std::io::ErrorKind::NotADirectory, "not a directory"),
+            ));
+        }
+        Ok(workspace_dir_abs)
+    } else {
+        let workspace_dir = werkfile
+            .parent()
+            .expect("normalized Werkfile path has no parent directory");
+        Ok(Cow::Borrowed(workspace_dir))
+    }
+}
+
+pub fn get_workspace_settings(
+    config: &werk_runner::ir::Config,
+    args: &Args,
+    workspace_dir: &Absolute<std::path::Path>,
+    color_stdout: ColorOutputKind,
+) -> Result<WorkspaceSettings, Error> {
+    let out_dir = find_output_directory(
+        workspace_dir,
+        args.output_dir.as_deref(),
+        config.output_directory.as_deref(),
+    )?;
+
+    let mut settings = WorkspaceSettings::new(workspace_dir.to_owned());
+    settings.jobs = args.jobs.unwrap_or_else(num_cpus::get);
+    settings.output_directory = out_dir;
+    for def in &args.define {
+        let Some((key, value)) = def.split_once('=') else {
+            return Err(Error::InvalidDefineArg(def.clone()));
+        };
+        settings.define(key, value);
+    }
+    settings.force_color = color_stdout.supports_color();
+
+    settings.artificial_delay = std::env::var("_WERK_ARTIFICIAL_DELAY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .map(std::time::Duration::from_millis);
+
+    Ok(settings)
 }
 
 fn find_output_directory(
