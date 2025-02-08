@@ -53,6 +53,8 @@ pub enum BuildStatus {
     /// Target is a dependency that exists in the filesystem, along with its
     /// last modification time.
     Exists(Absolute<SymPath>, SystemTime),
+    /// The target does not exist, and that's fine.
+    Ignore(Absolute<SymPath>),
 }
 
 impl BuildStatus {
@@ -78,6 +80,7 @@ impl BuildStatus {
                     None
                 }
             }
+            BuildStatus::Ignore(_) => None,
         }
     }
 }
@@ -418,6 +421,31 @@ impl<'a> Inner<'a> {
         let mtime = entry.metadata.mtime;
         tracing::debug!("Check file mtime `{path}`: {mtime:?}");
         Ok(BuildStatus::Exists(Absolute::symbolicate(path), mtime))
+    }
+
+    /// Existence check used for dependencies discovered in depfiles.
+    ///
+    /// 1. If the file exists in the workspace, use the workspace file's mtime.
+    /// 2. Otherwise, if the file exists in the output directory, use its mtime.
+    /// 3. When the file neither exists in the filesystem, nor in the output
+    ///    directory, nor is there a build recipe to produce it, ignore it.
+    fn check_exists_relaxed(&self, path: &Absolute<werk_fs::Path>) -> BuildStatus {
+        let mtime = if let Some(entry) = self.workspace.get_project_file(path) {
+            Some(entry.metadata.mtime)
+        } else if let Ok(Some(entry)) = self.workspace.get_existing_output_file(path) {
+            Some(entry.metadata.mtime)
+        } else {
+            None
+        };
+
+        if let Some(mtime) = mtime {
+            tracing::debug!("Check file mtime `{path}`: {mtime:?}");
+            BuildStatus::Exists(Absolute::symbolicate(path), mtime)
+        } else {
+            // The dependency could not be found anywhere, so just ignore it.
+            tracing::debug!("Depfile dependency not found anywhere, ignoring it: {path}");
+            BuildStatus::Ignore(Absolute::symbolicate(path))
+        }
     }
 
     #[tracing::instrument(level = "debug", skip_all, fields(target_file))]
@@ -928,13 +956,7 @@ impl<'a> Inner<'a> {
                 }
             },
             TaskSpec::CheckExists(path) => self.check_exists(&path),
-            TaskSpec::CheckExistsRelaxed(path) => match self.check_exists(&path) {
-                Err(Error::NoRuleToBuildTarget(_)) => Ok(BuildStatus::Complete(
-                    task_id,
-                    Outdatedness::outdated(Reason::Missing(Absolute::symbolicate(&path))),
-                )),
-                otherwise => otherwise,
-            },
+            TaskSpec::CheckExistsRelaxed(path) => Ok(self.check_exists_relaxed(&path)),
         }
     }
 }

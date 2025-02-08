@@ -515,7 +515,7 @@ build "binary" {
         test.output_path(["binary"]).display(),
         // File in the output directory should be considered as a dependency,
         // but the fact that it does not exist in the workspace should not force
-        // the target to be outdated.
+        // the target to become outdated.
         test.output_path(["nonexistent_source.rs"]).display()
     );
     // The binary exists and is up to date.
@@ -537,7 +537,7 @@ build "binary" {
                 outdatedness
             );
         }
-        BuildStatus::Exists(..) => {
+        BuildStatus::Exists(..) | BuildStatus::Ignore(..) => {
             panic!("should have been built with a build rule")
         }
     }
