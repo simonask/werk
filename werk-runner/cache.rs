@@ -64,14 +64,14 @@ impl TargetOutdatednessCache {
     pub fn is_define_outdated(&self, define: Symbol, new_hash: Hash128) -> bool {
         self.define
             .get(&define)
-            .map_or(true, |old_hash| *old_hash != new_hash)
+            .is_none_or(|old_hash| *old_hash != new_hash)
     }
 
     #[inline]
     pub fn is_global_outdated(&self, var: Symbol, new_hash: Hash128) -> bool {
         self.global
             .get(&var)
-            .map_or(true, |old_hash| *old_hash != new_hash)
+            .is_none_or(|old_hash| *old_hash != new_hash)
     }
 }
 
