@@ -389,6 +389,28 @@ impl<'a> Test<'a> {
         )
     }
 
+    pub fn set_output_file(
+        &self,
+        path: &[&str],
+        contents: impl AsRef<[u8]>,
+    ) -> std::io::Result<()> {
+        let mut fs = self.io.filesystem.lock();
+        let path = self.output_path(path);
+        create_parent_dirs(&mut fs, &path).unwrap();
+        insert_fs(
+            &mut fs,
+            path.as_ref(),
+            (
+                Metadata {
+                    mtime: self.io.now(),
+                    is_file: true,
+                    is_symlink: false,
+                },
+                Vec::from(contents.as_ref()),
+            ),
+        )
+    }
+
     pub fn set_workspace_dir(&self, path: &[&str]) -> std::io::Result<()> {
         let mut fs = self.io.filesystem.lock();
         let path = self.workspace_path(path);

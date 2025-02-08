@@ -496,3 +496,49 @@ async fn test_outdated_global_constant() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[apply(smol_macros::test)]
+async fn test_relaxed_depfile_outdatedness_issue_47() {
+    _ = tracing_subscriber::fmt::try_init();
+
+    static WERK_DEPFILE: &str = r#"
+build "binary" {
+    depfile "depfile.d"
+    let contents = "foo"
+    run "write {contents} <out>"
+}"#;
+
+    let test = Test::new(WERK_DEPFILE).unwrap();
+
+    let depfile = format!(
+        "{}: {}",
+        test.output_path(["binary"]).display(),
+        // File in the output directory should be considered as a dependency,
+        // but the fact that it does not exist in the workspace should not force
+        // the target to be outdated.
+        test.output_path(["nonexistent_source.rs"]).display()
+    );
+    // The binary exists and is up to date.
+    test.set_output_file(&["binary"], "foo").unwrap();
+    // The depfile exists from a previous run.
+    test.set_output_file(&["depfile.d"], &depfile).unwrap();
+
+    let workspace = test.create_workspace(&[]).unwrap();
+    let runner = werk_runner::Runner::new(&workspace);
+    let status = runner
+        .build_file(werk_fs::Path::new("binary").unwrap())
+        .await
+        .unwrap();
+    match status {
+        BuildStatus::Complete(_task_id, outdatedness) => {
+            assert!(
+                outdatedness.is_unchanged(),
+                "outdatedness = {:?}",
+                outdatedness
+            );
+        }
+        BuildStatus::Exists(..) => {
+            panic!("should have been built with a build rule")
+        }
+    }
+}
