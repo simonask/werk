@@ -86,14 +86,14 @@ impl Symbol {
 impl std::fmt::Debug for Symbol {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+        std::fmt::Display::fmt(self.as_str(), f)
     }
 }
 
 impl std::fmt::Display for Symbol {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+        std::fmt::Display::fmt(self.as_str(), f)
     }
 }
 
