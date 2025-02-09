@@ -18,7 +18,7 @@ use winnow::{
     Parser,
 };
 
-use super::{parse, PResult, Parse};
+use super::{parse, PResult, Parse, Spanned};
 
 impl<'a> Parse<'a> for ast::StringExpr<'a> {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
@@ -32,6 +32,13 @@ impl<'a> Parse<'a> for ast::StringExpr<'a> {
         .parse_next(input)?;
         expr.span = span;
         Ok(expr)
+    }
+}
+
+impl Spanned for ast::StringExpr<'_> {
+    #[inline]
+    fn span(&self) -> super::Span {
+        self.span
     }
 }
 

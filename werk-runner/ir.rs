@@ -150,74 +150,58 @@ pub struct BuildRecipe<'a> {
 }
 
 #[derive(Debug, Default, PartialEq)]
-pub struct Config {
-    pub edition: Edition,
-    pub output_directory: Option<String>,
+pub struct Defaults<'a> {
+    pub output_directory: Option<&'a str>,
     pub print_commands: Option<bool>,
-    pub default_target: Option<String>,
+    pub print_fresh: Option<bool>,
+    pub quiet: Option<bool>,
+    pub loud: Option<bool>,
+    pub explain: Option<bool>,
+    pub verbose: Option<bool>,
+    pub watch_delay: Option<i32>,
+    pub jobs: Option<i32>,
+    pub edition: Edition,
 }
 
-impl Config {
-    pub fn new_with_diagnostics<'a>(
+impl<'a> Defaults<'a> {
+    pub fn new_with_diagnostics(
         doc: &'a werk_parser::Document<'a>,
-    ) -> Result<Self, DiagnosticError<'a, EvalError, &'a werk_parser::Document<'a>>> {
+    ) -> Result<Self, DiagnosticError<EvalError, &'a werk_parser::Document<'a>>> {
         Self::new(doc).map_err(|err| err.into_diagnostic_error(doc))
     }
 
-    pub fn new(doc: &werk_parser::Document) -> Result<Self> {
-        let mut config = Self::default();
+    pub fn new(doc: &'a werk_parser::Document<'a>) -> Result<Self> {
+        let mut defaults = Self::default();
         for stmt in &doc.root.statements {
-            let ast::RootStmt::Config(ref config_stmt) = stmt.statement else {
+            let ast::RootStmt::Default(ref stmt) = stmt.statement else {
                 continue;
             };
 
-            match config_stmt.ident.ident.as_str() {
-                "edition" => {
-                    let edition = match config_stmt.value {
-                        ast::ConfigValue::String(ast::ConfigString(_, ref edition))
-                            if edition == "v1" =>
-                        {
-                            Edition::V1
-                        }
-                        _ => return Err(EvalError::InvalidEdition(config_stmt.span)),
-                    };
-                    config.edition = edition;
+            match stmt {
+                ast::DefaultStmt::Target(_) => continue, // Evaluated on workspace creation.
+                ast::DefaultStmt::OutDir(entry) => {
+                    defaults.output_directory = Some(&*entry.value.1);
                 }
-                "out-dir" | "output-directory" => {
-                    let value = match config_stmt.value {
-                        ast::ConfigValue::String(ast::ConfigString(_, ref value)) => {
-                            value.to_string()
-                        }
-                        ast::ConfigValue::Bool(_) => {
-                            return Err(EvalError::ExpectedConfigString(config_stmt.span))
-                        }
-                    };
-                    config.output_directory = Some(value);
+                ast::DefaultStmt::PrintCommands(entry) => {
+                    defaults.print_commands = Some(entry.value.1);
                 }
-                "print-commands" => {
-                    let value = match config_stmt.value {
-                        ast::ConfigValue::Bool(ast::ConfigBool(_, ref value)) => *value,
-                        ast::ConfigValue::String(_) => {
-                            return Err(EvalError::ExpectedConfigBool(config_stmt.span))
-                        }
-                    };
-                    config.print_commands = Some(value);
+                ast::DefaultStmt::PrintFresh(entry) => defaults.print_fresh = Some(entry.value.1),
+                ast::DefaultStmt::Quiet(entry) => defaults.quiet = Some(entry.value.1),
+                ast::DefaultStmt::Loud(entry) => defaults.loud = Some(entry.value.1),
+                ast::DefaultStmt::Explain(entry) => defaults.explain = Some(entry.value.1),
+                ast::DefaultStmt::Verbose(entry) => defaults.verbose = Some(entry.value.1),
+                ast::DefaultStmt::WatchDelay(entry) => defaults.watch_delay = Some(entry.value.1),
+                ast::DefaultStmt::Jobs(entry) => defaults.jobs = Some(entry.value.1),
+                ast::DefaultStmt::Edition(entry) => {
+                    if entry.value.1 == "v1" {
+                        defaults.edition = Edition::V1;
+                    } else {
+                        return Err(EvalError::InvalidEdition(entry.value.0));
+                    }
                 }
-                "default" | "default-target" => {
-                    let value = match config_stmt.value {
-                        ast::ConfigValue::String(ast::ConfigString(_, ref value)) => {
-                            value.to_string()
-                        }
-                        ast::ConfigValue::Bool(_) => {
-                            return Err(EvalError::ExpectedConfigString(config_stmt.span))
-                        }
-                    };
-                    config.default_target = Some(value);
-                }
-                _ => return Err(EvalError::UnknownConfigKey(config_stmt.ident.span)),
             }
         }
 
-        Ok(config)
+        Ok(defaults)
     }
 }

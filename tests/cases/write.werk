@@ -1,4 +1,4 @@
-config default = "foo"
+default target = "foo"
 
 build "foo" {
     run {

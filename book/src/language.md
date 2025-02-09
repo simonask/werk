@@ -41,26 +41,27 @@ Example:
 let message = "Hello, World!"
 ```
 
-### `config` statement
+### `default` statement
 
-Sets project-level settings for the workspace. May only appear in the global
-scope. Expressions are _not_ supported as values, and string interpolation does
-not happen.
+Sets project-level settings for the workspace, providing default values for
+command-line arguments. May only appear in the global scope. Expressions are not
+supported as values, and string interpolation does not happen, except for the
+`target` key.
 
 Syntax:
 
 ```werk
-config <identifier> = <value>
+default <key> = <value>
 ```
 
 Example:
 
 ```werk
 # Set the output directory for the workspace.
-config out-dir = "path/to/output/directory"
+default out-dir = "path/to/output/directory"
 
 # Set the recipe to run when `werk` is run without arguments.
-config default-target = "build"
+default target = "build"
 ```
 
 ### `task` statement

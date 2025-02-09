@@ -19,7 +19,7 @@ Consider the following Werkfile:
 #    dir\
 #    foo.txt
 
-config out-dir = "target"
+default out-dir = "target"
 
 let input = "foo.txt"
 let output = "bar.txt"

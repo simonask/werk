@@ -1,4 +1,4 @@
-config default = "hello"
+default target = "hello"
 
 task hello {
     info "Hello, World!"

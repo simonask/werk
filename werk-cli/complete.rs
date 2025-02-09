@@ -26,7 +26,7 @@ fn with_werk<T: Default>(f: impl FnOnce(Workspace<'_>) -> Result<T, anyhow::Erro
 
         let source_code = std::fs::read_to_string(&werkfile)?;
         let ast = werk_parser::parse_werk(&werkfile, &source_code)?;
-        let config = werk_runner::ir::Config::new(&ast)?;
+        let config = werk_runner::ir::Defaults::new(&ast)?;
 
         let io = DryRun::new();
         let renderer = NullRender;

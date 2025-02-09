@@ -109,6 +109,7 @@ pub struct Workspace<'a> {
     runtime_caches: Mutex<Caches>,
     /// Overridden global variables from the command line.
     pub defines: HashMap<Symbol, String>,
+    pub default_target: Option<String>,
     pub force_color: bool,
     pub io: &'a dyn Io,
     pub render: &'a dyn Render,
@@ -136,7 +137,7 @@ impl<'a> Workspace<'a> {
         render: &'a dyn Render,
         project_root: Absolute<std::path::PathBuf>,
         settings: &WorkspaceSettings,
-    ) -> Result<Self, DiagnosticError<'a, Error, &'a werk_parser::Document<'a>>> {
+    ) -> Result<Self, DiagnosticError<Error, &'a werk_parser::Document<'a>>> {
         Self::new(ast, io, render, project_root, settings)
             .map_err(|err| err.into_diagnostic_error(ast))
     }
@@ -196,6 +197,7 @@ impl<'a> Workspace<'a> {
                 .iter()
                 .map(|(k, v)| (Symbol::new(k), v.clone()))
                 .collect(),
+            default_target: None,
             force_color: settings.force_color,
             io,
             render,
@@ -227,7 +229,12 @@ impl<'a> Workspace<'a> {
                 .to_string();
 
             match stmt.statement {
-                ast::RootStmt::Config(_) => {
+                ast::RootStmt::Default(ast::DefaultStmt::Target(ref stmt)) => {
+                    let scope = RootScope::new(self);
+                    let value = eval::eval_string_expr(&scope, &stmt.value)?;
+                    self.default_target = Some(value.value);
+                }
+                ast::RootStmt::Default(_) => {
                     // Ignore; these should be parsed by the front-end.
                     continue;
                 }

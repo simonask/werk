@@ -1,4 +1,4 @@
-config default = "foofoo"
+default target = "foofoo"
 
 build "%foo" {
     info "<out>"

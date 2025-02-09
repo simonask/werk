@@ -14,10 +14,10 @@ Reference:
 
 ```werk
 # Set the output directory, relative to the workspace root. Default is "target".
-config out-dir = "output-directory"
+default out-dir = "output-directory"
 
 # Set the default recipe to run when werk is run without arguments.
-config default = "recipe-name"
+default target = "recipe-name"
 ```
 
 ## Customize your tasks and recipes

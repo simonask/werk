@@ -217,7 +217,7 @@ impl<'a> Runner<'a> {
     pub async fn build_file(
         &self,
         target: &Path,
-    ) -> Result<BuildStatus, DiagnosticError<'a, Error, &'a Workspace<'a>>> {
+    ) -> Result<BuildStatus, DiagnosticError<Error, &'a Workspace<'a>>> {
         let target = target
             .absolutize(werk_fs::Path::ROOT)
             .map_err(|err| Error::InvalidTargetPath(target.to_string(), err))
@@ -239,7 +239,7 @@ impl<'a> Runner<'a> {
     pub async fn run_command(
         &self,
         target: &str,
-    ) -> Result<BuildStatus, DiagnosticError<'a, Error, &'a Workspace<'a>>> {
+    ) -> Result<BuildStatus, DiagnosticError<Error, &'a Workspace<'a>>> {
         tracing::debug!("Run: {target}");
         let spec = self
             .inner
@@ -257,7 +257,7 @@ impl<'a> Runner<'a> {
     pub async fn build_or_run(
         &self,
         target: &str,
-    ) -> Result<BuildStatus, DiagnosticError<'a, Error, &'a Workspace<'a>>> {
+    ) -> Result<BuildStatus, DiagnosticError<Error, &'a Workspace<'a>>> {
         tracing::debug!("Build or run: {target}");
         let spec = self
             .inner

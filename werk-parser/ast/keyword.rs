@@ -5,7 +5,7 @@ use crate::{
     Failure,
 };
 
-pub trait Keyword: Spanned {
+pub trait Keyword: Spanned + std::marker::Copy {
     const TOKEN: &'static str;
     fn with_span(span: Span) -> Self;
 
@@ -100,6 +100,7 @@ macro_rules! def_keyword {
 
 def_keyword!(Let, "let");
 def_keyword!(Config, "config");
+def_keyword!(Default, "default");
 def_keyword!(Build, "build");
 def_keyword!(Task, "task");
 def_keyword!(Shell, "shell");
@@ -131,6 +132,19 @@ def_keyword!(Discard, "discard");
 def_keyword!(Split, "split");
 def_keyword!(Dedup, "dedup");
 def_keyword!(Lines, "lines");
+
+// `default` keys (CLI flag defaults)
+def_keyword!(Target, "target");
+def_keyword!(OutDir, "out-dir");
+def_keyword!(PrintCommands, "print-commands");
+def_keyword!(PrintFresh, "print-fresh");
+def_keyword!(Quiet, "quiet");
+def_keyword!(Loud, "loud");
+def_keyword!(Explain, "explain");
+def_keyword!(Verbose, "verbose");
+def_keyword!(WatchDelay, "watch-delay");
+def_keyword!(Jobs, "jobs");
+def_keyword!(Edition, "edition");
 
 def_keyword!(AssertEq, "assert-eq");
 def_keyword!(SetCapture, "capture");

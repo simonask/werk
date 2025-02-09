@@ -1,5 +1,5 @@
-config out-dir = "../../target/examples/c"
-config default = "build"
+default out-dir = "../../target/examples/c"
+default target = "build"
 
 # Path to the C compiler.
 let cc = which "clang"

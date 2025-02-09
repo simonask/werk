@@ -1,4 +1,4 @@
-config default = "build"
+default target = "build"
 
 # Path to clang
 let cc = which "clang"

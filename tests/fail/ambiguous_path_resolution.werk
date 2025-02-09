@@ -1,4 +1,4 @@
-config default = "build"
+default target = "build"
 
 # Directories should not participate in the lookup that happens as part
 # of build recipe matching.

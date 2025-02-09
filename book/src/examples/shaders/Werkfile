@@ -1,4 +1,4 @@
-config default = "build"
+default target = "build"
 
 let glslc = which "glslc"
 let tar = which "tar"

@@ -6,7 +6,7 @@ its parent directories.
 Create a `Werkfile` in a directory with the following contents:
 
 ```werk
-config default = "hello"
+default target = "hello"
 
 task hello {
     info "Hello, World!"

@@ -1,50 +1,42 @@
 use std::ops::Range;
 
 #[derive(Clone, Copy)]
-pub struct DiagnosticError<'a, T, R> {
+pub struct DiagnosticError<T, R> {
     pub repository: R,
     pub error: T,
-    pub renderer: Option<&'a annotate_snippets::Renderer>,
 }
 
-impl<'a, T, R> DiagnosticError<'a, T, R> {
-    pub fn map_err<F: FnOnce(T) -> U, U>(self, f: F) -> DiagnosticError<'a, U, R> {
+impl<T, R> DiagnosticError<T, R> {
+    pub fn map_err<F: FnOnce(T) -> U, U>(self, f: F) -> DiagnosticError<U, R> {
         DiagnosticError {
             repository: self.repository,
             error: f(self.error),
-            renderer: self.renderer,
-        }
-    }
-
-    pub fn with_renderer(
-        self,
-        renderer: &annotate_snippets::Renderer,
-    ) -> DiagnosticError<'_, T, R> {
-        DiagnosticError {
-            repository: self.repository,
-            error: self.error,
-            renderer: Some(renderer),
         }
     }
 }
 
-impl<T: std::fmt::Debug, R> std::fmt::Debug for DiagnosticError<'_, T, R> {
+impl<T: Diagnostic, R: DiagnosticFileRepository + Sized> DiagnosticError<T, R> {
+    pub fn display<'a>(
+        &'a self,
+        renderer: &'a annotate_snippets::Renderer,
+    ) -> impl std::fmt::Display + 'a {
+        self.error.display(&self.repository, renderer)
+    }
+}
+
+impl<T: std::fmt::Debug, R> std::fmt::Debug for DiagnosticError<T, R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.error.fmt(f)
     }
 }
 
-impl<T: Diagnostic, R: DiagnosticFileRepository> std::fmt::Display for DiagnosticError<'_, T, R> {
+impl<T: Diagnostic, R: DiagnosticFileRepository> std::fmt::Display for DiagnosticError<T, R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(renderer) = self.renderer {
-            self.error.render_with(f, &self.repository, renderer)
-        } else {
-            self.error.render(f, &self.repository)
-        }
+        self.error.render(f, &self.repository)
     }
 }
 
-impl<T, R> std::error::Error for DiagnosticError<'_, T, R>
+impl<T, R> std::error::Error for DiagnosticError<T, R>
 where
     T: Diagnostic + std::error::Error,
     R: DiagnosticFileRepository,
@@ -120,45 +112,44 @@ pub trait Diagnostic {
         f: &mut std::fmt::Formatter,
         source_files: &dyn DiagnosticFileRepository,
     ) -> std::fmt::Result {
-        self.render_with(f, source_files, &annotate_snippets::Renderer::styled())
+        render_diagnostic_default(
+            self,
+            f,
+            source_files,
+            &annotate_snippets::Renderer::styled(),
+        )
     }
 
-    fn render_with(
-        &self,
-        f: &mut std::fmt::Formatter,
-        source_files: &dyn DiagnosticFileRepository,
-        render: &annotate_snippets::Renderer,
-    ) -> std::fmt::Result {
-        render_diagnostic_default(self, f, source_files, render)
+    fn display<'a>(
+        &'a self,
+        source_files: &'a dyn DiagnosticFileRepository,
+        render: &'a annotate_snippets::Renderer,
+    ) -> impl std::fmt::Display {
+        Display(self, source_files, render)
     }
 
-    fn into_diagnostic_error<'a, R: DiagnosticFileRepository>(
+    fn into_diagnostic_error<R: DiagnosticFileRepository>(
         self,
         source_files: R,
-    ) -> DiagnosticError<'a, Self, R>
+    ) -> DiagnosticError<Self, R>
     where
         Self: Sized,
     {
         DiagnosticError {
             repository: source_files,
             error: self,
-            renderer: None,
         }
     }
+}
 
-    fn into_diagnostic_error_with_renderer<R: DiagnosticFileRepository>(
-        self,
-        source_files: R,
-        renderer: &annotate_snippets::Renderer,
-    ) -> DiagnosticError<'_, Self, R>
-    where
-        Self: Sized,
-    {
-        DiagnosticError {
-            repository: source_files,
-            error: self,
-            renderer: Some(renderer),
-        }
+struct Display<'a, D: ?Sized>(
+    &'a D,
+    &'a dyn DiagnosticFileRepository,
+    &'a annotate_snippets::Renderer,
+);
+impl<D: Diagnostic + ?Sized> std::fmt::Display for Display<'_, D> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        render_diagnostic_default(self.0, f, self.1, self.2)
     }
 }
 

@@ -1,4 +1,4 @@
-config default = "build"
+default target = "build"
 
 let cargo = which "cargo"
 let glslc = which "glslc"

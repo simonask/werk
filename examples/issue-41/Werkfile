@@ -1,5 +1,5 @@
-config out-dir = "../../target/examples/issue-41"
-config default = "build"
+default out-dir = "../../target/examples/issue-41"
+default target = "build"
 
 build "foo" {
     info "<out>"

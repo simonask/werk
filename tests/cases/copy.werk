@@ -1,4 +1,4 @@
-config default = "bar"
+default target = "bar"
 
 build "bar" {
     from "foo"

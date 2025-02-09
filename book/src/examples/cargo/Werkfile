@@ -1,5 +1,5 @@
-config default = "build"
-config out-dir = "target"
+default target = "build"
+default out-dir = "target"
 
 let cargo = which "cargo"
 

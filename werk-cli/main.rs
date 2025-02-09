@@ -211,11 +211,11 @@ async fn try_main(args: Args) -> Result<(), Error> {
     })?;
 
     // Read the configuration statements from the AST.
-    let config = werk_runner::ir::Config::new(&ast).map_err(|err| {
+    let defaults = werk_runner::ir::Defaults::new(&ast).map_err(|err| {
         print_eval_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
     })?;
 
-    let settings = get_workspace_settings(&config, &args, &workspace_dir, color_stdout)?;
+    let settings = get_workspace_settings(&defaults, &args, &workspace_dir, color_stdout)?;
 
     tracing::info!("Project directory: {}", workspace_dir.display());
     tracing::info!("Output directory: {}", settings.output_directory.display());
@@ -260,7 +260,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     let target = args
         .target
         .clone()
-        .or_else(|| config.default_target.clone());
+        .or_else(|| workspace.default_target.clone());
     let Some(target) = target else {
         return Err(Error::NoTarget);
     };
@@ -385,7 +385,7 @@ async fn autowatch_loop(
         };
 
         // Reload config.
-        let config = match werk_runner::ir::Config::new_with_diagnostics(&ast) {
+        let config = match werk_runner::ir::Defaults::new_with_diagnostics(&ast) {
             Ok(config) => config,
             Err(err) => {
                 print_eval_error(err);
@@ -397,7 +397,7 @@ async fn autowatch_loop(
         let out_dir = match find_output_directory(
             &workspace_dir,
             output_directory_from_args,
-            config.output_directory.as_deref(),
+            config.output_directory,
         ) {
             Ok(out_dir) => out_dir,
             Err(err) => {
@@ -419,15 +419,6 @@ async fn autowatch_loop(
             settings.output_directory = out_dir;
         }
 
-        let target = target_from_args
-            .clone()
-            .or_else(|| config.default_target.clone());
-        let Some(target) = target else {
-            render.warning(None, "No configured default target");
-            watch_set = watch_manifest.clone();
-            continue;
-        };
-
         let workspace = match Workspace::new_with_diagnostics(
             &ast,
             io,
@@ -442,6 +433,15 @@ async fn autowatch_loop(
                 // the current watchset.
                 continue;
             }
+        };
+
+        let target = target_from_args
+            .clone()
+            .or_else(|| workspace.default_target.clone());
+        let Some(target) = target else {
+            render.warning(None, "No configured default target");
+            watch_set = watch_manifest.clone();
+            continue;
         };
 
         // Update the watchset.
@@ -638,7 +638,7 @@ pub fn get_workspace_dir<'a>(
 }
 
 pub fn get_workspace_settings(
-    config: &werk_runner::ir::Config,
+    config: &werk_runner::ir::Defaults,
     args: &Args,
     workspace_dir: &Absolute<std::path::Path>,
     color_stdout: ColorOutputKind,
@@ -646,7 +646,7 @@ pub fn get_workspace_settings(
     let out_dir = find_output_directory(
         workspace_dir,
         args.output_dir.as_deref(),
-        config.output_directory.as_deref(),
+        config.output_directory,
     )?;
 
     let mut settings = WorkspaceSettings::new(workspace_dir.to_owned());
@@ -712,5 +712,5 @@ fn print_diagnostic<E: Diagnostic, R: DiagnosticFileRepository>(err: DiagnosticE
             .diagnostic_terminal_width()
             .unwrap_or(DEFAULT_TERM_WIDTH),
     );
-    anstream::eprintln!("{}", err.with_renderer(&renderer));
+    anstream::eprintln!("{}", err.display(&renderer));
 }
