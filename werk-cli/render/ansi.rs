@@ -221,7 +221,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
                         writeln!(out, "{} {task_id}", Bracketed(" -- ").bright_blue())?
                     }
                 }
-                Ok(BuildStatus::Exists(..)) => {
+                Ok(BuildStatus::Exists(..) | BuildStatus::Ignore(..)) => {
                     // Print nothing for file existence checks.
                 }
                 Err(err) => {

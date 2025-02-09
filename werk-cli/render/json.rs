@@ -48,6 +48,7 @@ impl werk_runner::Render for JsonWatcher {
                 result: match result {
                     Ok(werk_runner::BuildStatus::Complete(..)) => Ok("rebuilt"),
                     Ok(werk_runner::BuildStatus::Exists(..)) => Ok("exists"),
+                    Ok(werk_runner::BuildStatus::Ignore(..)) => Ok("ignored"),
                     Err(err) => Err(err.to_string()),
                 },
             },
