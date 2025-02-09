@@ -112,6 +112,8 @@ error_case!(task_string_name);
 error_case!(build_ident_name);
 error_case!(match_unterminated);
 error_case!(match_no_arrow);
+error_case!(default_unknown_key);
+error_case!(default_invalid_value);
 
 success_case!(c);
 success_case!(config);

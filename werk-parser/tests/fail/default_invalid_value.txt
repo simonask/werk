@@ -1,0 +1,6 @@
+error[P1001]: parse error
+ --> INPUT:1:18
+  |
+1 | default target = hello
+  |                  ^ expected string literal
+  |

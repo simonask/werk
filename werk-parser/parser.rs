@@ -234,7 +234,7 @@ impl<'a> Parse<'a> for ast::RootStmt<'a> {
             parse.map(ast::RootStmt::Task),
             parse.map(ast::RootStmt::Build),
             fatal(Failure::Expected(&"statement"))
-                .help("one of `config`, `let`, `task`, or `build`"),
+                .help("one of `default`, `let`, `task`, or `build`"),
         ))
         .parse_next(input)
     }
@@ -279,7 +279,7 @@ impl<'a> Parse<'a> for ast::DefaultStmt<'a> {
             entry(token, ws_1).map(ast::DefaultStmt::WatchDelay),
             entry(token, ws_1).map(ast::DefaultStmt::Jobs),
             entry(token, ws_1).map(ast::DefaultStmt::Edition),
-            winnow::combinator::fail.expect(&"valid key for a default statement"),
+            fatal(Failure::Expected(&"valid key for `default` statement")).help("one of `target`, `out-dir`, `print-commands`, `print-fresh`, `quiet`, `loud`, `explain`, `verbose`, `watch-delay`, `jobs`, or `edition`"),
         ))
         .parse_next(input)
     }
