@@ -230,6 +230,7 @@ impl<'a> Parse<'a> for ast::RootStmt<'a> {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
         alt((
             parse.map(ast::RootStmt::Default),
+            parse.map(ast::RootStmt::Config),
             parse.map(ast::RootStmt::Let),
             parse.map(ast::RootStmt::Task),
             parse.map(ast::RootStmt::Build),
@@ -410,32 +411,39 @@ impl<'a> Parse<'a> for ast::BuildRecipe<'a> {
 
 impl<'a> Parse<'a> for ast::LetStmt<'a> {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
-        fn let_stmt_inner<'a>(input: &mut Input<'a>) -> PResult<ast::LetStmt<'a>> {
-            let (token_let, ws_1, ident, ws_2, token_eq, ws_3, value) = seq! {(
-                parse,
-                cut_err(whitespace_nonempty).expect(&"whitespace after `let`"),
-                cut_err(parse).help("`let` must be followed by an identifier"),
-                whitespace,
-                cut_err(parse).help("`let <identifier>` must be followed by a `=`"),
-                whitespace,
-                cut_err(parse),
-            )}
-            .while_parsing("`let` statement")
-            .parse_next(input)?;
+        let (mut stmt, span) = seq! { ast::LetStmt {
+            span: default,
+            token_let: parse,
+            ws_1: cut_err(whitespace_nonempty).expect(&"whitespace after `let`"),
+            ident: cut_err(parse).help("`let` must be followed by an identifier"),
+            ws_2: whitespace,
+            token_eq: cut_err(parse).help("`let <identifier>` must be followed by a `=`"),
+            ws_3: whitespace,
+            value: cut_err(parse),
+        }}
+        .with_token_span()
+        .while_parsing("`let` statement")
+        .parse_next(input)?;
+        stmt.span = span;
+        Ok(stmt)
+    }
+}
 
-            Ok(ast::LetStmt {
-                span: Span::default(),
-                token_let,
-                ws_1,
-                ident,
-                ws_2,
-                token_eq,
-                ws_3,
-                value,
-            })
-        }
-
-        let (mut stmt, span) = let_stmt_inner.with_token_span().parse_next(input)?;
+impl<'a> Parse<'a> for ast::ConfigStmt<'a> {
+    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+        let (mut stmt, span) = seq! { ast::ConfigStmt {
+            span: default,
+            token_config: parse,
+            ws_1: cut_err(whitespace_nonempty).expect(&"whitespace after `config`"),
+            ident: cut_err(parse).help("`config` must be followed by an identifier"),
+            ws_2: whitespace,
+            token_eq: cut_err(parse).help("`config <identifier>` must be followed by a `=`"),
+            ws_3: whitespace,
+            value: cut_err(parse),
+        }}
+        .with_token_span()
+        .while_parsing("`config` statement")
+        .parse_next(input)?;
         stmt.span = span;
         Ok(stmt)
     }

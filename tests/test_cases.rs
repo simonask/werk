@@ -106,3 +106,4 @@ success_case!(dedup);
 error_case!(ambiguous_build_recipe);
 error_case!(ambiguous_path_resolution);
 error_case!(capture_group_out_of_bounds);
+error_case!(duplicate_config);

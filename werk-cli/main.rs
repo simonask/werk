@@ -499,19 +499,26 @@ fn make_notifier_for_files(
 }
 
 pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write) {
-    let globals = doc
+    let configs = doc
         .globals
+        .configs
         .iter()
-        .map(|(k, v)| (k, format!("{}", v.value.display_friendly(80)), &v.comment))
+        .map(|(k, v)| (*k, format!("{}", v.value.display_friendly(80)), &v.comment))
         .collect::<Vec<_>>();
-    let max_global_name_len = globals
+    let max_config_name_len = configs
         .iter()
         .map(|(name, _, _)| name.as_str().len())
         .max()
         .unwrap_or(0);
-    let max_global_value_len = globals
+    let max_config_value_len = configs
         .iter()
-        .map(|(_, value, comment)| if !comment.is_empty() { value.len() } else { 0 })
+        .filter_map(|(_, value, comment)| {
+            if !comment.is_empty() {
+                Some(value.len())
+            } else {
+                None
+            }
+        })
         .max()
         .unwrap_or(0);
 
@@ -528,23 +535,27 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
         .max()
         .unwrap_or(0);
 
-    if max_global_name_len != 0 {
-        _ = writeln!(out, "{}", "Global variables:".bright_purple());
+    if max_config_name_len != 0 {
+        _ = writeln!(
+            out,
+            "{}",
+            "Config variables:".bright_purple().bold().underline()
+        );
 
-        for (name, value, comment) in globals {
+        for (name, value, comment) in configs {
             if comment.is_empty() {
                 _ = writeln!(
                     out,
                     "  {} = {}",
-                    format_args!("{: <w$}", name, w = max_global_name_len).bright_yellow(),
+                    format_args!("{name: >w$}", w = max_config_name_len).bright_yellow(),
                     value,
                 );
             } else {
                 _ = writeln!(
                     out,
                     "  {} = {} {}",
-                    format_args!("{: <w$}", name, w = max_global_name_len).bright_yellow(),
-                    format_args!("{: <w$}", value, w = max_global_value_len),
+                    format_args!("{name: >w$}", w = max_config_name_len).bright_yellow(),
+                    format_args!("{value: <w$}", w = max_config_value_len),
                     comment.dimmed(),
                 );
             }
@@ -556,7 +567,11 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
     }
 
     if max_command_len != 0 {
-        _ = writeln!(out, "{}", "Available commands:".bright_purple());
+        _ = writeln!(
+            out,
+            "{}",
+            "Available commands:".bright_purple().bold().underline()
+        );
         for (name, recipe) in &doc.task_recipes {
             if recipe.doc_comment.is_empty() {
                 _ = writeln!(out, "  {}", name.bright_cyan());
@@ -575,7 +590,11 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
     }
 
     if max_pattern_len != 0 {
-        _ = writeln!(out, "{}", "Available recipes:".bright_purple());
+        _ = writeln!(
+            out,
+            "{}",
+            "Available recipes:".bright_purple().bold().underline()
+        );
         for recipe in &doc.build_recipes {
             if recipe.doc_comment.is_empty() {
                 _ = writeln!(out, "  {}", recipe.pattern.string.bright_yellow());

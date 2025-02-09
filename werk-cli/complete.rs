@@ -70,10 +70,15 @@ pub fn targets() -> Vec<CompletionCandidate> {
 
 pub fn defines() -> Vec<CompletionCandidate> {
     with_werk(|workspace| {
-        let defines = workspace.manifest.globals.iter().map(|(symbol, global)| {
-            let help = global.value.to_string();
-            CompletionCandidate::new(format!("{symbol}=")).help(Some(help.into()))
-        });
+        let defines = workspace
+            .manifest
+            .globals
+            .configs
+            .iter()
+            .map(|(symbol, global)| {
+                let help = global.value.to_string();
+                CompletionCandidate::new(format!("{symbol}=")).help(Some(help.into()))
+            });
 
         Ok(defines.collect())
     })

@@ -119,6 +119,7 @@ impl Root<'_> {
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum RootStmt<'a> {
     Default(DefaultStmt<'a>),
+    Config(ConfigStmt<'a>),
     Let(LetStmt<'a>),
     Task(TaskRecipe<'a>),
     Build(BuildRecipe<'a>),
@@ -439,6 +440,32 @@ pub struct LetStmt<'a> {
 }
 
 impl SemanticHash for LetStmt<'_> {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.ident.semantic_hash(state);
+        self.value.semantic_hash(state);
+    }
+}
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ConfigStmt<'a> {
+    #[serde(skip, default)]
+    pub span: Span,
+    #[serde(skip, default)]
+    pub token_config: keyword::Config,
+    #[serde(skip, default)]
+    pub ws_1: Whitespace,
+    pub ident: Ident,
+    #[serde(skip, default)]
+    pub ws_2: Whitespace,
+    #[serde(skip, default)]
+    pub token_eq: token::Eq,
+    #[serde(skip, default)]
+    pub ws_3: Whitespace,
+    #[serde(flatten)]
+    pub value: ExprChain<'a>,
+}
+
+impl SemanticHash for ConfigStmt<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.ident.semantic_hash(state);
         self.value.semantic_hash(state);

@@ -304,6 +304,8 @@ pub enum EvalError {
     IllegalOneOfPattern(Span),
     #[error("duplicate pattern")]
     DuplicatePattern(Span, Span),
+    #[error("duplicate config statement")]
+    DuplicateConfigStatement(Span, Span),
     #[error("no implied interpolation value in this context; provide an identifier or a capture group index")]
     NoImpliedValue(Span),
     #[error("capture group with index {1} is out of bounds in the current scope")]
@@ -370,6 +372,7 @@ impl werk_parser::parser::Spanned for EvalError {
             | EvalError::NoPatternStem(span)
             | EvalError::IllegalOneOfPattern(span)
             | EvalError::DuplicatePattern(span, _)
+            | EvalError::DuplicateConfigStatement(span, _)
             | EvalError::NoImpliedValue(span)
             | EvalError::NoSuchCaptureGroup(span, _)
             | EvalError::NoSuchIdentifier(span, _)
@@ -417,6 +420,7 @@ impl werk_util::Diagnostic for EvalError {
             EvalError::NoPatternStem(..) => 5,
             EvalError::IllegalOneOfPattern(..) => 6,
             EvalError::DuplicatePattern(..) => 7,
+            EvalError::DuplicateConfigStatement(..) => 33,
             EvalError::NoImpliedValue(..) => 8,
             EvalError::NoSuchCaptureGroup(..) => 9,
             EvalError::NoSuchIdentifier(..) => 10,
@@ -466,6 +470,14 @@ impl werk_util::Diagnostic for EvalError {
                     file_id: DiagnosticFileId::default(), // TODO: might come from another file
                     span: err.build_recipe.into(),
                     message: String::from("matched this build recipe"),
+                    info: vec![],
+                }]
+            }
+            EvalError::DuplicateConfigStatement(_, previous_span) => {
+                vec![DiagnosticSnippet {
+                    file_id: DiagnosticFileId::default(), // TODO: Might come from another file,
+                    span: (*previous_span).into(),
+                    message: String::from("previous config statement here"),
                     info: vec![],
                 }]
             }

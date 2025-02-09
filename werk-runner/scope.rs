@@ -1,18 +1,74 @@
 use ahash::HashMap;
+use werk_parser::parser::Span;
 use werk_util::{Symbol, SymbolRegistryLock};
 
 use crate::{
     eval::{Eval, Used},
-    ir, Io, PatternMatchData, Render, TaskId, Value, Workspace,
+    ir, EvalError, Io, PatternMatchData, Render, TaskId, Value, Workspace,
 };
 
 pub type LocalVariables = indexmap::IndexMap<Symbol, Eval<Value>>;
-pub type GlobalVariables = indexmap::IndexMap<Symbol, GlobalVar>;
 
-pub struct GlobalVar {
-    pub value: Eval<Value>,
-    /// Doc comment.
+#[derive(Default)]
+pub struct GlobalVariables {
+    /// `config` variables and their values at the point when they were
+    /// evaluated.
+    pub configs: indexmap::IndexMap<Symbol, ConfigVar>,
+    /// All variables (both `let` and `config`) with their values at the current
+    /// point in their scope.
+    pub variables: ahash::HashMap<Symbol, Eval<Value>>,
+}
+
+pub struct ConfigVar {
+    /// Snapshot of the value when the `config` statement was evaluated
+    /// (unshadowed).
+    pub value: Value,
+    /// Doc comment
     pub comment: String,
+    /// The span of the `config` statement.
+    pub span: Span,
+}
+
+impl GlobalVariables {
+    #[inline]
+    pub fn set(&mut self, name: Symbol, value: Eval<Value>) {
+        self.variables.insert(name, value);
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn get(&self, name: Symbol) -> Option<&Eval<Value>> {
+        self.variables.get(&name)
+    }
+
+    /// Set the value of an evaluated `config` statement.
+    ///
+    /// This fails if a previous config statement has already defined a value
+    /// here, and captures the value at this point to prevent shadowing `let`
+    /// statements from polluting the output of `--list`.
+    pub fn set_config(
+        &mut self,
+        name: Symbol,
+        value: Eval<Value>,
+        span: Span,
+        comment: String,
+    ) -> Result<(), EvalError> {
+        if let Some(previous_value) = self.configs.insert(
+            name,
+            ConfigVar {
+                value: value.value.clone(),
+                span,
+                comment,
+            },
+        ) {
+            return Err(EvalError::DuplicateConfigStatement(
+                span,
+                previous_value.span,
+            ));
+        }
+        self.variables.insert(name, value);
+        Ok(())
+    }
 }
 
 pub struct RootScope<'a> {
@@ -430,7 +486,7 @@ impl Scope for RootScope<'_> {
             return None;
         };
 
-        let Some(global) = self.workspace.manifest.globals.get(&name) else {
+        let Some(global) = self.workspace.manifest.globals.get(name) else {
             // Global build-time constants.
             if let Some(global_constant) = default_global_constants()
                 .get(&name)
@@ -451,7 +507,7 @@ impl Scope for RootScope<'_> {
             return None;
         };
 
-        Some(LookupValue::Ref(&global.value.value, &global.value.used))
+        Some(LookupValue::Ref(&global.value, &global.used))
     }
 
     #[inline]

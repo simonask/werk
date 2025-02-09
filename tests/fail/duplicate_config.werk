@@ -1,0 +1,2 @@
+config foo = "a"
+config foo = "b"
