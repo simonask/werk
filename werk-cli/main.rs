@@ -192,7 +192,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     anstyle_query::windows::enable_ansi_colors();
 
     let color_stdout = render::ColorOutputKind::initialize(&std::io::stdout(), args.output.color);
-    let color_stderr = render::ColorOutputKind::initialize(&std::io::stderr(), args.output.color);
+    let color_stderr = ColorOutputKind::initialize(&std::io::stderr(), args.output.color);
 
     let werkfile = match &args.file {
         Some(file) => file.clone().normalize()?,
@@ -210,7 +210,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
         print_parse_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
     })?;
 
-    // Read the configuration statements from the AST.
+    // Read the `default` statements from the AST.
     let defaults = werk_runner::ir::Defaults::new(&ast).map_err(|err| {
         print_eval_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
     })?;
@@ -226,21 +226,11 @@ async fn try_main(args: Args) -> Result<(), Error> {
         Arc::new(werk_runner::RealSystem::new())
     };
 
-    let renderer = render::make_renderer(render::OutputSettings {
-        logging_enabled: args.output.log.is_some() || args.list,
-        color: color_stderr,
-        output: if args.output.log.is_some() {
-            OutputChoice::Log
-        } else {
-            args.output.output_format
-        },
-        print_recipe_commands: args.output.print_commands | args.output.verbose,
-        print_fresh: args.output.print_fresh | args.output.verbose,
-        dry_run: args.dry_run,
-        quiet: args.output.quiet && !args.output.verbose && !args.output.loud,
-        loud: args.output.loud | args.output.verbose,
-        explain: args.output.explain | args.output.verbose,
-    });
+    let renderer = render::make_renderer(render::OutputSettings::from_args_and_defaults(
+        &args,
+        &defaults,
+        color_stderr,
+    ));
 
     let workspace = Workspace::new_with_diagnostics(
         &ast,
