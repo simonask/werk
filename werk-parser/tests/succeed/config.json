@@ -1,14 +1,12 @@
 [
     {
-        "Config": {
-            "ident": "out-dir",
-            "value": "../../target/examples/c"
+        "Default": {
+            "OutDir": "../../target/examples/c"
         }
     },
     {
-        "Config": {
-            "ident": "default",
-            "value": "build"
+        "Default": {
+            "Target": "build"
         }
     }
 ]

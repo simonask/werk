@@ -192,7 +192,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     anstyle_query::windows::enable_ansi_colors();
 
     let color_stdout = render::ColorOutputKind::initialize(&std::io::stdout(), args.output.color);
-    let color_stderr = render::ColorOutputKind::initialize(&std::io::stderr(), args.output.color);
+    let color_stderr = ColorOutputKind::initialize(&std::io::stderr(), args.output.color);
 
     let werkfile = match &args.file {
         Some(file) => file.clone().normalize()?,
@@ -210,12 +210,12 @@ async fn try_main(args: Args) -> Result<(), Error> {
         print_parse_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
     })?;
 
-    // Read the configuration statements from the AST.
-    let config = werk_runner::ir::Config::new(&ast).map_err(|err| {
+    // Read the `default` statements from the AST.
+    let defaults = werk_runner::ir::Defaults::new(&ast).map_err(|err| {
         print_eval_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
     })?;
 
-    let settings = get_workspace_settings(&config, &args, &workspace_dir, color_stdout)?;
+    let settings = get_workspace_settings(&defaults, &args, &workspace_dir, color_stdout)?;
 
     tracing::info!("Project directory: {}", workspace_dir.display());
     tracing::info!("Output directory: {}", settings.output_directory.display());
@@ -226,21 +226,11 @@ async fn try_main(args: Args) -> Result<(), Error> {
         Arc::new(werk_runner::RealSystem::new())
     };
 
-    let renderer = render::make_renderer(render::OutputSettings {
-        logging_enabled: args.output.log.is_some() || args.list,
-        color: color_stderr,
-        output: if args.output.log.is_some() {
-            OutputChoice::Log
-        } else {
-            args.output.output_format
-        },
-        print_recipe_commands: args.output.print_commands | args.output.verbose,
-        print_fresh: args.output.print_fresh | args.output.verbose,
-        dry_run: args.dry_run,
-        quiet: args.output.quiet && !args.output.verbose && !args.output.loud,
-        loud: args.output.loud | args.output.verbose,
-        explain: args.output.explain | args.output.verbose,
-    });
+    let renderer = render::make_renderer(render::OutputSettings::from_args_and_defaults(
+        &args,
+        &defaults,
+        color_stderr,
+    ));
 
     let workspace = Workspace::new_with_diagnostics(
         &ast,
@@ -260,7 +250,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     let target = args
         .target
         .clone()
-        .or_else(|| config.default_target.clone());
+        .or_else(|| workspace.default_target.clone());
     let Some(target) = target else {
         return Err(Error::NoTarget);
     };
@@ -385,7 +375,7 @@ async fn autowatch_loop(
         };
 
         // Reload config.
-        let config = match werk_runner::ir::Config::new_with_diagnostics(&ast) {
+        let config = match werk_runner::ir::Defaults::new_with_diagnostics(&ast) {
             Ok(config) => config,
             Err(err) => {
                 print_eval_error(err);
@@ -397,7 +387,7 @@ async fn autowatch_loop(
         let out_dir = match find_output_directory(
             &workspace_dir,
             output_directory_from_args,
-            config.output_directory.as_deref(),
+            config.output_directory,
         ) {
             Ok(out_dir) => out_dir,
             Err(err) => {
@@ -419,15 +409,6 @@ async fn autowatch_loop(
             settings.output_directory = out_dir;
         }
 
-        let target = target_from_args
-            .clone()
-            .or_else(|| config.default_target.clone());
-        let Some(target) = target else {
-            render.warning(None, "No configured default target");
-            watch_set = watch_manifest.clone();
-            continue;
-        };
-
         let workspace = match Workspace::new_with_diagnostics(
             &ast,
             io,
@@ -442,6 +423,15 @@ async fn autowatch_loop(
                 // the current watchset.
                 continue;
             }
+        };
+
+        let target = target_from_args
+            .clone()
+            .or_else(|| workspace.default_target.clone());
+        let Some(target) = target else {
+            render.warning(None, "No configured default target");
+            watch_set = watch_manifest.clone();
+            continue;
         };
 
         // Update the watchset.
@@ -499,19 +489,26 @@ fn make_notifier_for_files(
 }
 
 pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write) {
-    let globals = doc
+    let configs = doc
         .globals
+        .configs
         .iter()
-        .map(|(k, v)| (k, format!("{}", v.value.display_friendly(80)), &v.comment))
+        .map(|(k, v)| (*k, format!("{}", v.value.display_friendly(80)), &v.comment))
         .collect::<Vec<_>>();
-    let max_global_name_len = globals
+    let max_config_name_len = configs
         .iter()
         .map(|(name, _, _)| name.as_str().len())
         .max()
         .unwrap_or(0);
-    let max_global_value_len = globals
+    let max_config_value_len = configs
         .iter()
-        .map(|(_, value, comment)| if !comment.is_empty() { value.len() } else { 0 })
+        .filter_map(|(_, value, comment)| {
+            if !comment.is_empty() {
+                Some(value.len())
+            } else {
+                None
+            }
+        })
         .max()
         .unwrap_or(0);
 
@@ -528,23 +525,27 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
         .max()
         .unwrap_or(0);
 
-    if max_global_name_len != 0 {
-        _ = writeln!(out, "{}", "Global variables:".bright_purple());
+    if max_config_name_len != 0 {
+        _ = writeln!(
+            out,
+            "{}",
+            "Config variables:".bright_purple().bold().underline()
+        );
 
-        for (name, value, comment) in globals {
+        for (name, value, comment) in configs {
             if comment.is_empty() {
                 _ = writeln!(
                     out,
                     "  {} = {}",
-                    format_args!("{: <w$}", name, w = max_global_name_len).bright_yellow(),
+                    format_args!("{name: >w$}", w = max_config_name_len).bright_yellow(),
                     value,
                 );
             } else {
                 _ = writeln!(
                     out,
                     "  {} = {} {}",
-                    format_args!("{: <w$}", name, w = max_global_name_len).bright_yellow(),
-                    format_args!("{: <w$}", value, w = max_global_value_len),
+                    format_args!("{name: >w$}", w = max_config_name_len).bright_yellow(),
+                    format_args!("{value: <w$}", w = max_config_value_len),
                     comment.dimmed(),
                 );
             }
@@ -556,7 +557,11 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
     }
 
     if max_command_len != 0 {
-        _ = writeln!(out, "{}", "Available commands:".bright_purple());
+        _ = writeln!(
+            out,
+            "{}",
+            "Available commands:".bright_purple().bold().underline()
+        );
         for (name, recipe) in &doc.task_recipes {
             if recipe.doc_comment.is_empty() {
                 _ = writeln!(out, "  {}", name.bright_cyan());
@@ -575,7 +580,11 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
     }
 
     if max_pattern_len != 0 {
-        _ = writeln!(out, "{}", "Available recipes:".bright_purple());
+        _ = writeln!(
+            out,
+            "{}",
+            "Available recipes:".bright_purple().bold().underline()
+        );
         for recipe in &doc.build_recipes {
             if recipe.doc_comment.is_empty() {
                 _ = writeln!(out, "  {}", recipe.pattern.string.bright_yellow());
@@ -638,7 +647,7 @@ pub fn get_workspace_dir<'a>(
 }
 
 pub fn get_workspace_settings(
-    config: &werk_runner::ir::Config,
+    config: &werk_runner::ir::Defaults,
     args: &Args,
     workspace_dir: &Absolute<std::path::Path>,
     color_stdout: ColorOutputKind,
@@ -646,7 +655,7 @@ pub fn get_workspace_settings(
     let out_dir = find_output_directory(
         workspace_dir,
         args.output_dir.as_deref(),
-        config.output_directory.as_deref(),
+        config.output_directory,
     )?;
 
     let mut settings = WorkspaceSettings::new(workspace_dir.to_owned());
@@ -712,5 +721,5 @@ fn print_diagnostic<E: Diagnostic, R: DiagnosticFileRepository>(err: DiagnosticE
             .diagnostic_terminal_width()
             .unwrap_or(DEFAULT_TERM_WIDTH),
     );
-    anstream::eprintln!("{}", err.with_renderer(&renderer));
+    anstream::eprintln!("{}", err.display(&renderer));
 }

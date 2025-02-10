@@ -14,7 +14,7 @@ The output directory is where files produced by `werk` will be placed. The
 default path is `$WORKSPACE/target` (same as Cargo), but this can be overridden
 in two ways:
 
-* From within the Werkfile: `config out-dir = ".."`
+* From within the Werkfile: `default out-dir = ".."`
 * From the command-like: `werk --output-dir=..`
 
 If `werk` detects that an output directory is included in the workspace (i.e.,

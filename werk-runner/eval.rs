@@ -614,10 +614,6 @@ pub fn eval_pattern_builder<'a, P: Scope + ?Sized>(
             ast::PatternFragment::PatternStem => pattern_builder.push_pattern_stem(),
             ast::PatternFragment::OneOf(one_of) => pattern_builder.push_one_of(one_of.clone()),
             ast::PatternFragment::Interpolation(interp) => {
-                if let ast::InterpolationStem::PatternCapture = interp.stem {
-                    return Err(EvalError::PatternStemInterpolationInPattern(expr.span));
-                }
-
                 let value = eval_string_interpolation_stem(scope, expr.span, interp.stem)?;
                 used |= value.used();
 
@@ -680,6 +676,21 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
     for fragment in &expr.fragments {
         match fragment {
             ast::StringFragment::Literal(lit) => s.push_str(lit),
+            ast::StringFragment::PatternStem => {
+                if let Some(value) = scope.get(Lookup::PatternStem) {
+                    used |= value.used();
+                    match *value {
+                        Value::List(ref list) => {
+                            if let Some(first) = find_first_string(list) {
+                                s.push_str(first);
+                            }
+                        }
+                        Value::String(ref value) => {
+                            s.push_str(value);
+                        }
+                    }
+                }
+            }
             ast::StringFragment::Interpolation(interp) => {
                 let value = eval_string_interpolation_stem(scope, expr.span, interp.stem)?;
                 used |= value.used();
@@ -843,6 +854,21 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
             ast::StringFragment::Literal(lit) => {
                 builder.push_lit(lit);
             }
+            ast::StringFragment::PatternStem => {
+                if let Some(value) = scope.get(Lookup::PatternStem) {
+                    used |= value.used();
+                    match *value {
+                        Value::List(ref list) => {
+                            if let Some(first) = find_first_string(list) {
+                                builder.push_arg(first);
+                            }
+                        }
+                        Value::String(ref value) => {
+                            builder.push_arg(value);
+                        }
+                    }
+                }
+            }
             ast::StringFragment::Interpolation(interp) => {
                 let value = eval_string_interpolation_stem(scope, expr.span, interp.stem)?;
                 used |= value.used();
@@ -864,11 +890,7 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
                 };
 
                 match value {
-                    Value::List(list) => match interp
-                        .options
-                        .as_ref()
-                        .and_then(|options| options.join.as_deref())
-                    {
+                    Value::List(list) => match interp.join() {
                         // When the join char is a space, we treat the list as
                         // separate arguments to the command.
                         Some(" ") => {

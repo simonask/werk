@@ -1,5 +1,5 @@
-config out-dir = "../../target/examples/shaders"
-config default = "build"
+default out-dir = "../../target/examples/shaders"
+default target = "build"
 
 let tar = which "tar"
 

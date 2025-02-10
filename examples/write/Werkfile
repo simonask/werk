@@ -2,8 +2,8 @@
 # of any expression can be written to a file. In this case, a list of strings is
 # written as lines.
 
-config out-dir = "../../target/examples/write"
-config default = "lines.txt"
+default out-dir = "../../target/examples/write"
+default target = "lines.txt"
 
 let list = ["a", "b", "c"]
 

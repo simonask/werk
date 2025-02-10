@@ -9,10 +9,9 @@ fn evaluate_global(source: &str, global_variable_name_to_check: &str) -> Value {
     workspace
         .manifest
         .globals
-        .get(&Symbol::new(global_variable_name_to_check))
+        .get(Symbol::new(global_variable_name_to_check))
         .ok_or_else(|| anyhow::anyhow!("global variable not found"))
         .unwrap()
-        .value
         .value
         .clone()
 }

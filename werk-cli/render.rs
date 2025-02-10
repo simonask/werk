@@ -25,6 +25,38 @@ pub struct OutputSettings {
     pub explain: bool,
 }
 
+impl OutputSettings {
+    pub fn from_args_and_defaults(
+        args: &crate::Args,
+        defaults: &werk_runner::ir::Defaults,
+        color_stderr: ColorOutputKind,
+    ) -> Self {
+        let verbose = args.output.verbose | defaults.verbose.unwrap_or(false);
+        let print_recipe_commands =
+            verbose | args.output.print_commands | defaults.print_commands.unwrap_or(false);
+        let print_fresh = verbose | args.output.print_fresh | defaults.print_fresh.unwrap_or(false);
+        let quiet = !verbose && (args.output.quiet || defaults.quiet.unwrap_or(false));
+        let loud = !quiet && (verbose | args.output.loud | defaults.loud.unwrap_or(false));
+        let explain = verbose | args.output.explain | defaults.explain.unwrap_or(false);
+
+        Self {
+            logging_enabled: args.output.log.is_some() || args.list,
+            color: color_stderr,
+            output: if args.output.log.is_some() {
+                OutputChoice::Log
+            } else {
+                args.output.output_format
+            },
+            print_recipe_commands,
+            print_fresh,
+            dry_run: args.dry_run,
+            quiet,
+            loud,
+            explain,
+        }
+    }
+}
+
 pub(crate) struct Bracketed<T>(pub T);
 impl<T: Display> Display for Bracketed<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

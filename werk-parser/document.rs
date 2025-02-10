@@ -33,7 +33,9 @@ impl<'a> Document<'a> {
         }
     }
 
-    pub fn task_recipes(&self) -> impl Iterator<Item = &ast::CommandRecipe<'_>> + '_ {
+    pub fn task_recipes<'b>(
+        &'b self,
+    ) -> impl Iterator<Item = &'b ast::TaskRecipe<'a>> + use<'a, 'b> {
         self.root
             .statements
             .iter()
@@ -43,7 +45,9 @@ impl<'a> Document<'a> {
             })
     }
 
-    pub fn build_recipes(&self) -> impl Iterator<Item = &ast::BuildRecipe<'_>> + '_ {
+    pub fn build_recipes<'b>(
+        &'b self,
+    ) -> impl Iterator<Item = &'b ast::BuildRecipe<'a>> + use<'a, 'b> {
         self.root
             .statements
             .iter()
@@ -53,17 +57,7 @@ impl<'a> Document<'a> {
             })
     }
 
-    pub fn config_stmts(&self) -> impl Iterator<Item = &ast::ConfigStmt<'_>> + '_ {
-        self.root
-            .statements
-            .iter()
-            .filter_map(|stmt| match &stmt.statement {
-                ast::RootStmt::Config(config) => Some(config),
-                _ => None,
-            })
-    }
-
-    pub fn globals(&self) -> impl Iterator<Item = &ast::LetStmt<'_>> + '_ {
+    pub fn globals<'b>(&'b self) -> impl Iterator<Item = &'b ast::LetStmt<'a>> + use<'a, 'b> {
         self.root
             .statements
             .iter()
@@ -89,13 +83,14 @@ impl<'a> Document<'a> {
     }
 
     #[must_use]
-    pub fn num_config_stmts(&self) -> usize {
-        self.config_stmts().count()
-    }
-
-    #[must_use]
-    pub fn find_config(&self, name: &str) -> Option<&ast::ConfigStmt<'_>> {
-        self.config_stmts().find(|stmt| stmt.ident == name)
+    pub fn find_default_target(&self) -> Option<&ast::StringExpr<'a>> {
+        self.root.statements.iter().find_map(|stmt| {
+            if let ast::RootStmt::Default(ast::DefaultStmt::Target(ref stmt)) = stmt.statement {
+                Some(&stmt.value)
+            } else {
+                None
+            }
+        })
     }
 
     #[must_use]
@@ -104,7 +99,7 @@ impl<'a> Document<'a> {
     }
 
     #[must_use]
-    pub fn find_task_recipe(&self, name: &str) -> Option<&ast::CommandRecipe<'_>> {
+    pub fn find_task_recipe(&self, name: &str) -> Option<&ast::TaskRecipe<'_>> {
         self.task_recipes().find(|stmt| stmt.name == name)
     }
 }

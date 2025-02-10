@@ -38,51 +38,42 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
     };
     let globals = &workspace.manifest.globals;
     assert_eq!(
-        globals
-            .get(&Symbol::new("exists-resolved"))
-            .unwrap()
-            .value
-            .value,
+        globals.get(Symbol::new("exists-resolved")).unwrap().value,
         Value::String(test.workspace_path_str(["foo"]))
     );
     assert_eq!(
         globals
-            .get(&Symbol::new("exists-explicit-out-dir"))
+            .get(Symbol::new("exists-explicit-out-dir"))
             .unwrap()
-            .value
             .value,
         Value::String(test.output_path_str(["foo"]))
     );
     assert_eq!(
         globals
-            .get(&Symbol::new("exists-explicit-workspace"))
+            .get(Symbol::new("exists-explicit-workspace"))
             .unwrap()
-            .value
             .value,
         Value::String(test.workspace_path_str(["foo"]))
     );
 
     assert_eq!(
         globals
-            .get(&Symbol::new("exists-not-resolved"))
+            .get(Symbol::new("exists-not-resolved"))
             .unwrap()
-            .value
             .value,
         Value::String(test.output_path_str(["bar"]))
     );
     assert_eq!(
         globals
-            .get(&Symbol::new("exists-not-explicit-out-dir"))
+            .get(Symbol::new("exists-not-explicit-out-dir"))
             .unwrap()
-            .value
             .value,
         Value::String(test.output_path_str(["bar"]))
     );
     assert_eq!(
         globals
-            .get(&Symbol::new("exists-not-explicit-workspace"))
+            .get(Symbol::new("exists-not-explicit-workspace"))
             .unwrap()
-            .value
             .value,
         Value::String(test.workspace_path_str(["bar"]))
     );

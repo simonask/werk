@@ -4,4 +4,4 @@ error[P1001]: parse error
 2 | foo
   | ^ expected statement
   |
-  = help: one of `config`, `let`, `task`, or `build`
+  = help: one of `default`, `let`, `task`, or `build`

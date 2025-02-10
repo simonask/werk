@@ -10,7 +10,7 @@ use crate::{
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
     eval::{self, Eval, UsedVariable},
     ir::{self, BuildRecipe, TaskRecipe},
-    DirEntry, Error, EvalError, GlobalVar, Io, Render, RootScope,
+    DirEntry, Error, EvalError, Io, Render, RootScope,
 };
 
 #[derive(Clone)]
@@ -109,6 +109,7 @@ pub struct Workspace<'a> {
     runtime_caches: Mutex<Caches>,
     /// Overridden global variables from the command line.
     pub defines: HashMap<Symbol, String>,
+    pub default_target: Option<String>,
     pub force_color: bool,
     pub io: &'a dyn Io,
     pub render: &'a dyn Render,
@@ -136,7 +137,7 @@ impl<'a> Workspace<'a> {
         render: &'a dyn Render,
         project_root: Absolute<std::path::PathBuf>,
         settings: &WorkspaceSettings,
-    ) -> Result<Self, DiagnosticError<'a, Error, &'a werk_parser::Document<'a>>> {
+    ) -> Result<Self, DiagnosticError<Error, &'a werk_parser::Document<'a>>> {
         Self::new(ast, io, render, project_root, settings)
             .map_err(|err| err.into_diagnostic_error(ast))
     }
@@ -196,6 +197,7 @@ impl<'a> Workspace<'a> {
                 .iter()
                 .map(|(k, v)| (Symbol::new(k), v.clone()))
                 .collect(),
+            default_target: None,
             force_color: settings.force_color,
             io,
             render,
@@ -213,6 +215,7 @@ impl<'a> Workspace<'a> {
 
     /// Evaluate global variables, tasks, and recipe patterns. Also gathers
     /// documentation for each global item.
+    #[allow(clippy::too_many_lines)]
     fn evaluate_globals_and_recipes(
         &mut self,
         ast: &'a werk_parser::Document<'a>,
@@ -224,62 +227,76 @@ impl<'a> Workspace<'a> {
                 .lines()
                 .next()
                 .unwrap_or("")
+                .trim()
                 .to_string();
 
             match stmt.statement {
-                ast::RootStmt::Config(_) => {
+                ast::RootStmt::Default(ast::DefaultStmt::Target(ref stmt)) => {
+                    let scope = RootScope::new(self);
+                    let value = eval::eval_string_expr(&scope, &stmt.value)?;
+                    self.default_target = Some(value.value);
+                }
+                ast::RootStmt::Default(_) => {
                     // Ignore; these should be parsed by the front-end.
                     continue;
                 }
-                ast::RootStmt::Let(ref let_stmt) => {
-                    let hash = compute_stable_semantic_hash(&let_stmt.value);
-                    if let Some(global_override) = self.defines.get(&let_stmt.ident.ident) {
+                ast::RootStmt::Config(ref config_stmt) => {
+                    let hash = compute_stable_semantic_hash(&config_stmt.value);
+                    if let Some(config_override) = self.defines.get(&config_stmt.ident.ident) {
                         tracing::trace!(
-                            "Overriding global variable `{}` with `{}`",
-                            let_stmt.ident.ident,
-                            global_override
+                            "Overriding config variable `{}` with `{}`",
+                            config_stmt.ident.ident,
+                            config_override
                         );
-                        self.manifest.globals.insert(
-                            let_stmt.ident.ident,
-                            GlobalVar {
-                                value: Eval::using_vars(
-                                    global_override.clone().into(),
-                                    [
-                                        UsedVariable::Global(let_stmt.ident.ident, hash),
-                                        UsedVariable::Define(
-                                            let_stmt.ident.ident,
-                                            compute_stable_hash(global_override),
-                                        ),
-                                    ],
-                                ),
-                                comment: doc_comment,
-                            },
-                        );
+                        self.manifest.globals.set_config(
+                            config_stmt.ident.ident,
+                            Eval::using_vars(
+                                config_override.clone().into(),
+                                [
+                                    UsedVariable::Global(config_stmt.ident.ident, hash),
+                                    UsedVariable::Define(
+                                        config_stmt.ident.ident,
+                                        compute_stable_hash(config_override),
+                                    ),
+                                ],
+                            ),
+                            config_stmt.span,
+                            doc_comment,
+                        )?;
                     } else {
                         let scope = RootScope::new(self);
-                        let mut value = eval::eval_chain(&scope, &let_stmt.value)?;
+                        let mut value = eval::eval_chain(&scope, &config_stmt.value)?;
                         value
                             .used
-                            .insert(UsedVariable::Global(let_stmt.ident.ident, hash));
-                        tracing::trace!("(global) let `{}` = {:?}", let_stmt.ident, value);
-                        self.manifest.globals.insert(
-                            let_stmt.ident.ident,
-                            GlobalVar {
-                                value,
-                                comment: doc_comment,
-                            },
-                        );
+                            .insert(UsedVariable::Global(config_stmt.ident.ident, hash));
+                        tracing::trace!("(global) config `{}` = {:?}", config_stmt.ident, value);
+                        self.manifest.globals.set_config(
+                            config_stmt.ident.ident,
+                            value,
+                            config_stmt.span,
+                            doc_comment,
+                        )?;
                     }
                 }
-                ast::RootStmt::Task(ref command_recipe) => {
-                    let hash = compute_stable_semantic_hash(command_recipe);
+                ast::RootStmt::Let(ref let_stmt) => {
+                    let hash = compute_stable_semantic_hash(&let_stmt.value);
+                    let scope = RootScope::new(self);
+                    let mut value = eval::eval_chain(&scope, &let_stmt.value)?;
+                    value
+                        .used
+                        .insert(UsedVariable::Global(let_stmt.ident.ident, hash));
+                    tracing::trace!("(global) let `{}` = {:?}", let_stmt.ident, value);
+                    self.manifest.globals.set(let_stmt.ident.ident, value);
+                }
+                ast::RootStmt::Task(ref task_recipe) => {
+                    let hash = compute_stable_semantic_hash(task_recipe);
                     self.manifest.task_recipes.insert(
-                        command_recipe.name.ident.as_str(),
+                        task_recipe.name.ident.as_str(),
                         TaskRecipe {
-                            span: command_recipe.span,
-                            name: command_recipe.name.ident,
+                            span: task_recipe.span,
+                            name: task_recipe.name.ident,
                             doc_comment,
-                            ast: command_recipe,
+                            ast: task_recipe,
                             hash,
                         },
                     );
@@ -306,7 +323,7 @@ impl<'a> Workspace<'a> {
 
         // Warn about defines set on the command-line that have no effect.
         for key in self.defines.keys() {
-            if !self.manifest.globals.contains_key(key) {
+            if !self.manifest.globals.configs.contains_key(key) {
                 self.render.warning(None, &format!("Unused define: {key}"));
             }
         }

@@ -105,7 +105,7 @@ impl Root<'_> {
     }
 
     #[must_use]
-    pub fn find_command(&self, name: &str) -> Option<&CommandRecipe> {
+    pub fn find_command(&self, name: &str) -> Option<&TaskRecipe> {
         self.statements.iter().find_map(|stmt| match stmt {
             BodyStmt {
                 statement: RootStmt::Task(stmt),
@@ -118,28 +118,46 @@ impl Root<'_> {
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum RootStmt<'a> {
+    Default(DefaultStmt<'a>),
     Config(ConfigStmt<'a>),
     Let(LetStmt<'a>),
-    Task(CommandRecipe<'a>),
+    Task(TaskRecipe<'a>),
     Build(BuildRecipe<'a>),
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ConfigStmt<'a> {
+pub enum DefaultStmt<'a> {
+    Target(DefaultStmtEntry<keyword::Target, StringExpr<'a>>),
+    OutDir(DefaultStmtEntry<keyword::OutDir, ConfigString<'a>>),
+    PrintCommands(DefaultStmtEntry<keyword::PrintCommands, ConfigBool>),
+    PrintFresh(DefaultStmtEntry<keyword::PrintFresh, ConfigBool>),
+    Quiet(DefaultStmtEntry<keyword::Quiet, ConfigBool>),
+    Loud(DefaultStmtEntry<keyword::Loud, ConfigBool>),
+    Explain(DefaultStmtEntry<keyword::Explain, ConfigBool>),
+    Verbose(DefaultStmtEntry<keyword::Verbose, ConfigBool>),
+    WatchDelay(DefaultStmtEntry<keyword::WatchDelay, ConfigInt>),
+    Jobs(DefaultStmtEntry<keyword::Jobs, ConfigInt>),
+    Edition(DefaultStmtEntry<keyword::Edition, ConfigString<'a>>),
+}
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct DefaultStmtEntry<K, V> {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
-    pub token_config: keyword::Config,
+    pub token: keyword::Default,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
-    pub ident: Ident,
+    #[serde(skip, default)]
+    pub key: K,
     #[serde(skip, default)]
     pub ws_2: Whitespace,
     #[serde(skip, default)]
     pub token_eq: token::Eq,
     #[serde(skip, default)]
     pub ws_3: Whitespace,
-    pub value: ConfigValue<'a>,
+    pub value: V,
 }
 
 #[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
@@ -161,10 +179,32 @@ impl Spanned for ConfigValue<'_> {
 #[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct ConfigString<'a>(#[serde(skip, default)] pub Span, pub Cow<'a, str>);
+impl Spanned for ConfigString<'_> {
+    #[inline]
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct ConfigInt(#[serde(skip, default)] pub Span, pub i32);
+impl Spanned for ConfigInt {
+    #[inline]
+    fn span(&self) -> Span {
+        self.0
+    }
+}
 
 #[derive(Debug, PartialEq, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct ConfigBool(#[serde(skip, default)] pub Span, pub bool);
+impl Spanned for ConfigBool {
+    #[inline]
+    fn span(&self) -> Span {
+        self.0
+    }
+}
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
@@ -232,7 +272,7 @@ pub enum MessageType {
 hash_is_semantic!(MessageType);
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct CommandRecipe<'a> {
+pub struct TaskRecipe<'a> {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
@@ -245,7 +285,7 @@ pub struct CommandRecipe<'a> {
     pub body: Body<TaskRecipeStmt<'a>>,
 }
 
-impl SemanticHash for CommandRecipe<'_> {
+impl SemanticHash for TaskRecipe<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.name.semantic_hash(state);
         self.body.semantic_hash(state);
@@ -400,6 +440,32 @@ pub struct LetStmt<'a> {
 }
 
 impl SemanticHash for LetStmt<'_> {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.ident.semantic_hash(state);
+        self.value.semantic_hash(state);
+    }
+}
+
+#[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ConfigStmt<'a> {
+    #[serde(skip, default)]
+    pub span: Span,
+    #[serde(skip, default)]
+    pub token_config: keyword::Config,
+    #[serde(skip, default)]
+    pub ws_1: Whitespace,
+    pub ident: Ident,
+    #[serde(skip, default)]
+    pub ws_2: Whitespace,
+    #[serde(skip, default)]
+    pub token_eq: token::Eq,
+    #[serde(skip, default)]
+    pub ws_3: Whitespace,
+    #[serde(flatten)]
+    pub value: ExprChain<'a>,
+}
+
+impl SemanticHash for ConfigStmt<'_> {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.ident.semantic_hash(state);
         self.value.semantic_hash(state);

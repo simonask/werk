@@ -194,8 +194,8 @@ impl TaskSpec<'_> {
             TaskSpec::Recipe(ir::RecipeMatch::Build(build_recipe_match)) => {
                 TaskId::build(build_recipe_match.target_file.clone())
             }
-            TaskSpec::Recipe(ir::RecipeMatch::Task(command_recipe_match)) => {
-                TaskId::command(command_recipe_match.name)
+            TaskSpec::Recipe(ir::RecipeMatch::Task(task_recipe_match)) => {
+                TaskId::command(task_recipe_match.name)
             }
             TaskSpec::CheckExists(path_buf) | TaskSpec::CheckExistsRelaxed(path_buf) => {
                 TaskId::build(path_buf.clone().into_boxed_path())
@@ -217,7 +217,7 @@ impl<'a> Runner<'a> {
     pub async fn build_file(
         &self,
         target: &Path,
-    ) -> Result<BuildStatus, DiagnosticError<'a, Error, &'a Workspace<'a>>> {
+    ) -> Result<BuildStatus, DiagnosticError<Error, &'a Workspace<'a>>> {
         let target = target
             .absolutize(werk_fs::Path::ROOT)
             .map_err(|err| Error::InvalidTargetPath(target.to_string(), err))
@@ -239,7 +239,7 @@ impl<'a> Runner<'a> {
     pub async fn run_command(
         &self,
         target: &str,
-    ) -> Result<BuildStatus, DiagnosticError<'a, Error, &'a Workspace<'a>>> {
+    ) -> Result<BuildStatus, DiagnosticError<Error, &'a Workspace<'a>>> {
         tracing::debug!("Run: {target}");
         let spec = self
             .inner
@@ -257,7 +257,7 @@ impl<'a> Runner<'a> {
     pub async fn build_or_run(
         &self,
         target: &str,
-    ) -> Result<BuildStatus, DiagnosticError<'a, Error, &'a Workspace<'a>>> {
+    ) -> Result<BuildStatus, DiagnosticError<Error, &'a Workspace<'a>>> {
         tracing::debug!("Build or run: {target}");
         let spec = self
             .inner
@@ -631,7 +631,7 @@ impl<'a> Inner<'a> {
         result
     }
 
-    async fn execute_command_recipe(
+    async fn execute_task_recipe(
         self: &Arc<Self>,
         task_id: TaskId,
         recipe: &ir::TaskRecipe<'a>,
@@ -947,7 +947,7 @@ impl<'a> Inner<'a> {
         match spec {
             TaskSpec::Recipe(recipe) => match recipe {
                 ir::RecipeMatch::Task(recipe) => {
-                    self.execute_command_recipe(task_id, recipe, dep_chain_entry)
+                    self.execute_task_recipe(task_id, recipe, dep_chain_entry)
                         .await
                 }
                 ir::RecipeMatch::Build(recipe_match) => {

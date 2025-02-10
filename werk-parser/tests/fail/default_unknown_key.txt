@@ -1,0 +1,7 @@
+error[P1001]: parse error
+ --> INPUT:1:9
+  |
+1 | default foo = "..."
+  |         ^ expected valid key for `default` statement
+  |
+  = help: one of `target`, `out-dir`, `print-commands`, `print-fresh`, `quiet`, `loud`, `explain`, `verbose`, `watch-delay`, `jobs`, or `edition`

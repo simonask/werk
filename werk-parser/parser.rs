@@ -110,7 +110,7 @@ pub fn parse_werk_with_diagnostics<'a>(
     source_code: &'a str,
 ) -> Result<
     crate::Document<'a>,
-    werk_util::DiagnosticError<'a, crate::Error, werk_util::DiagnosticSource<'a>>,
+    werk_util::DiagnosticError<crate::Error, werk_util::DiagnosticSource<'a>>,
 > {
     parse_werk(origin, source_code).map_err(|err| {
         err.into_diagnostic_error(werk_util::DiagnosticSource::new(origin, source_code))
@@ -229,80 +229,60 @@ impl<'a, T: Parse<'a>> Parse<'a> for ast::Body<T> {
 impl<'a> Parse<'a> for ast::RootStmt<'a> {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
         alt((
+            parse.map(ast::RootStmt::Default),
             parse.map(ast::RootStmt::Config),
             parse.map(ast::RootStmt::Let),
             parse.map(ast::RootStmt::Task),
             parse.map(ast::RootStmt::Build),
             fatal(Failure::Expected(&"statement"))
-                .help("one of `config`, `let`, `task`, or `build`"),
+                .help("one of `default`, `let`, `task`, or `build`"),
         ))
         .parse_next(input)
     }
 }
 
-impl<'a> Parse<'a> for ast::ConfigStmt<'a> {
+impl<'a> Parse<'a> for ast::DefaultStmt<'a> {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
-        let (mut config, span) = seq! {ast::ConfigStmt {
-            span: default,
-            token_config: parse,
-            ws_1: whitespace,
-            ident: cut_err(parse).help("`config` must be followed by an identifier"),
-            ws_2: whitespace,
-            token_eq: cut_err(parse).help("`config` statements look like this: config ident = ..."),
-            ws_3: whitespace,
-            value: cut_err(parse),
-        }}
-        .with_token_span()
-        .while_parsing("`config` statement")
-        .parse_next(input)?;
-        config.span = span;
-
-        let value_start = config.value.span().start;
-
-        match config.ident.ident.as_str() {
-            "print-commands" => {
-                if !matches!(config.value, ast::ConfigValue::Bool(_)) {
-                    return Err(ModalErr::Error(Error::new(
-                        value_start,
-                        Failure::Expected(&"boolean value for `print-commands`"),
-                    )));
-                }
-            }
-            "edition" => {
-                if !matches!(config.value, ast::ConfigValue::String(_)) {
-                    return Err(ModalErr::Error(Error::new(
-                        value_start,
-                        Failure::Expected(&"string literal for `edition`"),
-                    )));
-                }
-            }
-            "out-dir" | "output-directory" => {
-                if !matches!(config.value, ast::ConfigValue::String(_)) {
-                    return Err(ModalErr::Error(Error::new(
-                        value_start,
-                        Failure::Expected(&"string literal for `out-dir`"),
-                    )));
-                }
-            }
-            "default" | "default-target" => {
-                if !matches!(config.value, ast::ConfigValue::String(_)) {
-                    return Err(ModalErr::Error(Error::new(
-                        value_start,
-                        Failure::Expected(&"string literal for `default`"),
-                    )));
-                }
-            }
-            _ => {
-                return Err(ModalErr::Error(Error::new(
-                    config.ident.span.start,
-                    Failure::Expected(
-                        &"config key, one of `out-dir`, `edition`, `print-commands`, or `default`",
-                    ),
-                )))
+        fn entry<'a, K: Parse<'a>, V: Parse<'a>>(
+            token: keyword::Default,
+            ws_1: ast::Whitespace,
+        ) -> impl Parser<'a, ast::DefaultStmtEntry<K, V>> {
+            move |input: &mut Input<'a>| {
+                let (mut stmt, span) = seq! { ast::DefaultStmtEntry {
+                    span: default,
+                    token: default,
+                    ws_1: default,
+                    key: parse,
+                    ws_2: whitespace,
+                    token_eq: cut_err(parse).help("`default` statements look like this: default key = ..."),
+                    ws_3: whitespace,
+                    value: cut_err(parse),
+                }}.with_token_span().parse_next(input)?;
+                stmt.span = token.span().merge(span);
+                stmt.token = token;
+                stmt.ws_1 = ws_1;
+                Ok(stmt)
             }
         }
 
-        Ok(config)
+        let token: keyword::Default = parse.parse_next(input)?;
+        let ws_1 = whitespace_nonempty.parse_next(input)?;
+
+        alt((
+            entry(token, ws_1).map(ast::DefaultStmt::Target),
+            entry(token, ws_1).map(ast::DefaultStmt::OutDir),
+            entry(token, ws_1).map(ast::DefaultStmt::PrintCommands),
+            entry(token, ws_1).map(ast::DefaultStmt::PrintFresh),
+            entry(token, ws_1).map(ast::DefaultStmt::Quiet),
+            entry(token, ws_1).map(ast::DefaultStmt::Loud),
+            entry(token, ws_1).map(ast::DefaultStmt::Explain),
+            entry(token, ws_1).map(ast::DefaultStmt::Verbose),
+            entry(token, ws_1).map(ast::DefaultStmt::WatchDelay),
+            entry(token, ws_1).map(ast::DefaultStmt::Jobs),
+            entry(token, ws_1).map(ast::DefaultStmt::Edition),
+            fatal(Failure::Expected(&"valid key for `default` statement")).help("one of `target`, `out-dir`, `print-commands`, `print-fresh`, `quiet`, `loud`, `explain`, `verbose`, `watch-delay`, `jobs`, or `edition`"),
+        ))
+        .parse_next(input)
     }
 }
 
@@ -315,6 +295,23 @@ impl<'a> Parse<'a> for ast::ConfigBool {
         .with_token_span()
         .parse_next(input)?;
         Ok(ast::ConfigBool(span, value))
+    }
+}
+
+impl<'a> Parse<'a> for ast::ConfigString<'a> {
+    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+        let (value, span) = escaped_string.with_token_span().parse_next(input)?;
+        Ok(ast::ConfigString(span, value.into()))
+    }
+}
+
+impl<'a> Parse<'a> for ast::ConfigInt {
+    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+        let (value, span) = winnow::ascii::dec_int
+            .expect(&"integer")
+            .with_token_span()
+            .parse_next(input)?;
+        Ok(ast::ConfigInt(span, value))
     }
 }
 
@@ -351,9 +348,9 @@ impl<'a> Parse<'a> for ast::TaskRecipeStmt<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::CommandRecipe<'a> {
+impl<'a> Parse<'a> for ast::TaskRecipe<'a> {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
-        let (mut recipe, span) = seq! { ast::CommandRecipe {
+        let (mut recipe, span) = seq! { ast::TaskRecipe {
             span: default,
             token_task: parse,
             ws_1: whitespace,
@@ -414,32 +411,39 @@ impl<'a> Parse<'a> for ast::BuildRecipe<'a> {
 
 impl<'a> Parse<'a> for ast::LetStmt<'a> {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
-        fn let_stmt_inner<'a>(input: &mut Input<'a>) -> PResult<ast::LetStmt<'a>> {
-            let (token_let, ws_1, ident, ws_2, token_eq, ws_3, value) = seq! {(
-                parse,
-                cut_err(whitespace_nonempty).expect(&"whitespace after `let`"),
-                cut_err(parse).help("`let` must be followed by an identifier"),
-                whitespace,
-                cut_err(parse).help("`let <identifier>` must be followed by a `=`"),
-                whitespace,
-                cut_err(parse),
-            )}
-            .while_parsing("`let` statement")
-            .parse_next(input)?;
+        let (mut stmt, span) = seq! { ast::LetStmt {
+            span: default,
+            token_let: parse,
+            ws_1: cut_err(whitespace_nonempty).expect(&"whitespace after `let`"),
+            ident: cut_err(parse).help("`let` must be followed by an identifier"),
+            ws_2: whitespace,
+            token_eq: cut_err(parse).help("`let <identifier>` must be followed by a `=`"),
+            ws_3: whitespace,
+            value: cut_err(parse),
+        }}
+        .with_token_span()
+        .while_parsing("`let` statement")
+        .parse_next(input)?;
+        stmt.span = span;
+        Ok(stmt)
+    }
+}
 
-            Ok(ast::LetStmt {
-                span: Span::default(),
-                token_let,
-                ws_1,
-                ident,
-                ws_2,
-                token_eq,
-                ws_3,
-                value,
-            })
-        }
-
-        let (mut stmt, span) = let_stmt_inner.with_token_span().parse_next(input)?;
+impl<'a> Parse<'a> for ast::ConfigStmt<'a> {
+    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+        let (mut stmt, span) = seq! { ast::ConfigStmt {
+            span: default,
+            token_config: parse,
+            ws_1: cut_err(whitespace_nonempty).expect(&"whitespace after `config`"),
+            ident: cut_err(parse).help("`config` must be followed by an identifier"),
+            ws_2: whitespace,
+            token_eq: cut_err(parse).help("`config <identifier>` must be followed by a `=`"),
+            ws_3: whitespace,
+            value: cut_err(parse),
+        }}
+        .with_token_span()
+        .while_parsing("`config` statement")
+        .parse_next(input)?;
         stmt.span = span;
         Ok(stmt)
     }
@@ -1056,8 +1060,9 @@ mod tests {
 
     #[test]
     fn root_statements() {
-        let input =
-            Input::new("config out-dir = \"../target\"\n\nlet cc = which \"clang\"\nlet ld = cc\n");
+        let input = Input::new(
+            "default out-dir = \"../target\"\n\nlet cc = which \"clang\"\nlet ld = cc\n",
+        );
         let root = super::root.parse(input).unwrap();
         assert_eq!(
             root,
@@ -1065,43 +1070,39 @@ mod tests {
                 statements: vec![
                     ast::BodyStmt {
                         ws_pre: ws_ignore(),
-                        statement: ast::RootStmt::Config(ast::ConfigStmt {
-                            span: span(0..28),
-                            token_config: keyword::Config(Offset(0)),
-                            ws_1: ws_ignore(),
-                            ident: ast::Ident {
-                                span: span(7..14),
-                                ident: "out-dir".into(),
-                            },
-                            ws_2: ws_ignore(),
-                            token_eq: ast::token::Token(Offset(15)),
-                            ws_3: ws_ignore(),
-                            value: ast::ConfigValue::String(ast::ConfigString(
-                                span(17..28),
-                                "../target".into()
-                            )),
-                        }),
+                        statement: ast::RootStmt::Default(ast::DefaultStmt::OutDir(
+                            ast::DefaultStmtEntry {
+                                span: span(0..29),
+                                token: keyword::Default(Offset(0)),
+                                ws_1: ws_ignore(),
+                                key: keyword::OutDir(Offset(8)),
+                                ws_2: ws_ignore(),
+                                token_eq: ast::token::Token(Offset(16)),
+                                ws_3: ws_ignore(),
+                                value: ast::ConfigString(span(18..29), "../target".into()),
+                            }
+                        )),
                         trailing: trailing_ignore(),
                     },
                     ast::BodyStmt {
                         ws_pre: ws_ignore(),
                         statement: ast::RootStmt::Let(ast::LetStmt {
-                            span: span(30..52),
-                            token_let: keyword::Let(Offset(30)),
+                            span: span(31..53),
+                            token_let: keyword::Let(Offset(31)),
                             ws_1: ws_ignore(),
                             ident: ast::Ident {
-                                span: span(34..36),
+                                span: span(35..37),
                                 ident: "cc".into(),
                             },
                             ws_2: ws_ignore(),
-                            token_eq: ast::token::Token(Offset(37)),
+                            token_eq: ast::token::Token(Offset(38)),
                             ws_3: ws_ignore(),
                             value: ast::Expr::Which(ast::WhichExpr {
-                                span: span(39..52),
-                                token: ast::keyword::Which(Offset(39)),
+                                span: span(40..53),
+                                token: ast::keyword::Which(Offset(40)),
                                 ws_1: ws_ignore(),
                                 param: ast::StringExpr {
-                                    span: span(45..52),
+                                    span: span(46..53),
                                     fragments: vec![ast::StringFragment::Literal("clang".into())]
                                 },
                             })
@@ -1112,18 +1113,18 @@ mod tests {
                     ast::BodyStmt {
                         ws_pre: ws_ignore(),
                         statement: ast::RootStmt::Let(ast::LetStmt {
-                            span: span(53..64),
-                            token_let: keyword::Let(Offset(53)),
+                            span: span(54..65),
+                            token_let: keyword::Let(Offset(54)),
                             ws_1: ws_ignore(),
                             ident: ast::Ident {
-                                span: span(57..59),
+                                span: span(58..60),
                                 ident: "ld".into(),
                             },
                             ws_2: ws_ignore(),
-                            token_eq: ast::token::Token(Offset(60)),
+                            token_eq: ast::token::Token(Offset(61)),
                             ws_3: ws_ignore(),
                             value: ast::Expr::Ident(ast::Ident {
-                                span: span(62..64),
+                                span: span(63..65),
                                 ident: "cc".into(),
                             })
                             .into(),

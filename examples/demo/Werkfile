@@ -1,4 +1,4 @@
-config out-dir = "../../target/examples/demo"
+default out-dir = "../../target/examples/demo"
 
 let cc = which "clang"
 let ld = cc

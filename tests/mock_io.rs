@@ -192,8 +192,7 @@ pub struct Test<'a> {
 impl<'a> Test<'a> {
     pub fn new(
         source: &'a str,
-    ) -> Result<Self, werk_util::DiagnosticError<'a, werk_parser::Error, DiagnosticSource<'a>>>
-    {
+    ) -> Result<Self, werk_util::DiagnosticError<werk_parser::Error, DiagnosticSource<'a>>> {
         let mut test = TestBuilder::default()
             .werkfile(source)
             .build()
@@ -210,7 +209,7 @@ impl<'a> Test<'a> {
     pub fn reload(
         &mut self,
         source: &'a str,
-    ) -> Result<(), werk_util::DiagnosticError<'a, werk_parser::Error, DiagnosticSource<'a>>> {
+    ) -> Result<(), werk_util::DiagnosticError<werk_parser::Error, DiagnosticSource<'a>>> {
         self.ast = werk_parser::parse_werk(self.ast.origin, source).map_err(|err| {
             err.into_diagnostic_error(DiagnosticSource::new(std::path::Path::new("input"), source))
         })?;
@@ -300,7 +299,7 @@ impl<'a> Test<'a> {
         defines: &[(&str, &str)],
     ) -> Result<
         werk_runner::Workspace<'b>,
-        DiagnosticError<'b, werk_runner::Error, &'b werk_parser::Document<'b>>,
+        DiagnosticError<werk_runner::Error, &'b werk_parser::Document<'b>>,
     > {
         let mut settings = WorkspaceSettings::new(self.output_dir.clone());
 

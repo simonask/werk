@@ -26,7 +26,7 @@ fn with_werk<T: Default>(f: impl FnOnce(Workspace<'_>) -> Result<T, anyhow::Erro
 
         let source_code = std::fs::read_to_string(&werkfile)?;
         let ast = werk_parser::parse_werk(&werkfile, &source_code)?;
-        let config = werk_runner::ir::Config::new(&ast)?;
+        let config = werk_runner::ir::Defaults::new(&ast)?;
 
         let io = DryRun::new();
         let renderer = NullRender;
@@ -70,10 +70,15 @@ pub fn targets() -> Vec<CompletionCandidate> {
 
 pub fn defines() -> Vec<CompletionCandidate> {
     with_werk(|workspace| {
-        let defines = workspace.manifest.globals.iter().map(|(symbol, global)| {
-            let help = global.value.to_string();
-            CompletionCandidate::new(format!("{symbol}=")).help(Some(help.into()))
-        });
+        let defines = workspace
+            .manifest
+            .globals
+            .configs
+            .iter()
+            .map(|(symbol, global)| {
+                let help = global.value.to_string();
+                CompletionCandidate::new(format!("{symbol}=")).help(Some(help.into()))
+            });
 
         Ok(defines.collect())
     })

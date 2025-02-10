@@ -1,5 +1,4 @@
 use tests::mock_io::*;
-use werk_parser::ast;
 use werk_runner::Runner;
 
 fn strip_colors(s: &str) -> String {
@@ -17,18 +16,13 @@ fn fix_newlines(s: &str) -> String {
 async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
     let source = std::fs::read_to_string(file).unwrap();
     let test = Test::new(&source).map_err(|err| anyhow::Error::msg(err.to_string()))?;
-    let ast = &test.ast;
 
     let workspace = test
         .create_workspace(&[])
         .map_err(|err| anyhow::Error::msg(err.to_string()))?;
 
     // Invoke the runner if there is a default target.
-    if let Some(ast::ConfigStmt {
-        value: ast::ConfigValue::String(ast::ConfigString(_, default_target)),
-        ..
-    }) = ast.find_config("default")
-    {
+    if let Some(ref default_target) = workspace.default_target {
         let runner = Runner::new(&workspace);
         runner
             .build_or_run(default_target)
@@ -108,7 +102,9 @@ success_case!(read);
 success_case!(env);
 success_case!(string_interp);
 success_case!(dedup);
+success_case!(nested_patterns);
 
 error_case!(ambiguous_build_recipe);
 error_case!(ambiguous_path_resolution);
 error_case!(capture_group_out_of_bounds);
+error_case!(duplicate_config);

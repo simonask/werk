@@ -24,12 +24,17 @@ appear after `:` within the interpolation block.
 ## Interpolation stem
 
 Any interpolation block `{...}` or `<...>` consists of a "stem", and optionally
-a number of interpolation operations.
+a number of interpolation operations: `"{stem:...ops}"`, or `"<stem:...ops>"`.
 
 The stem is either:
 
 - An identifier referencing a local or global variable. Example, reading the
   variable `var`: `"{var}"`
+- An integer, referring to the index of a capture group in a pattern that is in
+  scope. For example, when the pattern `foo.(frag|vert)` is in scope, the value
+  of `{0}` is `"frag"` or `"vert"`.
+- The pattern stem `%`: `"{%}"` (braces are optional, unless there are
+  [operations](#interpolation-operations)).
 - Empty, referencing the "implied" value in a chaining operation, or the matched
   string in a `match` expression. Example, copying the implicit value: `"{}"`.
 

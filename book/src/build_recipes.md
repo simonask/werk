@@ -32,7 +32,7 @@ supported.
 ```werk
 build "%.o" {
     # Define a local variable, here setting the name of the source file.
-    let source-file = "{%}.c"
+    let source-file = "%.c"
 
     # Define the dependencies of this recipe. May be a list or a single value.
     from source-file

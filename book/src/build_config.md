@@ -5,31 +5,40 @@
 The behavior of the `werk` command can be configured in two ways:
 
 1. Command-line arguments
-2. `config` statements within the Werkfile
+2. `default` statements within the Werkfile
 
-`config` statements take precedence over built-in defaults. Command-line
-arguments take precedence over `config` statements.
+`default` statements take precedence over built-in defaults. Command-line
+arguments take precedence over `default` statements.
 
 Reference:
 
 ```werk
 # Set the output directory, relative to the workspace root. Default is "target".
-config out-dir = "output-directory"
+default out-dir = "output-directory"
 
 # Set the default recipe to run when werk is run without arguments.
-config default = "recipe-name"
+default target = "recipe-name"
 ```
 
 ## Customize your tasks and recipes
 
-Global variables in a Werkfile can be overridden from the command-line using
-`-Dkey=value`, where `key` is the name of a `let key = ...` statement in the
-global scope, and `value` is a string value.
+Build configuration variables in a Werkfile can be overridden from the
+command-line using `-Dkey=value`, where `key` is the name of a `config key =
+...` statement in the global scope, and `value` is a string value.
+
+`config` statements work exactly like `let` statements, except that it is an
+error if multiple identical `config` keys exist in the Werkfile. `let`
+statements may shadow `config` statements and vice versa, but `config`
+statements cannot shadow other `config` statements.
+
+When a `config` variable is overridden from the command line, the value is
+inserted during evaluation at the point where the `config` statement occurs, and
+subsequent statements will see the value passed on the command-line.
 
 Consider this Werkfile:
 
 ```werk
-let greeting = "Hello"
+config greeting = "Hello"
 
 task greet {
     info "{greeting}, World!"
@@ -59,7 +68,7 @@ Example using the [`match expression`](./language/operations.md#match) to
 validate the argument:
 
 ```werk
-let profile = "debug"
+config profile = "debug"
 let cflags = profile | match {
     "debug" => ["-O0", "-g"]
     "release" => ["-O3"]
@@ -71,16 +80,15 @@ Running this with default arguments:
 
 ```sh
 $ werk --list
-Global variables:
+Config variables:
   profile = "debug"
-  cflags  = ["-O0", "-g"]
 ```
 
 Overriding the argument:
 
 ```sh
 $ werk --list -Dprofile=release
-Global variables:
+Config variables:
   profile = "release"
   cflags  = ["-O3"]
 ```

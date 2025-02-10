@@ -1,5 +1,5 @@
-config default = "build"
-config out-dir = "target"
+default target = "build"
+default out-dir = "target"
 
 let cargo = which "cargo"
 
@@ -7,7 +7,7 @@ let profile = "debug"
 
 let cargo-profile = profile | match {
     "debug" => "dev"
-    "%" => "{%}"
+    "%" => "%"
 }
 
 # This rule matches the output path of Cargo.

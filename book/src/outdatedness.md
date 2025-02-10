@@ -50,7 +50,7 @@ The following factors contribute to outdatedness:
   relying on that variable to become outdated.
 
 - **Command-line overrides:** If a `-Dkey=value` option is passed to `werk` to
-  override a global variable, and it was not overridden with the same value in a
+  override a config variable, and it was not overridden with the same value in a
   previous run, all recipes depending on that variable will be considered
   outdated.
 

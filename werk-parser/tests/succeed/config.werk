@@ -1,2 +1,2 @@
-config out-dir = "../../target/examples/c"
-config default = "build"
+default out-dir = "../../target/examples/c"
+default target = "build"

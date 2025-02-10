@@ -18,7 +18,7 @@ use winnow::{
     Parser,
 };
 
-use super::{parse, PResult, Parse};
+use super::{parse, PResult, Parse, Spanned};
 
 impl<'a> Parse<'a> for ast::StringExpr<'a> {
     fn parse(input: &mut Input<'a>) -> PResult<Self> {
@@ -32,6 +32,13 @@ impl<'a> Parse<'a> for ast::StringExpr<'a> {
         .parse_next(input)?;
         expr.span = span;
         Ok(expr)
+    }
+}
+
+impl Spanned for ast::StringExpr<'_> {
+    #[inline]
+    fn span(&self) -> super::Span {
+        self.span
     }
 }
 
@@ -93,6 +100,7 @@ pub fn parse_string_expr_unquoted(string: &str) -> Result<ast::StringExpr<'_>, E
 fn string_fragment<'a>(input: &mut Input<'a>) -> PResult<StringFragment<'a>> {
     // TODO: Consider escape sequences etc.
     alt((
+        '%'.value(StringFragment::PatternStem),
         string_literal_fragment::<false>.map(StringFragment::Literal),
         escaped_char.map(StringFragment::EscapedChar),
         escaped_whitespace.value(StringFragment::EscapedWhitespace),
@@ -120,7 +128,7 @@ fn pattern_fragment<'a>(input: &mut Input<'a>) -> PResult<StringFragment<'a>> {
 #[must_use]
 pub const fn needs_string_escape(ch: char) -> bool {
     // TODO: Add `%` to this list.
-    matches!(ch, '\\' | '{' | '}' | '<' | '>' | '"')
+    matches!(ch, '\\' | '{' | '}' | '<' | '>' | '%' | '"')
 }
 
 #[inline]
@@ -271,7 +279,7 @@ fn push_string_fragment<'a>(expr: &mut ast::StringExpr<'a>, frag: StringFragment
             expr.fragments
                 .push(ast::StringFragment::Interpolation(string_interpolation));
         }
-        StringFragment::PatternStem => panic!("pattern stem in string expr must be escaped"),
+        StringFragment::PatternStem => expr.fragments.push(ast::StringFragment::PatternStem),
         StringFragment::OneOf(_) => panic!("captue group in string expr must be escaped"),
     }
 }
@@ -558,7 +566,11 @@ mod tests {
         let expected = ast::StringExpr {
             span: Span::from(0..input.len()),
             fragments: vec![
-                ast::StringFragment::Literal("hello %world% ".into()),
+                ast::StringFragment::Literal("hello ".into()),
+                ast::StringFragment::PatternStem,
+                ast::StringFragment::Literal("world".into()),
+                ast::StringFragment::PatternStem,
+                ast::StringFragment::Literal(" ".into()),
                 ast::StringFragment::Interpolation(ast::Interpolation {
                     stem: ast::InterpolationStem::Ident("name".into()),
                     options: None,

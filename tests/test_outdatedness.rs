@@ -7,9 +7,9 @@ use werk_runner::{BuildStatus, Outdatedness, Reason, ShellCommandLine, TaskId};
 use werk_util::Symbol;
 
 static WERK: &str = r#"
-let profile = env "PROFILE"
-let cc = which "clang"
-let write = which "write"
+config profile = env "PROFILE"
+config cc = which "clang"
+config write = which "write"
 
 build "env-dep" {
     run "{write} {profile} <out>"
@@ -26,9 +26,9 @@ build "glob-dep" {
 "#;
 
 static WERK_RECIPE_CHANGED: &str = r#"
-let profile = env "PROFILE"
-let cc = which "clang"
-let write = which "write"
+config profile = env "PROFILE"
+config cc = which "clang"
+config write = which "write"
 
 build "env-dep" {
     run "{write} {profile} <out>"
