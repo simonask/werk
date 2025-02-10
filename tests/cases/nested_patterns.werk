@@ -1,0 +1,8 @@
+let foo = "a"
+let bar = foo | match {
+    "%" => "a" | match {
+        # Get the stem from the outer pattern.
+        "{%}" => "b"
+        "%" => error "fail"
+    }
+} | assert-eq "b"

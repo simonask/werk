@@ -33,6 +33,7 @@ impl std::fmt::Display for StringExpr<'_> {
         for fragment in &self.fragments {
             match fragment {
                 StringFragment::Literal(s) => Escape::<false>(s).fmt(f)?,
+                StringFragment::PatternStem => f.write_char('%')?,
                 StringFragment::Interpolation(interp) => interp.fmt(f)?,
             }
         }
@@ -80,7 +81,9 @@ impl<'a> StringExpr<'a> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StringFragment<'a> {
     Literal(Cow<'a, str>),
-    /// `{...}`
+    /// `%`, shorthand for `{%}`
+    PatternStem,
+    /// `{...}` or `<...>`
     Interpolation(Interpolation<'a>),
 }
 
@@ -89,6 +92,7 @@ impl StringFragment<'_> {
     pub fn into_static(self) -> StringFragment<'static> {
         match self {
             StringFragment::Literal(s) => StringFragment::Literal(s.into_owned().into()),
+            StringFragment::PatternStem => StringFragment::PatternStem,
             StringFragment::Interpolation(interp) => {
                 StringFragment::Interpolation(interp.into_static())
             }
@@ -101,6 +105,7 @@ impl SemanticHash for StringFragment<'_> {
         std::mem::discriminant(self).hash(state);
         match self {
             StringFragment::Literal(s) => s.hash(state),
+            StringFragment::PatternStem => (), // covered by discriminant
             StringFragment::Interpolation(i) => i.semantic_hash(state),
         }
     }
