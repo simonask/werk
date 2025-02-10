@@ -4,8 +4,8 @@ let glslc = which "glslc"
 let tar = which "tar"
 
 build "%.(frag|vert|comp).spv" {
-    from "{%}.{0}"
-    depfile "{%}.{0}.d"
+    from "%.{0}"
+    depfile "%.{0}.d"
     run "{glslc} -MD -MF <depfile> -o <out> <in>"
 }
 

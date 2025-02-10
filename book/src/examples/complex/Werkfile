@@ -9,12 +9,12 @@ let wasm-profile = "debug"
 
 let cargo-profile = profile | match {
     "debug" => "dev"
-    "%" => "{%}"
+    "%" => "%"
 }
 
 let cargo-wasm-profile = wasm-profile | match {
     "debug" => "dev"
-    "%" => "{%}"
+    "%" => "%"
 }
 
 # Rule to build a WASM target with Cargo.
@@ -23,7 +23,7 @@ build "{wasm-tuple}/{wasm-profile}/%.wasm" {
     # use a regex to replace it.
     let package-name = "{%:s/_/-/}"
 
-    depfile "{wasm-tuple}/{wasm-profile}/{%}.d"
+    depfile "{wasm-tuple}/{wasm-profile}/%.d"
     run "{cargo} build
         --target={wasm-tuple}
         --profile={cargo-wasm-profile}
@@ -32,8 +32,8 @@ build "{wasm-tuple}/{wasm-profile}/%.wasm" {
 
 # Rule to build a SPIR-V shader with glslc.
 build "%.(frag|vert|comp).spv" {
-    from "{%}.{0}"
-    depfile "{%}.{0}.d"
+    from "%.{0}"
+    depfile "%.{0}.d"
     run "{glslc} -MD -MF <depfile> -o <out> <in>"
 }
 

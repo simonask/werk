@@ -18,8 +18,8 @@ let cflags = profile | match {
 
 # Build rule for object files
 build "%.o" {
-    from "{%}.c"
-    depfile "{%}.c.d"
+    from "%.c"
+    depfile "%.c.d"
 
     let include-path = "src"
     let flags = [cflags, "-I<include-path>"]

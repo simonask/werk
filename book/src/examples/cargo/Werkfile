@@ -7,7 +7,7 @@ let profile = "debug"
 
 let cargo-profile = profile | match {
     "debug" => "dev"
-    "%" => "{%}"
+    "%" => "%"
 }
 
 # This rule matches the output path of Cargo.

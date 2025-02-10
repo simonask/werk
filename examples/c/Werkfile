@@ -10,26 +10,26 @@ let executable = "{profile}/example{EXE_SUFFIX}"
 let cflags = profile | match {
     "debug" => ["-g", "-O0", "-fdiagnostics-color=always", "-fcolor-diagnostics", "-fansi-escape-codes"]
     "release" => ["-O3", "-fdiagnostics-color=always", "-fcolor-diagnostics", "-fansi-escape-codes"]
-    "%" => error "Unknown profile '{}'; valid options are 'debug' and 'release'"
+    "%" => error "Unknown profile '%'; valid options are 'debug' and 'release'"
 }
 
 # Build an object file from a C source file.
 build "{profile}/%.o" {
-    from "{%}.c"
-    depfile "/{profile}/{%}.c.d"
+    from "%.c"
+    depfile "/{profile}/%.c.d"
     run "{cc} -c {cflags*} -o <out> <in>"
 }
 
 # Build the depfile for an object file.
 build "{profile}/%.c.d" {
-    from "{%}.c"
+    from "%.c"
     run "{cc} -MM -MT <in> -MF <out> <in>"
 }
 
 # Build the executable.
 build "{executable}" {
     from glob "*.c" | match {
-        "%.c" => "/{profile}{%}.o"
+        "%.c" => "/{profile}%.o"
     }
     run "{ld} -o <out> <in*>"
 }

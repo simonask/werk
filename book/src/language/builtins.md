@@ -10,9 +10,9 @@ In build recipes:
 - `depfile`: If the recipe has a `depfile` statement, this is the evaluated
   [path](../paths.md) to the depfile.
 - `%` or `{%}` in strings: The stem of the matched pattern, if a pattern is in
-  scope and that pattern has a `%` in scope. When defining patterns in a scope
-  where another pattern is already present, the interpolated `{%}` may be used
-  to unambiguously refer to the stem of the "outer" pattern.
+  scope and that pattern contains a `%`. When defining patterns in a scope where
+  another pattern is already present, the interpolated `{%}` may be used to
+  unambiguously refer to the stem of the "outer" pattern.
 
 ## Global constants
 

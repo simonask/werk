@@ -6,7 +6,10 @@ Make patterns.
 Special syntax in pattern strings:
 
 - `%`: The "pattern stem". This matches any sequence of characters, which will
-  be available to subsequent statements as `{%}`.
+  be available to statements within the pattern's scope as `%` or  `{%}`. The
+  latter (braced) can be used if the stem is subject to [interpolation
+  operations](./strings.md#interpolation-operations), or when used within
+  another pattern (without introducing a new stem).
 - `(a|b)`: Capture group matching either `a` or `b`.
 
 Patterns can contain [string interpolations](./strings.md#string-interpolation).
