@@ -2,9 +2,15 @@
   "name": "werk",
   "displayName": "Werk",
   "description": "Werk language and build system support",
+  "repository": "https://github.com/simonask/werk",
+  "license": "MIT OR Apache-2.0",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.96.0"
+  },
+  "scripts": {
+    "vsce": "vsce",
+    "package": "vsce package"
   },
   "categories": [
     "Programming Languages"
@@ -21,5 +27,8 @@
       "scopeName": "source.werk",
       "path": "./syntaxes/werk.tmLanguage.json"
     }]
+  },
+  "devDependencies": {
+    "@vscode/vsce": "3.2.2"
   }
 }
