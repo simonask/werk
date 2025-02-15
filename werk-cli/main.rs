@@ -12,8 +12,8 @@ use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
 use render::{AutoStream, ColorOutputKind};
 use werk_fs::{Absolute, Normalize as _, PathError};
-use werk_runner::{Runner, Workspace, WorkspaceSettings};
-use werk_util::{Diagnostic, DiagnosticError, DiagnosticFileRepository, DiagnosticSource};
+use werk_runner::{Runner, Warning, Workspace, WorkspaceSettings};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticSource, DiagnosticSourceMap};
 
 shadow_rs::shadow!(build);
 
@@ -357,7 +357,7 @@ async fn autowatch_loop(
         let source_code = match std::fs::read_to_string(&werkfile) {
             Ok(source_code) => source_code,
             Err(err) => {
-                render.warning(None, &format!("Error reading manifest: {err}"));
+                render.runner_message(&format!("Error reading manifest: {err}"));
                 watch_set = watch_manifest.clone();
                 continue;
             }
@@ -391,7 +391,7 @@ async fn autowatch_loop(
         ) {
             Ok(out_dir) => out_dir,
             Err(err) => {
-                render.warning(None, &format!("Error finding output directory: {err}"));
+                render.runner_message(&format!("Error finding output directory: {err}"));
                 watch_set = watch_manifest.clone();
                 continue;
             }
@@ -400,10 +400,9 @@ async fn autowatch_loop(
         if out_dir != settings.output_directory {
             render.warning(
                 None,
-                &format!(
-                    "Output directory changed: `{}` => `{}`",
-                    settings.output_directory.display(),
-                    out_dir.display()
+                &Warning::OutputDirectoryChanged(
+                    settings.output_directory.clone(),
+                    out_dir.clone(),
                 ),
             );
             settings.output_directory = out_dir;
@@ -429,7 +428,7 @@ async fn autowatch_loop(
             .clone()
             .or_else(|| workspace.default_target.clone());
         let Some(target) = target else {
-            render.warning(None, "No configured default target");
+            render.runner_message("No configured default target");
             watch_set = watch_manifest.clone();
             continue;
         };
@@ -695,26 +694,22 @@ fn find_output_directory(
     }
 }
 
-fn print_error<E: Diagnostic, R: DiagnosticFileRepository>(err: DiagnosticError<E, R>) -> Error {
+fn print_error<E: AsDiagnostic, R: DiagnosticSourceMap>(err: Annotated<E, R>) -> Error {
     print_diagnostic(err);
     Error::Runner
 }
 
-fn print_eval_error<E: Diagnostic, R: DiagnosticFileRepository>(
-    err: DiagnosticError<E, R>,
-) -> Error {
+fn print_eval_error<E: AsDiagnostic, R: DiagnosticSourceMap>(err: Annotated<E, R>) -> Error {
     print_diagnostic(err);
     Error::Eval
 }
 
-fn print_parse_error<E: Diagnostic, R: DiagnosticFileRepository>(
-    err: DiagnosticError<E, R>,
-) -> Error {
+fn print_parse_error<E: AsDiagnostic, R: DiagnosticSourceMap>(err: Annotated<E, R>) -> Error {
     print_diagnostic(err);
     Error::Parse
 }
 
-fn print_diagnostic<E: Diagnostic, R: DiagnosticFileRepository>(err: DiagnosticError<E, R>) {
+fn print_diagnostic<E: AsDiagnostic, R: DiagnosticSourceMap>(err: Annotated<E, R>) {
     use annotate_snippets::renderer::DEFAULT_TERM_WIDTH;
     let renderer = annotate_snippets::Renderer::styled().term_width(
         render::stderr_width()

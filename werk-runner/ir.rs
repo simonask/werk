@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use werk_fs::Absolute;
 use werk_parser::{ast, parser::Span};
-use werk_util::{Diagnostic, DiagnosticError, Symbol};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticMainSourceMap, Symbol};
 
 use crate::{
     cache::Hash128, AmbiguousPatternError, EvalError, GlobalVariables, Pattern, PatternMatchData,
@@ -20,6 +20,9 @@ pub struct Manifest<'a> {
     pub globals: GlobalVariables,
     pub task_recipes: IndexMap<&'static str, TaskRecipe<'a>>,
     pub build_recipes: Vec<BuildRecipe<'a>>,
+    /// Populated by `include` statements during evaluation of the root scope in
+    /// the werkfile.
+    pub source_map: DiagnosticMainSourceMap,
 }
 
 impl<'a> Manifest<'a> {
@@ -143,7 +146,7 @@ pub struct TaskRecipe<'a> {
 #[derive(Debug)]
 pub struct BuildRecipe<'a> {
     pub span: Span,
-    pub pattern: Pattern<'a>,
+    pub pattern: Pattern,
     pub doc_comment: String,
     pub ast: &'a ast::BuildRecipe<'a>,
     pub hash: Hash128,
@@ -166,7 +169,7 @@ pub struct Defaults<'a> {
 impl<'a> Defaults<'a> {
     pub fn new_with_diagnostics(
         doc: &'a werk_parser::Document<'a>,
-    ) -> Result<Self, DiagnosticError<EvalError, &'a werk_parser::Document<'a>>> {
+    ) -> Result<Self, Annotated<EvalError, &'a werk_parser::Document<'a>>> {
         Self::new(doc).map_err(|err| err.into_diagnostic_error(doc))
     }
 
@@ -203,5 +206,15 @@ impl<'a> Defaults<'a> {
         }
 
         Ok(defaults)
+    }
+}
+
+impl werk_util::DiagnosticSourceMap for Manifest<'_> {
+    #[inline]
+    fn get_source(
+        &self,
+        id: werk_util::DiagnosticFileId,
+    ) -> Option<werk_util::DiagnosticSource<'_>> {
+        self.source_map.get_source(id)
     }
 }

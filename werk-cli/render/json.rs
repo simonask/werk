@@ -143,18 +143,18 @@ impl werk_runner::Render for JsonWatcher {
         println!();
     }
 
-    fn warning(&self, task_id: Option<werk_runner::TaskId>, message: &str) {
+    fn warning(&self, task_id: Option<werk_runner::TaskId>, message: &werk_runner::Warning) {
         #[derive(serde::Serialize)]
         #[serde(tag = "type")]
         struct Warning<'a> {
             task: Option<&'a str>,
-            message: &'a str,
+            message: String,
         }
         serde_json::to_writer(
             std::io::stdout(),
             &Warning {
                 task: task_id.map(|id| id.as_str()),
-                message,
+                message: message.to_string(),
             },
         )
         .unwrap();

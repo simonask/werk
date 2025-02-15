@@ -2,7 +2,7 @@ use macro_rules_attribute::apply;
 use tests::mock_io::*;
 use werk_fs::Absolute;
 use werk_runner::{Runner, TaskId, Value};
-use werk_util::{DiagnosticError, Symbol};
+use werk_util::{Annotated, Symbol};
 
 #[test]
 fn test_path_resolution() {
@@ -39,21 +39,21 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
     let globals = &workspace.manifest.globals;
     assert_eq!(
         globals.get(Symbol::new("exists-resolved")).unwrap().value,
-        Value::String(test.workspace_path_str(["foo"]))
+        Value::from(test.workspace_path_str(["foo"]))
     );
     assert_eq!(
         globals
             .get(Symbol::new("exists-explicit-out-dir"))
             .unwrap()
             .value,
-        Value::String(test.output_path_str(["foo"]))
+        Value::from(test.output_path_str(["foo"]))
     );
     assert_eq!(
         globals
             .get(Symbol::new("exists-explicit-workspace"))
             .unwrap()
             .value,
-        Value::String(test.workspace_path_str(["foo"]))
+        Value::from(test.workspace_path_str(["foo"]))
     );
 
     assert_eq!(
@@ -61,21 +61,21 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
             .get(Symbol::new("exists-not-resolved"))
             .unwrap()
             .value,
-        Value::String(test.output_path_str(["bar"]))
+        Value::from(test.output_path_str(["bar"]))
     );
     assert_eq!(
         globals
             .get(Symbol::new("exists-not-explicit-out-dir"))
             .unwrap()
             .value,
-        Value::String(test.output_path_str(["bar"]))
+        Value::from(test.output_path_str(["bar"]))
     );
     assert_eq!(
         globals
             .get(Symbol::new("exists-not-explicit-workspace"))
             .unwrap()
             .value,
-        Value::String(test.workspace_path_str(["bar"]))
+        Value::from(test.workspace_path_str(["bar"]))
     );
 }
 
@@ -97,7 +97,7 @@ build "explicit" {
     let runner = Runner::new(&workspace);
     match runner.build_or_run("explicit").await {
         Ok(_) => panic!("expected circular dependency error"),
-        Err(DiagnosticError {
+        Err(Annotated {
             error: werk_runner::Error::CircularDependency(chain),
             ..
         }) => {
@@ -137,7 +137,7 @@ task build {
     let runner = Runner::new(&workspace);
     match runner.build_or_run("build").await {
         Ok(_) => panic!("expected error"),
-        Err(DiagnosticError {
+        Err(Annotated {
             error: werk_runner::Error::Eval(werk_runner::EvalError::AmbiguousPathResolution(_, err)),
             ..
         }) => {

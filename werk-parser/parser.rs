@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use werk_util::Diagnostic as _;
+use werk_util::AsDiagnostic as _;
 use winnow::{
     ascii::{line_ending, till_line_ending},
     combinator::{alt, cut_err, delimited, empty, eof, opt, peek, preceded, repeat, seq},
@@ -108,10 +108,8 @@ pub fn parse_werk<'a>(
 pub fn parse_werk_with_diagnostics<'a>(
     origin: &'a std::path::Path,
     source_code: &'a str,
-) -> Result<
-    crate::Document<'a>,
-    werk_util::DiagnosticError<crate::Error, werk_util::DiagnosticSource<'a>>,
-> {
+) -> Result<crate::Document<'a>, werk_util::Annotated<crate::Error, werk_util::DiagnosticSource<'a>>>
+{
     parse_werk(origin, source_code).map_err(|err| {
         err.into_diagnostic_error(werk_util::DiagnosticSource::new(origin, source_code))
     })

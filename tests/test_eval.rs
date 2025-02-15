@@ -1,6 +1,6 @@
 use tests::mock_io::*;
 use werk_parser::parser::{parse, Input};
-use werk_runner::{eval, RootScope, ShellCommandLine};
+use werk_runner::{eval, Error, EvalError, RootScope, ShellCommandLine};
 use winnow::Parser as _;
 
 #[test]
@@ -119,4 +119,19 @@ fn command_argument_splitting() {
             arguments: vec![String::from("\"")],
         }
     );
+}
+
+#[test]
+fn pathiness_double_resolve() {
+    static WERK: &str = r#"
+let foo = "foo"
+let bar = "<foo>"
+let baz = "<bar>"
+    "#;
+    let test = Test::new(WERK).unwrap();
+    match test.create_workspace(&[]).map_err(|err| err.error) {
+        Ok(_) => panic!("expected error"),
+        Err(Error::Eval(EvalError::DoubleResolvePath(_))) => {}
+        Err(err) => panic!("unexpected error: {err}"),
+    }
 }

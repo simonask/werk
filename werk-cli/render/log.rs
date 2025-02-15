@@ -1,3 +1,5 @@
+use werk_runner::Warning;
+
 use super::OutputSettings;
 
 /// Watcher implementation that logs events to the terminal, using `tracing`.
@@ -87,7 +89,7 @@ impl werk_runner::Render for LogWatcher {
         tracing::info!(task_id = ?task_id, "Message: {message}");
     }
 
-    fn warning(&self, task_id: Option<werk_runner::TaskId>, message: &str) {
+    fn warning(&self, task_id: Option<werk_runner::TaskId>, message: &Warning) {
         tracing::warn!(task_id = ?task_id, "Warning: {message}");
     }
 }

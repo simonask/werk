@@ -1,7 +1,7 @@
 use std::io::Write as _;
 
 use werk_parser::*;
-use werk_util::{Diagnostic as _, DiagnosticSource};
+use werk_util::{AsDiagnostic as _, DiagnosticSource};
 
 fn strip_colors(s: &str) -> String {
     let mut buf = Vec::new();

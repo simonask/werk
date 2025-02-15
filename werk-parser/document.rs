@@ -104,7 +104,7 @@ impl<'a> Document<'a> {
     }
 }
 
-impl<'a> werk_util::DiagnosticFileRepository for &'a Document<'a> {
+impl<'a> werk_util::DiagnosticSourceMap for &'a Document<'a> {
     #[inline]
     fn get_source(
         &self,

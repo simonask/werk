@@ -1,22 +1,280 @@
-use std::future::Future;
+use werk_fs::Absolute;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
     List(Vec<Value>),
-    String(String),
+    String(StringValue),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StringValue {
+    pub string: String,
+    pub flags: StringFlags,
+}
+
+impl PartialEq for StringValue {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.string == other.string
+    }
+}
+
+impl Eq for StringValue {}
+
+impl PartialEq<str> for StringValue {
+    #[inline]
+    fn eq(&self, other: &str) -> bool {
+        self.string == other
+    }
+}
+
+impl PartialOrd for StringValue {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for StringValue {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.string.cmp(&other.string)
+    }
+}
+
+impl std::hash::Hash for StringValue {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.string.hash(state);
+    }
+}
+
+impl From<String> for StringValue {
+    #[inline]
+    fn from(string: String) -> Self {
+        Self {
+            string,
+            flags: StringFlags::EMPTY,
+        }
+    }
+}
+
+impl From<StringValue> for String {
+    #[inline]
+    fn from(value: StringValue) -> Self {
+        value.string
+    }
+}
+
+impl From<&str> for StringValue {
+    #[inline]
+    fn from(string: &str) -> Self {
+        string.to_owned().into()
+    }
+}
+
+impl From<werk_fs::PathBuf> for StringValue {
+    #[inline]
+    fn from(value: werk_fs::PathBuf) -> Self {
+        StringValue {
+            string: value.into(),
+            // TODO: Consider if abstract-pathiness should also be tracked.
+            flags: StringFlags::EMPTY,
+        }
+    }
+}
+
+impl TryFrom<std::path::PathBuf> for StringValue {
+    type Error = std::path::PathBuf;
+    #[inline]
+    fn try_from(value: std::path::PathBuf) -> Result<Self, Self::Error> {
+        match value.into_os_string().into_string() {
+            Ok(string) => Ok(StringValue {
+                string,
+                flags: StringFlags::CONTAINS_PATHS,
+            }),
+            Err(path) => Err(path.into()),
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a std::path::Path> for StringValue {
+    type Error = &'a std::path::Path;
+    #[inline]
+    fn try_from(value: &'a std::path::Path) -> Result<Self, Self::Error> {
+        value.to_owned().try_into().map_err(|_| value)
+    }
+}
+
+impl TryFrom<Absolute<std::path::PathBuf>> for StringValue {
+    type Error = Absolute<std::path::PathBuf>;
+    #[inline]
+    fn try_from(value: Absolute<std::path::PathBuf>) -> Result<Self, Self::Error> {
+        value
+            .into_inner()
+            .try_into()
+            .map_err(Absolute::new_unchecked)
+    }
+}
+
+impl<'a> TryFrom<&'a Absolute<std::path::Path>> for StringValue {
+    type Error = &'a Absolute<std::path::Path>;
+    #[inline]
+    fn try_from(value: &'a Absolute<std::path::Path>) -> Result<Self, Self::Error> {
+        value.as_inner().try_into().map_err(|_| value)
+    }
+}
+
+impl std::ops::Deref for StringValue {
+    type Target = str;
+
+    #[inline]
+    fn deref(&self) -> &str {
+        &self.string
+    }
+}
+
+impl std::borrow::Borrow<str> for StringValue {
+    #[inline]
+    fn borrow(&self) -> &str {
+        &self.string
+    }
+}
+
+impl AsRef<str> for StringValue {
+    #[inline]
+    fn as_ref(&self) -> &str {
+        &self.string
+    }
+}
+
+impl AsRef<std::ffi::OsStr> for StringValue {
+    #[inline]
+    fn as_ref(&self) -> &std::ffi::OsStr {
+        self.string.as_ref()
+    }
+}
+
+impl std::fmt::Display for StringValue {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.string, f)
+    }
+}
+
+bitflags::bitflags! {
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct StringFlags : u8 {
+        const EMPTY = 0;
+        /// When set, the string contains the result of `<...>` interpolations,
+        /// and cannot be part of another `<...>` interpolation.
+        const CONTAINS_PATHS = 0b01;
+    }
+}
+
+impl PartialEq<String> for Value {
+    #[inline]
+    fn eq(&self, other: &String) -> bool {
+        *self == *other.as_str()
+    }
+}
+
+impl PartialEq<&str> for Value {
+    #[inline]
+    fn eq(&self, other: &&str) -> bool {
+        *self == **other
+    }
+}
+
+impl PartialEq<str> for Value {
+    #[inline]
+    fn eq(&self, other: &str) -> bool {
+        if let Value::String(s) = self {
+            *s == *other
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq<std::path::Path> for Value {
+    #[inline]
+    fn eq(&self, other: &std::path::Path) -> bool {
+        if let Value::String(s) = self {
+            std::path::Path::new(s) == other
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq<Absolute<std::path::Path>> for Value {
+    #[inline]
+    fn eq(&self, other: &Absolute<std::path::Path>) -> bool {
+        if let Value::String(s) = self {
+            std::path::Path::new(s) == other
+        } else {
+            false
+        }
+    }
 }
 
 impl From<String> for Value {
     #[inline]
-    fn from(s: String) -> Self {
-        Value::String(s)
+    fn from(value: String) -> Self {
+        Value::String(value.into())
     }
 }
 
 impl From<&str> for Value {
     #[inline]
-    fn from(s: &str) -> Self {
-        Value::String(s.to_owned())
+    fn from(value: &str) -> Self {
+        Value::String(value.into())
+    }
+}
+
+impl From<werk_fs::PathBuf> for Value {
+    #[inline]
+    fn from(value: werk_fs::PathBuf) -> Self {
+        Value::String(value.into())
+    }
+}
+
+impl From<Absolute<werk_fs::PathBuf>> for Value {
+    #[inline]
+    fn from(value: Absolute<werk_fs::PathBuf>) -> Self {
+        value.into_inner().into()
+    }
+}
+
+impl TryFrom<std::path::PathBuf> for Value {
+    type Error = std::path::PathBuf;
+    #[inline]
+    fn try_from(value: std::path::PathBuf) -> Result<Self, Self::Error> {
+        value.try_into().map(Value::String)
+    }
+}
+
+impl<'a> TryFrom<&'a std::path::Path> for Value {
+    type Error = &'a std::path::Path;
+    #[inline]
+    fn try_from(value: &'a std::path::Path) -> Result<Self, Self::Error> {
+        value.try_into().map(Value::String)
+    }
+}
+
+impl TryFrom<Absolute<std::path::PathBuf>> for Value {
+    type Error = Absolute<std::path::PathBuf>;
+    #[inline]
+    fn try_from(value: Absolute<std::path::PathBuf>) -> Result<Self, Self::Error> {
+        value.try_into().map(Value::String)
+    }
+}
+
+impl<'a> TryFrom<&'a Absolute<std::path::Path>> for Value {
+    type Error = &'a Absolute<std::path::Path>;
+    #[inline]
+    fn try_from(value: &'a Absolute<std::path::Path>) -> Result<Self, Self::Error> {
+        value.try_into().map(Value::String)
     }
 }
 
@@ -28,206 +286,123 @@ impl From<Vec<Value>> for Value {
 }
 
 impl Value {
-    pub fn try_collect_strings_recursive<F, E>(self, mut f: F) -> Result<(), E>
-    where
-        F: FnMut(String) -> Result<(), E>,
-    {
-        fn try_collect_strings_recursive<E>(
+    pub fn visit<V: FnMut(StringValue)>(self, mut visitor: V) {
+        fn visit<V: FnMut(StringValue)>(this: Value, visitor: &mut V) {
+            match this {
+                Value::List(values) => {
+                    for value in values {
+                        visit(value, visitor);
+                    }
+                }
+                Value::String(string_value) => visitor(string_value),
+            }
+        }
+        visit(self, &mut visitor);
+    }
+
+    pub fn try_visit<V: FnMut(StringValue) -> Result<(), E>, E>(
+        self,
+        mut visitor: V,
+    ) -> Result<(), E> {
+        fn try_visit<V: FnMut(StringValue) -> Result<(), E>, E>(
             this: Value,
-            f: &mut impl FnMut(String) -> Result<(), E>,
+            visitor: &mut V,
         ) -> Result<(), E> {
             match this {
                 Value::List(vec) => {
-                    for s in vec {
-                        try_collect_strings_recursive(s, f)?;
+                    for value in vec {
+                        try_visit(value, visitor)?;
                     }
                     Ok(())
                 }
-                Value::String(s) => f(s),
+                Value::String(s) => visitor(s),
             }
         }
 
-        try_collect_strings_recursive(self, &mut f)
+        try_visit(self, &mut visitor)
     }
 
-    #[must_use]
-    pub fn collect_strings(self) -> Vec<String> {
-        let mut strings = Vec::new();
-        self.collect_strings_into(&mut strings);
-        strings
-    }
-
-    pub fn collect_strings_into(self, strings: &mut Vec<String>) {
-        match self {
-            Value::List(vec) => {
-                for s in vec {
-                    s.collect_strings_into(strings);
-                }
-            }
-            Value::String(s) => strings.push(s),
-        }
-    }
-
-    pub fn for_each_string_recursive<F>(&self, mut f: F)
-    where
-        F: FnMut(&String),
-    {
-        fn for_each_string_recursive(this: &Value, f: &mut impl FnMut(&String)) {
+    pub fn visit_ref<V: FnMut(&StringValue)>(&self, mut visitor: V) {
+        fn visit_ref<V: FnMut(&StringValue)>(this: &Value, visitor: &mut V) {
             match this {
-                Value::List(v) => {
-                    for item in v {
-                        for_each_string_recursive(item, f);
+                Value::List(vec) => {
+                    for value in vec {
+                        visit_ref(value, visitor);
                     }
                 }
-                Value::String(s) => f(s),
+                Value::String(s) => visitor(s),
             }
         }
 
-        for_each_string_recursive(self, &mut f);
+        visit_ref(self, &mut visitor);
     }
 
-    pub fn try_for_each_string_recursive<F, E>(&self, mut f: F) -> Result<(), E>
-    where
-        F: FnMut(&String) -> Result<(), E>,
-    {
-        fn try_for_each_string_recursive<E>(
+    pub fn try_visit_ref<V: FnMut(&StringValue) -> Result<(), E>, E>(
+        &self,
+        mut visitor: V,
+    ) -> Result<(), E> {
+        fn try_visit_ref<V: FnMut(&StringValue) -> Result<(), E>, E>(
             this: &Value,
-            f: &mut impl FnMut(&String) -> Result<(), E>,
+            visitor: &mut V,
         ) -> Result<(), E> {
             match this {
-                Value::List(v) => {
-                    for item in v {
-                        try_for_each_string_recursive(item, f)?;
+                Value::List(vec) => {
+                    for value in vec {
+                        try_visit_ref(value, visitor)?;
                     }
                     Ok(())
                 }
-                Value::String(s) => f(s),
+                Value::String(s) => visitor(s),
             }
         }
 
-        try_for_each_string_recursive(self, &mut f)
+        try_visit_ref(self, &mut visitor)
     }
 
-    pub fn try_recursive_map_strings<F, E>(&mut self, mut f: F) -> Result<(), E>
-    where
-        F: FnMut(String) -> Result<String, E>,
-    {
-        fn try_recursive_map<F, E>(this: &mut Value, f: &mut F) -> Result<(), E>
-        where
-            F: FnMut(String) -> Result<String, E>,
-        {
+    pub fn visit_mut<V: FnMut(&mut StringValue)>(&mut self, mut visitor: V) {
+        fn visit_mut<V: FnMut(&mut StringValue)>(this: &mut Value, visitor: &mut V) {
             match this {
-                Value::List(v) => {
-                    for item in v {
-                        try_recursive_map(item, f)?;
+                Value::List(vec) => {
+                    for value in vec {
+                        visit_mut(value, visitor);
+                    }
+                }
+                Value::String(s) => visitor(s),
+            }
+        }
+
+        visit_mut(self, &mut visitor);
+    }
+
+    pub fn try_visit_mut<V: FnMut(&mut StringValue) -> Result<(), E>, E>(
+        &mut self,
+        visitor: &mut V,
+    ) -> Result<(), E> {
+        fn try_visit_mut<V: FnMut(&mut StringValue) -> Result<(), E>, E>(
+            this: &mut Value,
+            visitor: &mut V,
+        ) -> Result<(), E> {
+            match this {
+                Value::List(vec) => {
+                    for value in vec {
+                        try_visit_mut(value, visitor)?;
                     }
                     Ok(())
                 }
-                Value::String(s) => {
-                    let value = std::mem::take(s);
-                    *s = f(value)?;
-                    Ok(())
-                }
+                Value::String(s) => visitor(s),
             }
         }
 
-        try_recursive_map(self, &mut f)
+        try_visit_mut(self, visitor)
     }
 
-    pub async fn try_recursive_map_strings_async<'a, F, E, Fut>(
-        &'a self,
-        mut f: F,
-    ) -> Result<Value, E>
-    where
-        F: FnMut(&'a str) -> Fut + 'a,
-        Fut: Future<Output = Result<Value, E>> + 'a,
-    {
-        async fn try_recursive_map<'a, F, E, Fut>(this: &'a Value, f: &mut F) -> Result<Value, E>
-        where
-            F: FnMut(&'a str) -> Fut + 'a,
-            Fut: Future<Output = Result<Value, E>>,
-        {
-            match this {
-                Value::List(v) => {
-                    Box::pin(async move {
-                        let mut list = Vec::with_capacity(v.len());
-                        for item in v {
-                            list.push(try_recursive_map(item, f).await?);
-                        }
-                        Ok(Value::List(list))
-                    })
-                    .await
-                }
-                Value::String(s) => f(s).await,
-            }
-        }
-
-        try_recursive_map(self, &mut f).await
-    }
-
-    pub fn try_recursive_modify<F, E>(&mut self, mut f: F) -> Result<(), E>
-    where
-        F: FnMut(&mut String) -> Result<(), E>,
-    {
-        fn try_recursive_modify<F, E>(this: &mut Value, f: &mut F) -> Result<(), E>
-        where
-            F: FnMut(&mut String) -> Result<(), E>,
-        {
-            match this {
-                Value::List(v) => {
-                    for item in v {
-                        try_recursive_modify(item, f)?;
-                    }
-                    Ok(())
-                }
-                Value::String(s) => f(s),
-            }
-        }
-
-        try_recursive_modify(self, &mut f)
-    }
-
-    pub fn recursive_modify<F>(&mut self, mut f: F)
-    where
-        F: FnMut(&mut String),
-    {
-        fn recursive_modify<F>(this: &mut Value, f: &mut F)
-        where
-            F: FnMut(&mut String),
-        {
-            match this {
-                Value::List(v) => {
-                    for item in v {
-                        recursive_modify(item, f);
-                    }
-                }
-                Value::String(s) => f(s),
-            }
-        }
-
-        recursive_modify(self, &mut f);
+    pub fn collect_strings_into(self, strings: &mut Vec<StringValue>) {
+        self.visit(|s| strings.push(s));
     }
 
     #[must_use]
     pub fn display_friendly(&self, max_width: usize) -> DisplayFriendly {
         DisplayFriendly(self, max_width)
-    }
-}
-
-impl PartialEq<str> for Value {
-    #[inline]
-    fn eq(&self, other: &str) -> bool {
-        match self {
-            Value::String(s) => s == other,
-            Value::List(_) => false,
-        }
-    }
-}
-
-impl PartialEq<&str> for Value {
-    #[inline]
-    fn eq(&self, other: &&str) -> bool {
-        self == *other
     }
 }
 
@@ -239,7 +414,7 @@ where
     fn eq(&self, other: &[T]) -> bool {
         match self {
             Value::List(v) => v.iter().zip(other.iter()).all(|(a, b)| a == b),
-            Value::String(_) => false,
+            Value::String(..) => false,
         }
     }
 }
