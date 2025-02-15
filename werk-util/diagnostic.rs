@@ -54,7 +54,7 @@ impl<T, R> Annotated<T, R> {
     }
 }
 
-impl<T: AsDiagnostic, R: DiagnosticFileRepository + Sized> Annotated<T, R> {
+impl<T: AsDiagnostic, R: DiagnosticSourceMap + Sized> Annotated<T, R> {
     pub fn display<'a>(
         &'a self,
         renderer: &'a annotate_snippets::Renderer,
@@ -69,7 +69,7 @@ impl<T: std::fmt::Debug, R> std::fmt::Debug for Annotated<T, R> {
     }
 }
 
-impl<T: AsDiagnostic, R: DiagnosticFileRepository> std::fmt::Display for Annotated<T, R> {
+impl<T: AsDiagnostic, R: DiagnosticSourceMap> std::fmt::Display for Annotated<T, R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let renderer = annotate_snippets::Renderer::styled();
         let display = self.display(&renderer);
@@ -80,7 +80,7 @@ impl<T: AsDiagnostic, R: DiagnosticFileRepository> std::fmt::Display for Annotat
 impl<T, R> std::error::Error for Annotated<T, R>
 where
     T: AsDiagnostic + std::error::Error,
-    R: DiagnosticFileRepository,
+    R: DiagnosticSourceMap,
 {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.error.source()
@@ -129,16 +129,16 @@ impl<'a> DiagnosticSource<'a> {
     }
 }
 
-pub trait DiagnosticFileRepository {
+pub trait DiagnosticSourceMap {
     fn get_source(&self, id: DiagnosticFileId) -> Option<DiagnosticSource<'_>>;
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct DiagnosticFileSourceMap {
+pub struct DiagnosticMainSourceMap {
     map: IndexMap<String, String>,
 }
 
-impl DiagnosticFileSourceMap {
+impl DiagnosticMainSourceMap {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -149,9 +149,14 @@ impl DiagnosticFileSourceMap {
         let (index, _) = self.map.insert_full(file, source);
         DiagnosticFileId(index.try_into().unwrap())
     }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.map.clear();
+    }
 }
 
-impl DiagnosticFileRepository for DiagnosticFileSourceMap {
+impl DiagnosticSourceMap for DiagnosticMainSourceMap {
     #[inline]
     fn get_source(&self, id: DiagnosticFileId) -> Option<DiagnosticSource<'_>> {
         self.map
@@ -160,7 +165,41 @@ impl DiagnosticFileRepository for DiagnosticFileSourceMap {
     }
 }
 
-impl DiagnosticFileRepository for DiagnosticSource<'_> {
+#[derive(Default)]
+pub struct DiagnosticSecondarySourceMap {
+    map: Vec<Option<(String, String)>>,
+}
+
+impl DiagnosticSecondarySourceMap {
+    #[inline]
+    pub fn insert(&mut self, id: DiagnosticFileId, file: String, source: String) {
+        let index = id.0 as usize;
+
+        // Extend the map with empty entries.
+        for _ in self.map.len()..=index {
+            self.map.push(None);
+        }
+
+        self.map[index] = Some((file, source));
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.map.clear();
+    }
+}
+
+impl DiagnosticSourceMap for DiagnosticSecondarySourceMap {
+    #[inline]
+    fn get_source(&self, id: DiagnosticFileId) -> Option<DiagnosticSource<'_>> {
+        self.map.get(id.0 as usize).and_then(|opt| {
+            opt.as_ref()
+                .map(|(file, source)| DiagnosticSource { file, source })
+        })
+    }
+}
+
+impl DiagnosticSourceMap for DiagnosticSource<'_> {
     fn get_source(&self, id: DiagnosticFileId) -> Option<DiagnosticSource<'_>> {
         if id == DiagnosticFileId(0) {
             Some(*self)
@@ -242,7 +281,7 @@ impl Diagnostic {
 
     pub fn display<'a>(
         &'a self,
-        source_files: &'a dyn DiagnosticFileRepository,
+        source_files: &'a dyn DiagnosticSourceMap,
         renderer: &'a annotate_snippets::Renderer,
     ) -> impl std::fmt::Display + 'a {
         Display(self, source_files, renderer)
@@ -254,16 +293,13 @@ pub trait AsDiagnostic {
 
     fn display<'a>(
         &'a self,
-        source_files: &'a dyn DiagnosticFileRepository,
+        source_files: &'a dyn DiagnosticSourceMap,
         render: &'a annotate_snippets::Renderer,
     ) -> impl std::fmt::Display + 'a {
         Display(self.as_diagnostic(), source_files, render)
     }
 
-    fn into_diagnostic_error<R: DiagnosticFileRepository>(
-        self,
-        source_files: R,
-    ) -> Annotated<Self, R>
+    fn into_diagnostic_error<R: DiagnosticSourceMap>(self, source_files: R) -> Annotated<Self, R>
     where
         Self: Sized,
     {
@@ -276,7 +312,7 @@ pub trait AsDiagnostic {
 
 struct Display<'a, D>(
     D,
-    &'a dyn DiagnosticFileRepository,
+    &'a dyn DiagnosticSourceMap,
     &'a annotate_snippets::Renderer,
 );
 impl<D: AsRef<Diagnostic>> std::fmt::Display for Display<'_, D> {

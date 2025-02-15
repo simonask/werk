@@ -1,7 +1,7 @@
 use indexmap::IndexMap;
 use werk_fs::Absolute;
 use werk_parser::{ast, parser::Span};
-use werk_util::{Annotated, AsDiagnostic, DiagnosticFileSourceMap, Symbol};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticMainSourceMap, Symbol};
 
 use crate::{
     cache::Hash128, AmbiguousPatternError, EvalError, GlobalVariables, Pattern, PatternMatchData,
@@ -22,7 +22,7 @@ pub struct Manifest<'a> {
     pub build_recipes: Vec<BuildRecipe<'a>>,
     /// Populated by `include` statements during evaluation of the root scope in
     /// the werkfile.
-    pub source_map: DiagnosticFileSourceMap,
+    pub source_map: DiagnosticMainSourceMap,
 }
 
 impl<'a> Manifest<'a> {
@@ -209,7 +209,7 @@ impl<'a> Defaults<'a> {
     }
 }
 
-impl werk_util::DiagnosticFileRepository for Manifest<'_> {
+impl werk_util::DiagnosticSourceMap for Manifest<'_> {
     #[inline]
     fn get_source(
         &self,

@@ -6,7 +6,7 @@ use indexmap::IndexMap;
 use owo_colors::OwoColorize as _;
 use parking_lot::Mutex;
 use werk_runner::{BuildStatus, Error, Outdatedness, ShellCommandLine, TaskId, Warning};
-use werk_util::{AsDiagnostic as _, DiagnosticFileSourceMap};
+use werk_util::{AsDiagnostic as _, DiagnosticSecondarySourceMap};
 
 use std::{io::Write, sync::Arc};
 
@@ -36,7 +36,7 @@ impl<const LINEAR: bool> TerminalRenderer<LINEAR> {
                     Some(progress::Progress::default())
                 },
                 settings,
-                source_map: DiagnosticFileSourceMap::default(),
+                source_map: DiagnosticSecondarySourceMap::default(),
             },
             needs_clear: false,
         }));
@@ -136,7 +136,7 @@ struct RenderState {
     num_completed_tasks: usize,
     progress: Option<progress::Progress>,
     settings: OutputSettings,
-    source_map: DiagnosticFileSourceMap,
+    source_map: DiagnosticSecondarySourceMap,
 }
 
 struct TaskStatus {
@@ -354,6 +354,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
     fn warning(&mut self, _task_id: Option<TaskId>, warning: &Warning) {
         // TODO: Dedup warnings based on span and ID.
         let diagnostic = warning.as_diagnostic();
+        // TODO: Get the term width.
         let renderer = annotate_snippets::Renderer::styled();
 
         _ = self.render_lines(|out, state| {
@@ -376,6 +377,12 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
         self.state.current_tasks.clear();
         self.state.num_tasks = 0;
         self.state.num_completed_tasks = 0;
+    }
+
+    fn add_source_file(&mut self, id: werk_util::DiagnosticFileId, path: &str, source: &str) {
+        self.state
+            .source_map
+            .insert(id, path.to_string(), source.to_string());
     }
 }
 
@@ -452,5 +459,9 @@ impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
 
     fn reset(&self) {
         self.inner.lock().reset();
+    }
+
+    fn add_source_file(&self, id: werk_util::DiagnosticFileId, path: &str, source: &str) {
+        self.inner.lock().add_source_file(id, path, source);
     }
 }

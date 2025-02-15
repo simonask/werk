@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::{borrow::Cow, collections::hash_map};
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_parser::ast;
-use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticFileSourceMap, Symbol};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticMainSourceMap, Symbol};
 
 use crate::{
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
@@ -220,7 +220,7 @@ impl<'a> Workspace<'a> {
         &mut self,
         ast: &'a werk_parser::Document<'a>,
     ) -> Result<(), EvalError> {
-        let mut source_map = DiagnosticFileSourceMap::default();
+        let mut source_map = DiagnosticMainSourceMap::default();
         let source_path = ast.origin.display().to_string();
         let id = source_map.insert(source_path.clone(), ast.source.to_owned());
         assert_eq!(id, DiagnosticFileId(0));
@@ -658,7 +658,7 @@ fn write_workspace_cache(
     }
 }
 
-impl<'a> werk_util::DiagnosticFileRepository for &'a Workspace<'a> {
+impl<'a> werk_util::DiagnosticSourceMap for &'a Workspace<'a> {
     #[inline]
     fn get_source(
         &self,

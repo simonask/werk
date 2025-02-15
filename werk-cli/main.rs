@@ -13,7 +13,7 @@ use owo_colors::OwoColorize as _;
 use render::{AutoStream, ColorOutputKind};
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_runner::{Runner, Warning, Workspace, WorkspaceSettings};
-use werk_util::{Annotated, AsDiagnostic, DiagnosticFileRepository, DiagnosticSource};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticSource, DiagnosticSourceMap};
 
 shadow_rs::shadow!(build);
 
@@ -694,22 +694,22 @@ fn find_output_directory(
     }
 }
 
-fn print_error<E: AsDiagnostic, R: DiagnosticFileRepository>(err: Annotated<E, R>) -> Error {
+fn print_error<E: AsDiagnostic, R: DiagnosticSourceMap>(err: Annotated<E, R>) -> Error {
     print_diagnostic(err);
     Error::Runner
 }
 
-fn print_eval_error<E: AsDiagnostic, R: DiagnosticFileRepository>(err: Annotated<E, R>) -> Error {
+fn print_eval_error<E: AsDiagnostic, R: DiagnosticSourceMap>(err: Annotated<E, R>) -> Error {
     print_diagnostic(err);
     Error::Eval
 }
 
-fn print_parse_error<E: AsDiagnostic, R: DiagnosticFileRepository>(err: Annotated<E, R>) -> Error {
+fn print_parse_error<E: AsDiagnostic, R: DiagnosticSourceMap>(err: Annotated<E, R>) -> Error {
     print_diagnostic(err);
     Error::Parse
 }
 
-fn print_diagnostic<E: AsDiagnostic, R: DiagnosticFileRepository>(err: Annotated<E, R>) {
+fn print_diagnostic<E: AsDiagnostic, R: DiagnosticSourceMap>(err: Annotated<E, R>) {
     use annotate_snippets::renderer::DEFAULT_TERM_WIDTH;
     let renderer = annotate_snippets::Renderer::styled().term_width(
         render::stderr_width()
