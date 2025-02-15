@@ -4,7 +4,7 @@ use werk_util::{Symbol, SymbolRegistryLock};
 
 use crate::{
     eval::{Eval, Used},
-    ir, EvalError, Io, PatternMatchData, Render, TaskId, Value, Workspace,
+    ir, EvalError, Io, PatternMatchData, Render, TaskId, Value, Warning, Workspace,
 };
 
 pub type LocalVariables = indexmap::IndexMap<Symbol, Eval<Value>>;
@@ -194,6 +194,10 @@ pub trait Scope: Send + Sync {
     fn io(&self) -> &dyn Io {
         self.workspace().io()
     }
+
+    fn warning(&self, warning: &Warning) {
+        self.render().warning(self.task_id(), warning);
+    }
 }
 
 impl<'a> RootScope<'a> {
@@ -236,7 +240,7 @@ impl<'a> BuildRecipeScope<'a> {
             task_id,
             recipe_match,
             input_files: Value::List(Vec::new()),
-            output_file: Value::String(recipe_match.target_file.to_string()),
+            output_file: recipe_match.target_file.to_string().into(),
         }
     }
 
@@ -251,16 +255,14 @@ impl<'a> BuildRecipeScope<'a> {
         let Value::List(ref mut input_files) = self.input_files else {
             unreachable!()
         };
-        input_files.push(Value::String(name));
+        input_files.push(name.into());
     }
 
-    pub fn push_input_files(&mut self, names: &[String]) {
+    pub fn push_input_files(&mut self, names: impl IntoIterator<Item = String>) {
         let Value::List(ref mut input_files) = self.input_files else {
             unreachable!()
         };
-        for name in names {
-            input_files.push(Value::String(name.clone()));
-        }
+        input_files.extend(names.into_iter().map(Into::into));
     }
 }
 
@@ -423,36 +425,36 @@ pub fn default_global_constants() -> &'static HashMap<Symbol, Value> {
         let mut map = HashMap::default();
         let mut sym = SymbolRegistryLock::lock();
         map.extend([
-            (sym.insert("EMPTY"), Value::String(String::new())),
+            (sym.insert("EMPTY"), Value::from(String::new())),
             (
                 sym.insert("EXE_SUFFIX"),
-                Value::String(exe_suffix().to_owned()),
+                Value::from(exe_suffix().to_owned()),
             ),
             (
                 sym.insert("DYLIB_PREFIX"),
-                Value::String(dylib_prefix().to_owned()),
+                Value::from(dylib_prefix().to_owned()),
             ),
             (
                 sym.insert("DYLIB_SUFFIX"),
-                Value::String(dylib_suffix().to_owned()),
+                Value::from(dylib_suffix().to_owned()),
             ),
             (
                 sym.insert("STATICLIB_PREFIX"),
-                Value::String(staticlib_prefix().to_owned()),
+                Value::from(staticlib_prefix().to_owned()),
             ),
             (
                 sym.insert("STATICLIB_SUFFIX"),
-                Value::String(staticlib_suffix().to_owned()),
+                Value::from(staticlib_suffix().to_owned()),
             ),
-            (sym.insert("OS"), Value::String(current_os().to_owned())),
+            (sym.insert("OS"), Value::from(current_os().to_owned())),
             (
                 sym.insert("OS_FAMILY"),
-                Value::String(current_os_family().to_owned()),
+                Value::from(current_os_family().to_owned()),
             ),
-            (sym.insert("ARCH"), Value::String(current_arch().to_owned())),
+            (sym.insert("ARCH"), Value::from(current_arch().to_owned())),
             (
                 sym.insert("ARCH_FAMILY"),
-                Value::String(current_arch_family().to_owned()),
+                Value::from(current_arch_family().to_owned()),
             ),
         ]);
         map
@@ -499,7 +501,7 @@ impl Scope for RootScope<'_> {
             // Runtime constants.
             let cache = SymCache::get();
             if name == cache.symbol_color {
-                return Some(LookupValue::Owned(Eval::inherent(Value::String(
+                return Some(LookupValue::Owned(Eval::inherent(Value::from(
                     if self.workspace.force_color { "1" } else { "0" }.to_owned(),
                 ))));
             }
@@ -563,15 +565,11 @@ impl Scope for BuildRecipeScope<'_> {
             Lookup::Implied => None,
             Lookup::PatternStem => {
                 let stem = self.recipe_match.match_data.stem()?;
-                Some(LookupValue::Owned(Eval::inherent(Value::String(
-                    stem.to_owned(),
-                ))))
+                Some(LookupValue::Owned(Eval::inherent(Value::from(stem))))
             }
             Lookup::CaptureGroup(index) => {
                 let group = self.recipe_match.match_data.capture_group(index as usize)?;
-                Some(LookupValue::Owned(Eval::inherent(Value::String(
-                    group.to_owned(),
-                ))))
+                Some(LookupValue::Owned(Eval::inherent(Value::from(group))))
             }
             Lookup::InputFile => Some(LookupValue::ValueRef(Eval::inherent(&self.input_files))),
             Lookup::OutputFile => Some(LookupValue::ValueRef(Eval::inherent(&self.output_file))),
@@ -638,15 +636,11 @@ impl Scope for MatchScope<'_> {
         match lookup {
             Lookup::PatternStem => {
                 let stem = self.pattern_match.stem()?;
-                Some(LookupValue::Owned(Eval::inherent(Value::String(
-                    stem.to_owned(),
-                ))))
+                Some(LookupValue::Owned(Eval::inherent(Value::from(stem))))
             }
             Lookup::CaptureGroup(index) => {
                 let group = self.pattern_match.capture_group(index as usize)?;
-                Some(LookupValue::Owned(Eval::inherent(Value::String(
-                    group.to_owned(),
-                ))))
+                Some(LookupValue::Owned(Eval::inherent(Value::from(group))))
             }
             Lookup::Implied => Some(LookupValue::EvalRef(self.implied_value)),
             _ => self.parent.get(lookup),

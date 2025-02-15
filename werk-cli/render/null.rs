@@ -20,5 +20,5 @@ impl Render for NullRender {
 
     fn message(&self, _: Option<TaskId>, _: &str) {}
 
-    fn warning(&self, _: Option<TaskId>, _: &str) {}
+    fn warning(&self, _: Option<TaskId>, _: &werk_runner::Warning) {}
 }

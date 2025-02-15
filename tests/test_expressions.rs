@@ -116,6 +116,6 @@ fn map_recursive() {
 "#,
             "result"
         ),
-        Value::String(String::from("hello a"))
+        Value::from("hello a")
     );
 }

@@ -12,9 +12,9 @@ use werk_fs::Absolute;
 use werk_parser::parser::{Offset, Span};
 use werk_runner::{
     globset, BuildStatus, DirEntry, Env, Error, GlobSettings, Io, Metadata, Outdatedness,
-    ShellCommandLine, TaskId, WhichError, WorkspaceSettings,
+    ShellCommandLine, TaskId, Warning, WhichError, WorkspaceSettings,
 };
-use werk_util::{Diagnostic as _, DiagnosticError, DiagnosticSource};
+use werk_util::{Annotated, AsDiagnostic as _, DiagnosticSource};
 use winnow::stream::Offset as _;
 
 #[inline]
@@ -192,7 +192,7 @@ pub struct Test<'a> {
 impl<'a> Test<'a> {
     pub fn new(
         source: &'a str,
-    ) -> Result<Self, werk_util::DiagnosticError<werk_parser::Error, DiagnosticSource<'a>>> {
+    ) -> Result<Self, werk_util::Annotated<werk_parser::Error, DiagnosticSource<'a>>> {
         let mut test = TestBuilder::default()
             .werkfile(source)
             .build()
@@ -209,7 +209,7 @@ impl<'a> Test<'a> {
     pub fn reload(
         &mut self,
         source: &'a str,
-    ) -> Result<(), werk_util::DiagnosticError<werk_parser::Error, DiagnosticSource<'a>>> {
+    ) -> Result<(), werk_util::Annotated<werk_parser::Error, DiagnosticSource<'a>>> {
         self.ast = werk_parser::parse_werk(self.ast.origin, source).map_err(|err| {
             err.into_diagnostic_error(DiagnosticSource::new(std::path::Path::new("input"), source))
         })?;
@@ -299,7 +299,7 @@ impl<'a> Test<'a> {
         defines: &[(&str, &str)],
     ) -> Result<
         werk_runner::Workspace<'b>,
-        DiagnosticError<werk_runner::Error, &'b werk_parser::Document<'b>>,
+        Annotated<werk_runner::Error, &'b werk_parser::Document<'b>>,
     > {
         let mut settings = WorkspaceSettings::new(self.output_dir.clone());
 
@@ -583,10 +583,10 @@ impl werk_runner::Render for MockRender {
             .push(MockRenderEvent::Message(task_id, message.to_string()));
     }
 
-    fn warning(&self, task_id: Option<TaskId>, message: &str) {
+    fn warning(&self, task_id: Option<TaskId>, warning: &Warning) {
         self.log
             .lock()
-            .push(MockRenderEvent::Warning(task_id, message.to_string()));
+            .push(MockRenderEvent::Warning(task_id, warning.to_string()));
     }
 }
 

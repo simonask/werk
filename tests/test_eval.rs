@@ -1,7 +1,6 @@
 use tests::mock_io::*;
 use werk_parser::parser::{parse, Input};
-use werk_runner::{eval, RootScope, ShellCommandLine, Value};
-use werk_util::Symbol;
+use werk_runner::{eval, Error, EvalError, RootScope, ShellCommandLine};
 use winnow::Parser as _;
 
 #[test]
@@ -130,74 +129,9 @@ let bar = "<foo>"
 let baz = "<bar>"
     "#;
     let test = Test::new(WERK).unwrap();
-    let workspace = test.create_workspace(&[]).unwrap();
-    assert_eq!(
-        workspace
-            .manifest
-            .globals
-            .get(Symbol::new("foo"))
-            .unwrap()
-            .value,
-        Value::String(String::from("foo"))
-    );
-    assert_eq!(
-        workspace
-            .manifest
-            .globals
-            .get(Symbol::new("bar"))
-            .unwrap()
-            .value,
-        Value::String(test.output_path_str(&["foo"]))
-    );
-
-    // Check that the path was not double-resolved.
-    assert_eq!(
-        workspace
-            .manifest
-            .globals
-            .get(Symbol::new("baz"))
-            .unwrap()
-            .value,
-        Value::String(test.output_path_str(&["foo"]))
-    );
-}
-
-#[test]
-fn pathiness_append() {
-    static WERK: &str = r#"
-let foo = "foo"
-let bar = "<foo>/bar"
-let baz = "<bar>/baz"
-    "#;
-    let test = Test::new(WERK).unwrap();
-    let workspace = test.create_workspace(&[]).unwrap();
-    assert_eq!(
-        workspace
-            .manifest
-            .globals
-            .get(Symbol::new("foo"))
-            .unwrap()
-            .value,
-        Value::String(String::from("foo"))
-    );
-    assert_eq!(
-        workspace
-            .manifest
-            .globals
-            .get(Symbol::new("bar"))
-            .unwrap()
-            .value,
-        Value::String(test.output_path_str(&["foo", "bar"]))
-    );
-
-    // Check that the path was not double-resolved.
-    assert_eq!(
-        workspace
-            .manifest
-            .globals
-            .get(Symbol::new("baz"))
-            .unwrap()
-            .value,
-        Value::String(test.output_path_str(&["foo", "bar", "baz"]))
-    );
+    match test.create_workspace(&[]).map_err(|err| err.error) {
+        Ok(_) => panic!("expected error"),
+        Err(Error::Eval(EvalError::DoubleResolvePath(_))) => {}
+        Err(err) => panic!("unexpected error: {err}"),
+    }
 }

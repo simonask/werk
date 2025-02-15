@@ -3,7 +3,10 @@ use std::{borrow::Cow, fmt::Write, hash::Hash as _};
 use werk_util::Symbol;
 
 use crate::{
-    parser::{parse_pattern_expr_unquoted, parse_string_expr_unquoted, Escape, Span},
+    parser::{
+        escape_pattern_literal, escape_string_literal, parse_pattern_expr_unquoted,
+        parse_string_expr_unquoted, Span,
+    },
     SemanticHash,
 };
 
@@ -32,7 +35,7 @@ impl std::fmt::Display for StringExpr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for fragment in &self.fragments {
             match fragment {
-                StringFragment::Literal(s) => Escape::<false>(s).fmt(f)?,
+                StringFragment::Literal(s) => escape_string_literal(s).fmt(f)?,
                 StringFragment::PatternStem => f.write_char('%')?,
                 StringFragment::Interpolation(interp) => interp.fmt(f)?,
             }
@@ -144,7 +147,7 @@ impl std::fmt::Display for PatternExpr<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for fragment in &self.fragments {
             match fragment {
-                PatternFragment::Literal(s) => Escape::<true>(s).fmt(f)?,
+                PatternFragment::Literal(s) => escape_pattern_literal(s).fmt(f)?,
                 PatternFragment::Interpolation(interp) => interp.fmt(f)?,
                 PatternFragment::PatternStem => f.write_char('%')?,
                 PatternFragment::OneOf(vec) => {

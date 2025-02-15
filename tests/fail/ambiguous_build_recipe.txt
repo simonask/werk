@@ -3,9 +3,9 @@ error[R0011]: ambiguous pattern match: /foofoo
   |
 3 | build "%foo" {
   |       ------ note: first pattern here
-  |
- ::: INPUT:7:7
-  |
+4 |     info "<out>"
+5 | }
+6 |
 7 | build "foo%" {
   |       ------ note: second pattern here
   |

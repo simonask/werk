@@ -1,20 +1,22 @@
+mod string;
 mod used;
-use indexmap::IndexSet;
+pub(crate) use string::*;
 pub use used::*;
+
 use werk_fs::Absolute;
 use werk_util::Symbol;
 
-use std::{borrow::Cow, sync::Arc};
+use std::sync::Arc;
 
 use werk_parser::{
-    ast,
-    parser::{Span, Spanned as _},
+    ast::{self},
+    parser::Spanned as _,
 };
 
 use crate::{
-    AmbiguousPatternError, BuildRecipeScope, Env, EvalError, Lookup, LookupValue, MatchScope,
-    Pattern, PatternBuilder, RunCommand, Scope, ShellCommandLine, ShellCommandLineBuilder,
-    ShellError, SubexprScope, TaskRecipeScope, Value, Workspace,
+    BuildRecipeScope, Env, EvalError, Lookup, LookupValue, MatchScope, Pattern, RunCommand, Scope,
+    ShellCommandLine, ShellError, StringFlags, StringValue, SubexprScope, TaskRecipeScope, Value,
+    Warning,
 };
 
 /// Evaluated value, which keeps track of "outdatedness" with respect to cached
@@ -142,24 +144,14 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             let (which, hash) = scope
                 .workspace()
                 .which(&string)
-                .map_err(|e| EvalError::CommandNotFound(expr.span, string.clone(), e))?;
-
-            let which = String::from_utf8(
-                which
-                    .into_owned()
-                    .into_inner()
-                    .into_os_string()
-                    .into_encoded_bytes(),
-            )
-            .map_err(|err| {
-                EvalError::NonUtf8Which(
-                    expr.span,
-                    std::path::PathBuf::from(unsafe {
-                        // SAFETY: These are the bytes we just got from `into_os_string()`.
-                        std::ffi::OsString::from_encoded_bytes_unchecked(err.into_bytes())
-                    }),
-                )
-            })?;
+                .map_err(|e| EvalError::CommandNotFound(expr.span, string.string.clone(), e))?;
+            // Note: TryFrom sets the correct StringFlags.
+            let which: StringValue = match which.into_owned().try_into() {
+                Ok(value) => value,
+                Err(path) => {
+                    return Err(EvalError::NonUtf8Which(expr.span, path.into_inner()));
+                }
+            };
 
             if let Some(hash) = hash {
                 used.insert(UsedVariable::Which(Symbol::new(&string), hash));
@@ -178,7 +170,7 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             let (env, hash) = scope.workspace().env(&name);
             used.insert(UsedVariable::Env(Symbol::new(&name), hash));
             Ok(Eval {
-                value: Value::String(env),
+                value: Value::String(env.into()),
                 used,
             })
         }
@@ -201,7 +193,7 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             .map(LookupValue::into_owned),
         ast::Expr::Error(expr) => {
             let message = eval_string_expr(scope, &expr.param)?;
-            Err(EvalError::ErrorExpression(expr.span, message.value))
+            Err(EvalError::ErrorExpression(expr.span, message.value.string))
         }
     }
 }
@@ -247,12 +239,18 @@ pub fn eval_op(
         ast::ExprOp::Warn(expr) => {
             let scope = SubexprScope::new(scope, &param);
             let message = eval_string_expr(&scope, &expr.param)?;
-            scope.render().warning(scope.task_id(), &message.value);
+            scope.render().warning(
+                scope.task_id(),
+                &Warning::WarningExpression(expr.span, message.value.string),
+            );
             Ok(param)
         }
         ast::ExprOp::Error(error_expr) => {
             let string = eval_string_expr(scope, &error_expr.param)?;
-            Err(EvalError::ErrorExpression(error_expr.span, string.value))
+            Err(EvalError::ErrorExpression(
+                error_expr.span,
+                string.value.string,
+            ))
         }
         ast::ExprOp::AssertEq(expr) => eval_assert_eq(scope, expr, param),
         ast::ExprOp::AssertMatch(expr) => eval_assert_match(scope, expr, param),
@@ -267,12 +265,12 @@ pub fn eval_match_expr(
     // Apply the match recursively to the input.
     fn apply_match_recursively(
         scope: &dyn Scope,
-        patterns: &[(Pattern<'_>, &ast::ExprChain<'_>)],
+        patterns: &[(Pattern, &ast::ExprChain<'_>)],
         value: Value,
         used: &mut Used,
     ) -> Result<Value, EvalError> {
         match value {
-            Value::String(s) => apply_match(scope, patterns, s.clone(), used),
+            Value::String(s) => apply_match(scope, patterns, s.string, used),
             Value::List(list) => {
                 if list.is_empty() {
                     return Ok(Value::List(Vec::new()));
@@ -289,7 +287,7 @@ pub fn eval_match_expr(
 
     fn apply_match(
         scope: &dyn Scope,
-        patterns: &[(Pattern<'_>, &ast::ExprChain<'_>)],
+        patterns: &[(Pattern, &ast::ExprChain<'_>)],
         input_string: String,
         used: &mut Used,
     ) -> Result<Value, EvalError> {
@@ -301,7 +299,7 @@ pub fn eval_match_expr(
 
             // Don't need to forward used variables here, because
             // we are manually collecting used variables
-            let matched_string = Eval::inherent(Value::String(input_string));
+            let matched_string = Eval::inherent(Value::from(input_string));
             let scope = MatchScope::new(scope, &pattern_match, &matched_string);
             let new_value = eval_chain(&scope, replacement_expr)?;
             *used |= new_value.used;
@@ -309,7 +307,7 @@ pub fn eval_match_expr(
         }
 
         // Unmodified.
-        Ok(Value::String(input_string))
+        Ok(Value::String(input_string.into()))
     }
 
     let mut used = param.used;
@@ -335,13 +333,13 @@ pub fn eval_filter_match(
     // Apply the match recursively to the input.
     fn apply_filter_match_recursively(
         scope: &dyn Scope,
-        patterns: &[(Pattern<'_>, &ast::ExprChain<'_>)],
+        patterns: &[(Pattern, &ast::ExprChain<'_>)],
         value: Value,
         used: &mut Used,
         result: &mut Vec<Value>,
     ) -> Result<(), EvalError> {
         match value {
-            Value::String(s) => apply_filter_match(scope, patterns, s, used, result),
+            Value::String(s) => apply_filter_match(scope, patterns, s.string, used, result),
             Value::List(list) => {
                 for item in list {
                     apply_filter_match_recursively(scope, patterns, item, used, result)?;
@@ -353,7 +351,7 @@ pub fn eval_filter_match(
 
     fn apply_filter_match(
         scope: &dyn Scope,
-        patterns: &[(Pattern<'_>, &ast::ExprChain<'_>)],
+        patterns: &[(Pattern, &ast::ExprChain<'_>)],
         input_string: String,
         used: &mut Used,
         result: &mut Vec<Value>,
@@ -366,7 +364,7 @@ pub fn eval_filter_match(
 
             // Don't need to forward used variables here, because
             // we are manually collecting used variables
-            let matched_string = Eval::inherent(Value::String(input_string));
+            let matched_string = Eval::inherent(Value::from(input_string));
             let scope = MatchScope::new(scope, &pattern_match, &matched_string);
             let new_value = eval_chain(&scope, replacement_expr)?;
             *used |= new_value.used;
@@ -531,37 +529,19 @@ fn eval_split(
     expr: &ast::SplitExpr,
     param: Eval<Value>,
 ) -> Result<Eval<Value>, EvalError> {
-    fn split_recursive(value: &Value, regex: &regex::Regex, result: &mut Vec<Value>) {
-        match value {
-            Value::List(vec) => {
-                for item in vec {
-                    split_recursive(item, regex, result);
-                }
-            }
-            Value::String(s) => {
-                for split in regex.split(s) {
-                    result.push(Value::String(split.to_owned()));
-                }
-            }
-        }
-    }
-
     let pattern_builder = eval_pattern_builder(scope, &expr.param)?;
-    let used = param.used | pattern_builder.used;
-    let mut pattern_builder = pattern_builder.value;
-    pattern_builder.set_match_substrings(true);
-    let pattern = pattern_builder.build();
+    let pattern_regex = pattern_builder.build_partial_regex();
+    let regex = pattern_regex.value.regex;
+    let used = param.used | pattern_regex.used;
 
-    let mut result = Vec::new();
-    split_recursive(
-        &param.value,
-        pattern
-            .regex()
-            .expect("split-pattern did not produce a regex"),
-        &mut result,
-    );
+    let mut parts = vec![];
+    param.value.visit_ref(|s| {
+        for part in regex.split(s) {
+            parts.push(part.to_owned().into());
+        }
+    });
     Ok(Eval {
-        value: Value::List(result),
+        value: Value::List(parts),
         used,
     })
 }
@@ -575,163 +555,50 @@ fn eval_dedup(param: Eval<Value>) -> Eval<Value> {
 }
 
 fn eval_split_lines(_scope: &dyn Scope, param: Eval<Value>) -> Eval<Value> {
-    fn split_lines_recursive(value: &Value, result: &mut Vec<Value>) {
-        match value {
-            Value::List(vec) => {
-                for item in vec {
-                    split_lines_recursive(item, result);
-                }
-            }
-            Value::String(s) => {
-                for line in s.lines() {
-                    result.push(Value::String(line.to_owned()));
-                }
-            }
+    let mut lines = vec![];
+    param.visit_ref(|s| {
+        for line in s.lines() {
+            lines.push(Value::String(StringValue {
+                string: line.to_owned(),
+                // Paths can never contain newlines, but the string may contain
+                // a list of paths, so inherit the flags.
+                flags: s.flags,
+            }));
         }
-    }
+    });
 
-    let used = param.used;
-    let mut result = Vec::new();
-    split_lines_recursive(&param.value, &mut result);
     Eval {
-        value: Value::List(result),
-        used,
+        value: Value::List(lines),
+        used: param.used,
     }
 }
 
-pub fn eval_pattern_builder<'a, P: Scope + ?Sized>(
-    scope: &P,
-    expr: &ast::PatternExpr<'a>,
-) -> Result<Eval<PatternBuilder<'a>>, EvalError> {
-    let mut pattern_builder = PatternBuilder::default();
-    pattern_builder.set_span(expr.span);
-
-    let mut used = Used::none();
-
-    for fragment in &expr.fragments {
-        match fragment {
-            ast::PatternFragment::Literal(lit) => pattern_builder.push_str(lit),
-            ast::PatternFragment::PatternStem => pattern_builder.push_pattern_stem(),
-            ast::PatternFragment::OneOf(one_of) => pattern_builder.push_one_of(one_of.clone()),
-            ast::PatternFragment::Interpolation(interp) => {
-                let value = eval_string_interpolation_stem(scope, expr.span, interp.stem)?;
-                used |= value.used();
-
-                let mut value_owned;
-                let value = if let Some(ref options) = interp.options {
-                    if options.join.is_some() {
-                        return Err(EvalError::JoinInPattern(expr.span));
-                    }
-
-                    value_owned = value.into_value();
-                    eval_string_interpolation_ops(
-                        expr.span,
-                        &mut value_owned,
-                        &options.ops,
-                        false,
-                        scope.workspace(),
-                        ResolvePathMode::Illegal,
-                    )?;
-                    &value_owned
-                } else {
-                    &*value
-                };
-
-                // Note: Ignoring the build-status of the interpolation
-                // stem, because we are building a pattern - it can't itself
-                // be outdated.
-                match value {
-                    Value::String(string) => {
-                        pattern_builder.push_str(string);
-                    }
-                    Value::List(_) => {
-                        return Err(EvalError::ListInPattern(expr.span));
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(Eval {
-        value: pattern_builder,
-        used,
-    })
+pub(crate) fn eval_pattern_builder<'a, P: Scope + ?Sized>(
+    scope: &'a P,
+    expr: &'a ast::PatternExpr,
+) -> Result<PatternBuilder<'a, P>, EvalError> {
+    let mut pattern_builder = PatternBuilder::new(scope, expr.span);
+    pattern_builder.eval(expr)?;
+    Ok(pattern_builder)
 }
 
-pub fn eval_pattern<'a, P: Scope + ?Sized>(
+pub fn eval_pattern<P: Scope + ?Sized>(
     scope: &P,
-    expr: &ast::PatternExpr<'a>,
-) -> Result<Eval<Pattern<'a>>, EvalError> {
-    Ok(eval_pattern_builder(scope, expr)?.map(PatternBuilder::build))
+    expr: &ast::PatternExpr,
+) -> Result<Eval<Pattern>, EvalError> {
+    Ok(eval_pattern_builder(scope, expr)?.build())
 }
 
 pub fn eval_string_expr<P: Scope + ?Sized>(
     scope: &P,
     expr: &ast::StringExpr<'_>,
-) -> Result<Eval<String>, EvalError> {
-    let mut s = String::new();
-
-    let mut used = Used::none();
-
-    for fragment in &expr.fragments {
-        match fragment {
-            ast::StringFragment::Literal(lit) => s.push_str(lit),
-            ast::StringFragment::PatternStem => {
-                if let Some(value) = scope.get(Lookup::PatternStem) {
-                    used |= value.used();
-                    match *value {
-                        Value::List(ref list) => {
-                            if let Some(first) = find_first_string(list) {
-                                s.push_str(first);
-                            }
-                        }
-                        Value::String(ref value) => {
-                            s.push_str(value);
-                        }
-                    }
-                }
-            }
-            ast::StringFragment::Interpolation(interp) => {
-                let value = eval_string_interpolation_stem(scope, expr.span, interp.stem)?;
-                used |= value.used();
-
-                let mut value_owned;
-                let value = if let Some(ref options) = interp.options {
-                    value_owned = value.into_value();
-                    eval_string_interpolation_ops(
-                        expr.span,
-                        &mut value_owned,
-                        &options.ops,
-                        true,
-                        scope.workspace(),
-                        ResolvePathMode::Infer,
-                    )?;
-
-                    if let Some(ref join) = options.join {
-                        value_owned = Value::String(recursive_join(value_owned, join));
-                    }
-                    &value_owned
-                } else {
-                    &*value
-                };
-
-                match value {
-                    Value::List(list) => {
-                        if let Some(first) = find_first_string(list) {
-                            s.push_str(first);
-                        }
-                    }
-                    Value::String(value) => {
-                        s.push_str(value);
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(Eval { value: s, used })
+) -> Result<Eval<StringValue>, EvalError> {
+    let mut builder = StringBuilder::new(scope);
+    builder.eval(expr)?;
+    Ok(builder.build())
 }
 
+#[expect(clippy::too_many_lines)]
 pub(crate) fn eval_run_exprs<S: Scope>(
     scope: &S,
     expr: &ast::RunExpr<'_>,
@@ -764,12 +631,12 @@ pub(crate) fn eval_run_exprs<S: Scope>(
                 };
 
                 *used |= write_used;
-                commands.push(RunCommand::Write(dest_path, data.into()));
+                commands.push(RunCommand::Write(dest_path, data.string.into()));
             }
             ast::RunExpr::Copy(expr) => {
                 let from = eval_string_expr(scope, &expr.src)?;
                 let to = eval_string_expr(scope, &expr.dest)?;
-                let from_path = werk_fs::PathBuf::new(from.value)
+                let from_path = werk_fs::PathBuf::new(from.value.string)
                     .and_then(|path| {
                         path.absolutize(werk_fs::Path::ROOT)
                             .map(std::borrow::Cow::into_owned)
@@ -785,41 +652,45 @@ pub(crate) fn eval_run_exprs<S: Scope>(
             ast::RunExpr::Delete(expr) => {
                 let evaluated_paths = eval(scope, &expr.param)?;
                 let mut paths = Vec::new();
-                evaluated_paths
-                    .value
-                    .try_collect_strings_recursive(|path| {
-                        let path = werk_fs::PathBuf::new(path)?;
-                        let path = path.absolutize(werk_fs::Path::ROOT)?;
-                        let path = scope.workspace().get_output_file_path(&path)?;
+                evaluated_paths.value.visit(|s| {
+                    if s.flags.contains(StringFlags::CONTAINS_PATHS) {
+                        let path = std::path::PathBuf::from(s.string);
+                        let path = match Absolute::new(path) {
+                            Ok(path) => path,
+                            Err(path) => {
+                                scope.warning(&Warning::IgnoringNonAbsolutePath(expr.span, path));
+                                return;
+                            }
+                        };
                         paths.push(path);
-                        Ok(())
-                    })
-                    .map_err(|err| EvalError::Path(expr.param.span(), err))?;
+                    } else {
+                        scope.warning(&Warning::IgnoringUnresolvedPath(expr.span, s.string));
+                    }
+                });
                 *used |= evaluated_paths.used;
-                commands.push(RunCommand::Delete(paths));
+                commands.push(RunCommand::Delete(expr.span, paths));
             }
             ast::RunExpr::Env(expr) => {
                 let key = eval_string_expr(scope, &expr.key)?;
                 let value = eval_string_expr(scope, &expr.value)?;
                 *used |= key.used;
                 *used |= value.used;
-                commands.push(RunCommand::SetEnv(key.value, value.value));
+                commands.push(RunCommand::SetEnv(key.value.string, value.value.string));
             }
             ast::RunExpr::EnvRemove(expr) => {
                 let key = eval_string_expr(scope, &expr.param)?;
                 *used |= key.used;
-                commands.push(RunCommand::RemoveEnv(key.value));
+                commands.push(RunCommand::RemoveEnv(key.value.string));
             }
             ast::RunExpr::Info(expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;
                 *used |= message.used;
-                commands.push(RunCommand::Info(message.value));
+                commands.push(RunCommand::Info(expr.span, message.value.string));
             }
             ast::RunExpr::Warn(expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;
                 *used |= message.used;
-                // TODO: Specific warn command.
-                commands.push(RunCommand::Info(message.value));
+                commands.push(RunCommand::Warn(expr.span, message.value.string));
             }
             ast::RunExpr::List(exprs) => {
                 for expr in &exprs.items {
@@ -845,112 +716,12 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
     scope: &P,
     expr: &ast::StringExpr,
 ) -> Result<Eval<ShellCommandLine>, EvalError> {
-    let mut builder = ShellCommandLineBuilder::default();
-
-    let mut used = Used::none();
-
-    for fragment in &expr.fragments {
-        match fragment {
-            ast::StringFragment::Literal(lit) => {
-                builder.push_lit(lit);
-            }
-            ast::StringFragment::PatternStem => {
-                if let Some(value) = scope.get(Lookup::PatternStem) {
-                    used |= value.used();
-                    match *value {
-                        Value::List(ref list) => {
-                            if let Some(first) = find_first_string(list) {
-                                builder.push_arg(first);
-                            }
-                        }
-                        Value::String(ref value) => {
-                            builder.push_arg(value);
-                        }
-                    }
-                }
-            }
-            ast::StringFragment::Interpolation(interp) => {
-                let value = eval_string_interpolation_stem(scope, expr.span, interp.stem)?;
-                used |= value.used();
-
-                let mut value_owned;
-                let value = if let Some(ref options) = interp.options {
-                    value_owned = value.into_value();
-                    eval_string_interpolation_ops(
-                        expr.span,
-                        &mut value_owned,
-                        &options.ops,
-                        true,
-                        scope.workspace(),
-                        ResolvePathMode::Infer,
-                    )?;
-                    &value_owned
-                } else {
-                    &*value
-                };
-
-                match value {
-                    Value::List(list) => match interp.join() {
-                        // When the join char is a space, we treat the list as
-                        // separate arguments to the command.
-                        Some(" ") => {
-                            builder.push_all(value);
-                        }
-                        // Otherwise, we join the list into a single argument.
-                        Some(sep) => {
-                            let s = flat_join(value, sep);
-                            builder.push_arg(&s);
-                        }
-                        // When no join operator is present take the first element of the list.
-                        None => {
-                            let Some(s) = find_first_string(list) else {
-                                return Err(EvalError::EmptyList(expr.span));
-                            };
-                            builder.push_arg(s);
-                        }
-                    },
-                    Value::String(s) => {
-                        builder.push_str(s);
-                    }
-                }
-            }
-        }
-    }
-
-    let (command_line, used_which) = builder.build(expr.span, scope.workspace())?;
-
-    if let Some(used_which) = used_which {
-        used.insert(used_which);
-    }
-
-    Ok(Eval {
-        value: command_line,
-        used,
-    })
+    let mut builder = CommandLineBuilder::new(scope, expr.span);
+    builder.eval(expr)?;
+    builder.build()
 }
 
-fn eval_string_interpolation_stem<P: Scope + ?Sized>(
-    scope: &P,
-    span: Span,
-    stem: ast::InterpolationStem,
-) -> Result<LookupValue, EvalError> {
-    Ok(match stem {
-        ast::InterpolationStem::Implied => scope
-            .get(Lookup::Implied)
-            .ok_or(EvalError::NoImpliedValue(span))?,
-        ast::InterpolationStem::PatternCapture => scope
-            .get(Lookup::PatternStem)
-            .ok_or(EvalError::NoPatternStem(span))?,
-        ast::InterpolationStem::CaptureGroup(group) => scope
-            .get(Lookup::CaptureGroup(group))
-            .ok_or(EvalError::NoSuchCaptureGroup(span, group))?,
-        ast::InterpolationStem::Ident(ident) => scope
-            .get(Lookup::Ident(ident))
-            .ok_or_else(|| EvalError::NoSuchIdentifier(span, ident.as_ref().to_owned()))?,
-    })
-}
-
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ResolvePathMode {
     /// Infer from whether or not the path exists in the workspace.
     Infer,
@@ -962,67 +733,10 @@ enum ResolvePathMode {
     Illegal,
 }
 
-fn eval_string_interpolation_ops(
-    span: Span,
-    value: &mut Value,
-    ops: &[ast::InterpolationOp],
-    allow_os_paths: bool,
-    workspace: &Workspace,
-    default_resolve_mode: ResolvePathMode,
-) -> Result<(), EvalError> {
-    let mut resolve_mode = default_resolve_mode;
-
-    for op in ops {
-        match op {
-            ast::InterpolationOp::Dedup => {
-                *value = dedup_recursive(std::mem::replace(value, Value::List(Vec::new())));
-            }
-            ast::InterpolationOp::Filename => {
-                recursive_into_filename(value);
-            }
-            ast::InterpolationOp::Dirname => {
-                recursive_into_dirname(value);
-            }
-            ast::InterpolationOp::Ext => {
-                recursive_into_ext(value);
-            }
-            ast::InterpolationOp::ReplaceExtension { from, to } => {
-                recursive_replace_extension(value, from, to);
-            }
-            ast::InterpolationOp::PrependEach(prefix) => recursive_prepend_each(value, prefix),
-            ast::InterpolationOp::AppendEach(suffix) => recursive_append_each(value, suffix),
-            ast::InterpolationOp::RegexReplace(r) => {
-                recursive_regex_replace(value, &r.regex, &r.replacer);
-            }
-            ast::InterpolationOp::ResolveOsPath => {
-                if allow_os_paths {
-                    recursive_resolve_path(
-                        span,
-                        value,
-                        werk_fs::Path::ROOT,
-                        workspace,
-                        resolve_mode,
-                    )?;
-                } else {
-                    return Err(EvalError::JoinInPattern(span));
-                }
-            }
-            ast::InterpolationOp::ResolveOutDir => {
-                resolve_mode = ResolvePathMode::OutDir;
-            }
-            ast::InterpolationOp::ResolveWorkspace => {
-                resolve_mode = ResolvePathMode::Workspace;
-            }
-        }
-    }
-
-    Ok(())
-}
-
 pub fn eval_shell<P: Scope + ?Sized>(
     scope: &P,
     expr: &ast::StringExpr<'_>,
-) -> Result<Eval<String>, EvalError> {
+) -> Result<Eval<StringValue>, EvalError> {
     let command = eval_shell_command(scope, expr)?;
 
     // Unconditionally disable color output when executing shell command during eval.
@@ -1059,7 +773,7 @@ pub fn eval_shell<P: Scope + ?Sized>(
 
     let stdout = String::from_utf8_lossy(output.stdout.trim_ascii());
     Ok(Eval {
-        value: stdout.into_owned(),
+        value: stdout.into_owned().into(),
         used: command.used,
     })
 }
@@ -1067,7 +781,7 @@ pub fn eval_shell<P: Scope + ?Sized>(
 pub fn eval_read<P: Scope + ?Sized>(
     scope: &P,
     expr: &ast::StringExpr<'_>,
-) -> Result<Eval<String>, EvalError> {
+) -> Result<Eval<StringValue>, EvalError> {
     let path = eval_string_expr(scope, expr)?;
 
     let path_err = |err| EvalError::Path(expr.span, err);
@@ -1100,7 +814,7 @@ pub fn eval_read<P: Scope + ?Sized>(
     let used = UsedVariable::WorkspaceFile(Absolute::symbolicate(&path), fs_entry.metadata.mtime);
 
     Ok(Eval {
-        value: string,
+        value: string.into(),
         used: Used::from_iter([used]),
     })
 }
@@ -1115,17 +829,14 @@ pub fn eval_glob(
     } = eval_string_expr(scope, &expr.param)?;
 
     if !glob_pattern_string.starts_with('/') {
-        glob_pattern_string.insert(0, '/');
+        glob_pattern_string.string.insert(0, '/');
     }
     let (matches, hash) = scope
         .workspace()
         .glob_workspace_files(&glob_pattern_string)
         .map_err(|err| EvalError::Glob(expr.span, Arc::new(err)))?;
     used.insert(UsedVariable::Glob(Symbol::new(&glob_pattern_string), hash));
-    let matches = matches
-        .into_iter()
-        .map(|p| Value::String(p.into_inner().into()))
-        .collect();
+    let matches = matches.into_iter().map(|p| p.into_inner().into()).collect();
 
     Ok(Eval {
         value: matches,
@@ -1134,8 +845,8 @@ pub fn eval_glob(
 }
 
 pub(crate) struct EvaluatedBuildRecipe {
-    pub explicit_dependencies: Vec<String>,
-    pub depfile: Option<String>,
+    pub explicit_dependencies: Vec<StringValue>,
+    pub depfile: Option<StringValue>,
     pub commands: Vec<RunCommand>,
     pub env: Env,
 }
@@ -1167,7 +878,11 @@ pub(crate) fn eval_build_recipe_statements(
                     .collect_strings_into(&mut evaluated.explicit_dependencies);
 
                 // Populate the `in` variable.
-                scope.push_input_files(&evaluated.explicit_dependencies[offset..]);
+                scope.push_input_files(
+                    evaluated.explicit_dependencies[offset..]
+                        .iter()
+                        .map(|s| s.string.clone()),
+                );
             }
             ast::BuildRecipeStmt::Depfile(ref expr) => {
                 let value = eval_chain(scope, &expr.param)?;
@@ -1199,11 +914,15 @@ pub(crate) fn eval_build_recipe_statements(
             }
             ast::BuildRecipeStmt::Info(ref expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;
-                evaluated.commands.push(RunCommand::Info(message.value));
+                evaluated
+                    .commands
+                    .push(RunCommand::Info(expr.span, message.value.string));
             }
             ast::BuildRecipeStmt::Warn(ref expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;
-                evaluated.commands.push(RunCommand::Warn(message.value));
+                evaluated
+                    .commands
+                    .push(RunCommand::Warn(expr.span, message.value.string));
             }
             ast::BuildRecipeStmt::SetCapture(ref kw_expr) => {
                 evaluated
@@ -1225,7 +944,7 @@ pub(crate) fn eval_build_recipe_statements(
 }
 
 pub(crate) struct EvaluatedTaskRecipe {
-    pub build: Vec<String>,
+    pub build: Vec<StringValue>,
     pub commands: Vec<RunCommand>,
     pub env: Env,
 }
@@ -1264,11 +983,15 @@ pub(crate) fn eval_task_recipe_statements(
             }
             ast::TaskRecipeStmt::Info(ref expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;
-                evaluated.commands.push(RunCommand::Info(message.value));
+                evaluated
+                    .commands
+                    .push(RunCommand::Info(expr.span, message.value.string));
             }
             ast::TaskRecipeStmt::Warn(ref expr) => {
                 let message = eval_string_expr(scope, &expr.param)?;
-                evaluated.commands.push(RunCommand::Warn(message.value));
+                evaluated
+                    .commands
+                    .push(RunCommand::Warn(expr.span, message.value.string));
             }
             ast::TaskRecipeStmt::SetCapture(ref kw_expr) => evaluated
                 .commands
@@ -1307,7 +1030,7 @@ fn eval_assert_match(
     expr: &ast::AssertMatchExpr<'_>,
     param: Eval<Value>,
 ) -> Result<Eval<Value>, EvalError> {
-    fn get_mismatch<'a>(pattern: &Pattern, value: &'a Value) -> Option<&'a String> {
+    fn get_mismatch<'a>(pattern: &Pattern, value: &'a Value) -> Option<&'a str> {
         match value {
             Value::List(vec) => vec.iter().find_map(|item| get_mismatch(pattern, item)),
             Value::String(s) => {
@@ -1327,203 +1050,12 @@ fn eval_assert_match(
     if let Some(mismatch) = get_mismatch(&pattern.value, &param.value) {
         return Err(EvalError::AssertMatchFailed(
             expr.span,
-            Box::new((mismatch.clone(), pattern.value.string)),
+            Box::new((mismatch.to_owned(), pattern.value.string)),
         ));
     }
 
     Ok(Eval {
         value: param.value,
         used,
-    })
-}
-
-fn flat_join(values: &Value, sep: &str) -> String {
-    fn flat_join(values: &[Value], string: &mut String, sep: &str, mut first: bool) {
-        for value in values {
-            match value {
-                Value::String(s) => {
-                    if !first {
-                        string.push_str(sep);
-                    }
-                    string.push_str(s);
-                }
-                Value::List(values) => flat_join(values, string, sep, first),
-            }
-
-            first = false;
-        }
-    }
-
-    match values {
-        Value::String(s) => s.clone(),
-        Value::List(l) => {
-            let mut s = String::new();
-            flat_join(l, &mut s, sep, true);
-            s
-        }
-    }
-}
-
-fn recursive_join(value: Value, sep: &str) -> String {
-    match value {
-        Value::String(s) => s,
-        ref value @ Value::List(_) => flat_join(value, sep),
-    }
-}
-
-fn recursive_resolve_path(
-    span: Span,
-    value: &mut Value,
-    working_dir: &Absolute<werk_fs::Path>,
-    workspace: &Workspace,
-    resolve_mode: ResolvePathMode,
-) -> Result<(), EvalError> {
-    value.try_recursive_modify(|string| {
-        let path = werk_fs::Path::new(string).map_err(|err| EvalError::Path(span, err))?;
-        let path = path.absolutize(working_dir).map_err(|err| EvalError::Path(span, err))?;
-        let path = match resolve_mode {
-            ResolvePathMode::Infer => resolve_path_infer(span, &path, workspace)?,
-            ResolvePathMode::OutDir => path.resolve(workspace.output_directory()),
-            ResolvePathMode::Workspace => path.resolve(workspace.project_root()),
-            ResolvePathMode::Illegal => return Err(EvalError::ResolvePathInPattern(span)),
-        };
-        match path.to_str() {
-            Some(path) => path.clone_into(string),
-            None => panic!("Path resolution produced a non-UTF8 path; probably the project root path is non-UTF8"),
-        }
-        Ok::<_, EvalError>(())
-    })
-}
-
-fn resolve_path_infer(
-    span: Span,
-    path: &Absolute<werk_fs::Path>,
-    workspace: &Workspace,
-) -> Result<Absolute<std::path::PathBuf>, EvalError> {
-    if let Some(workspace_file) = workspace.get_project_file(path) {
-        // Check if the path also matches a build recipe, and must be disambiguated.
-        match workspace.manifest.match_build_recipe(path) {
-            Ok(Some(recipe)) => Err(EvalError::AmbiguousPathResolution(
-                span,
-                Arc::new(crate::AmbiguousPathError {
-                    path: path.to_path_buf(),
-                    build_recipe: recipe.recipe.pattern.span,
-                }),
-            )),
-            Err(AmbiguousPatternError { pattern1, .. }) => Err(EvalError::AmbiguousPathResolution(
-                span,
-                Arc::new(crate::AmbiguousPathError {
-                    path: path.to_path_buf(),
-                    build_recipe: pattern1,
-                }),
-            )),
-            Ok(None) => Ok(workspace_file.path.clone()),
-        }
-    } else {
-        Ok(path.resolve(workspace.output_directory()))
-    }
-}
-
-fn recursive_replace_extension(value: &mut Value, from: &str, to: &str) {
-    value.recursive_modify(|s| {
-        if s.ends_with(from) {
-            s.truncate(s.len() - from.len());
-            s.push_str(to);
-        }
-    });
-}
-
-fn recursive_into_filename(value: &mut Value) {
-    value.recursive_modify(|s| {
-        if let Ok(path) = werk_fs::Path::new(s) {
-            let filename = path.file_name();
-            *s = filename.to_string();
-        } else {
-            let path = std::path::Path::new(s);
-            if let Some(filename) = path.file_name() {
-                *s = filename.to_string_lossy().into_owned();
-            }
-        }
-    });
-}
-
-fn recursive_into_dirname(value: &mut Value) {
-    value.recursive_modify(|s| {
-        if let Ok(path) = werk_fs::Path::new(s) {
-            if let Some(dirname) = path.parent() {
-                *s = dirname.to_string();
-            }
-        } else {
-            let path = std::path::Path::new(s);
-            if let Some(dirname) = path.parent() {
-                *s = dirname.to_string_lossy().into_owned();
-            }
-        }
-    });
-}
-
-fn recursive_into_ext(value: &mut Value) {
-    value.recursive_modify(|s| {
-        if let Ok(path) = werk_fs::Path::new(s) {
-            if let Some(ext) = path.extension() {
-                *s = ext.to_string();
-            }
-        } else {
-            let path = std::path::Path::new(s);
-            if let Some(ext) = path.extension() {
-                *s = ext.to_string_lossy().into_owned();
-            }
-        }
-    });
-}
-
-fn recursive_prepend_each(value: &mut Value, prefix: &str) {
-    value.recursive_modify(|s| {
-        s.insert_str(0, prefix);
-    });
-}
-
-fn recursive_append_each(value: &mut Value, suffix: &str) {
-    value.recursive_modify(|s| {
-        s.push_str(suffix);
-    });
-}
-
-fn recursive_regex_replace(value: &mut Value, regex: &regex::Regex, replacer: &str) {
-    value.recursive_modify(|s| {
-        // regex guarantees Cow::Borrowed means that nothing was replaced.
-        let Cow::Owned(replaced) = regex.replace(s, replacer) else {
-            return;
-        };
-        *s = replaced;
-    });
-}
-
-fn dedup_recursive(value: Value) -> Value {
-    fn dedup_recursive(set: &mut IndexSet<String>, values: Vec<Value>) {
-        for value in values {
-            match value {
-                Value::List(values) => dedup_recursive(set, values),
-                Value::String(s) => {
-                    set.insert(s);
-                }
-            }
-        }
-    }
-
-    match value {
-        Value::String(_) => value,
-        Value::List(values) => {
-            let mut set = IndexSet::default();
-            dedup_recursive(&mut set, values);
-            Value::List(set.into_iter().map(Value::String).collect())
-        }
-    }
-}
-
-fn find_first_string(list: &[Value]) -> Option<&str> {
-    list.iter().find_map(|value| match value {
-        Value::String(s) => Some(&**s),
-        Value::List(list) => find_first_string(list),
     })
 }

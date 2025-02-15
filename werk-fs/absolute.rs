@@ -37,14 +37,16 @@ impl<'de, P: serde::Deserialize<'de> + Normalize<'de>> serde::Deserialize<'de> f
 
 impl<P: Sized> Absolute<P> {
     #[must_use]
-    pub(crate) const fn new_unchecked(path: P) -> Self {
+    pub const fn new_unchecked(path: P) -> Self {
         Self { path }
     }
 
     pub fn into_inner(self) -> P {
         self.path
     }
+}
 
+impl<P: ?Sized> Absolute<P> {
     #[must_use]
     pub fn as_inner(&self) -> &P {
         &self.path

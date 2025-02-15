@@ -2292,6 +2292,7 @@ dependencies = [
  "ahash",
  "annotate-snippets",
  "anyhow",
+ "bitflags 2.8.0",
  "futures",
  "globset",
  "ignore",
@@ -2300,6 +2301,7 @@ dependencies = [
  "parking_lot",
  "pin-project-lite",
  "regex",
+ "regex-syntax 0.8.5",
  "rustc-stable-hash",
  "serde",
  "smol",
@@ -2321,6 +2323,7 @@ dependencies = [
  "ahash",
  "annotate-snippets",
  "hashbrown",
+ "indexmap",
  "parking_lot",
  "serde",
 ]

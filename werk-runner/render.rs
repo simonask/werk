@@ -1,4 +1,6 @@
-use crate::{BuildStatus, Error, Outdatedness, ShellCommandLine, TaskId};
+use werk_util::DiagnosticFileId;
+
+use crate::{BuildStatus, Error, Outdatedness, ShellCommandLine, TaskId, Warning};
 
 pub trait Render: Send + Sync {
     /// Build task is about to start.
@@ -55,7 +57,7 @@ pub trait Render: Send + Sync {
 
     /// Emit a warning from the user, typically from the `warn` expression in
     /// the manifest.
-    fn warning(&self, task_id: Option<TaskId>, message: &str);
+    fn warning(&self, task_id: Option<TaskId>, warning: &Warning);
 
     /// Emit an informational message from the runtime, typically the `werk`
     /// binary wants to tell the user about something that happened.
@@ -67,6 +69,19 @@ pub trait Render: Send + Sync {
     }
 
     /// Reset the renderer. This is called between iterations in `--watch` to
-    /// reset the render state between runs.
+    /// reset the render state between runs. For example, if the renderer is
+    /// debouncing warnings, this might cause warnings to be emitted again.
+    ///
+    /// This should also clear the renderer's map of source files.
     fn reset(&self) {}
+
+    /// When the renderer is providing friendly diagnostics to the user, this
+    /// informs the renderer that a source file was added. The expectation is
+    /// that the renderer keeps a map of source files that it uses when
+    /// rendering diagnostics.
+    ///
+    /// This is called by `Workspace::new()` as source files are discovered.
+    fn add_source_file(&self, id: DiagnosticFileId, path: &str, source: &str) {
+        _ = (id, path, source);
+    }
 }

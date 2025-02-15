@@ -57,7 +57,7 @@ impl<'a> Parse<'a> for ast::PatternExpr<'a> {
     }
 }
 
-fn string_expr_inside_quotes<'a>(input: &mut Input<'a>) -> PResult<ast::StringExpr<'a>> {
+pub fn string_expr_inside_quotes<'a>(input: &mut Input<'a>) -> PResult<ast::StringExpr<'a>> {
     let (mut expr, span) = repeat(0.., string_fragment)
         .fold(ast::StringExpr::default, |mut expr, fragment| {
             push_string_fragment(&mut expr, fragment);
@@ -69,7 +69,7 @@ fn string_expr_inside_quotes<'a>(input: &mut Input<'a>) -> PResult<ast::StringEx
     Ok(expr)
 }
 
-fn pattern_expr_inside_quotes<'a>(input: &mut Input<'a>) -> PResult<ast::PatternExpr<'a>> {
+pub fn pattern_expr_inside_quotes<'a>(input: &mut Input<'a>) -> PResult<ast::PatternExpr<'a>> {
     let (mut expr, span) = repeat(0.., pattern_fragment)
         .fold(ast::PatternExpr::default, |mut expr, fragment| {
             push_pattern_fragment(&mut expr, fragment);
@@ -160,7 +160,7 @@ pub fn escape_special_char(ch: char) -> Option<char> {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct Escape<'a, const IS_PATTERN: bool>(pub &'a str);
+struct Escape<'a, const IS_PATTERN: bool>(pub &'a str);
 impl<const IS_PATTERN: bool> std::fmt::Display for Escape<'_, IS_PATTERN> {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -181,14 +181,14 @@ impl<const IS_PATTERN: bool> std::fmt::Display for Escape<'_, IS_PATTERN> {
 
 #[inline]
 #[must_use]
-pub fn escape_string_literal(literal: &str) -> String {
-    format!("{}", Escape::<false>(literal))
+pub fn escape_string_literal(literal: &str) -> impl std::fmt::Display + '_ {
+    Escape::<false>(literal)
 }
 
 #[inline]
 #[must_use]
-pub fn escape_pattern_literal(literal: &str) -> String {
-    format!("{}", Escape::<true>(literal))
+pub fn escape_pattern_literal(literal: &str) -> impl std::fmt::Display + '_ {
+    Escape::<true>(literal)
 }
 
 fn string_literal_fragment<'a, const IS_PATTERN: bool>(input: &mut Input<'a>) -> PResult<&'a str> {

@@ -11,6 +11,7 @@ mod runner;
 mod scope;
 mod shell;
 mod value;
+mod warning;
 mod workspace;
 
 pub use error::*;
@@ -22,6 +23,7 @@ pub use runner::*;
 pub use scope::*;
 pub use shell::*;
 pub use value::*;
+pub use warning::*;
 pub use workspace::*;
 
 pub use which::Error as WhichError;

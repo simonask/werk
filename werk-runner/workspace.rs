@@ -4,13 +4,13 @@ use parking_lot::Mutex;
 use std::{borrow::Cow, collections::hash_map};
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_parser::ast;
-use werk_util::{Diagnostic, DiagnosticError, Symbol};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticFileSourceMap, Symbol};
 
 use crate::{
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
     eval::{self, Eval, UsedVariable},
     ir::{self, BuildRecipe, TaskRecipe},
-    DirEntry, Error, EvalError, Io, Render, RootScope,
+    DirEntry, Error, EvalError, Io, Render, RootScope, Warning,
 };
 
 #[derive(Clone)]
@@ -137,7 +137,7 @@ impl<'a> Workspace<'a> {
         render: &'a dyn Render,
         project_root: Absolute<std::path::PathBuf>,
         settings: &WorkspaceSettings,
-    ) -> Result<Self, DiagnosticError<Error, &'a werk_parser::Document<'a>>> {
+    ) -> Result<Self, Annotated<Error, &'a werk_parser::Document<'a>>> {
         Self::new(ast, io, render, project_root, settings)
             .map_err(|err| err.into_diagnostic_error(ast))
     }
@@ -220,6 +220,12 @@ impl<'a> Workspace<'a> {
         &mut self,
         ast: &'a werk_parser::Document<'a>,
     ) -> Result<(), EvalError> {
+        let mut source_map = DiagnosticFileSourceMap::default();
+        let source_path = ast.origin.display().to_string();
+        let id = source_map.insert(source_path.clone(), ast.source.to_owned());
+        assert_eq!(id, DiagnosticFileId(0));
+        self.render.add_source_file(id, &source_path, ast.source);
+
         for stmt in &ast.root.statements {
             let doc_comment = ast
                 .get_whitespace(stmt.ws_pre)
@@ -234,7 +240,7 @@ impl<'a> Workspace<'a> {
                 ast::RootStmt::Default(ast::DefaultStmt::Target(ref stmt)) => {
                     let scope = RootScope::new(self);
                     let value = eval::eval_string_expr(&scope, &stmt.value)?;
-                    self.default_target = Some(value.value);
+                    self.default_target = Some(value.value.string);
                 }
                 ast::RootStmt::Default(_) => {
                     // Ignore; these should be parsed by the front-end.
@@ -305,14 +311,14 @@ impl<'a> Workspace<'a> {
                     let hash = compute_stable_semantic_hash(build_recipe);
                     let scope = RootScope::new(self);
                     let mut pattern_builder =
-                        eval::eval_pattern_builder(&scope, &build_recipe.pattern)?.value;
+                        eval::eval_pattern_builder(&scope, &build_recipe.pattern)?;
 
                     // TODO: Consider if it isn't better to do this while matching recipes.
                     pattern_builder.ensure_absolute_path();
 
                     self.manifest.build_recipes.push(BuildRecipe {
                         span: build_recipe.span,
-                        pattern: pattern_builder.build(),
+                        pattern: pattern_builder.build().value,
                         doc_comment,
                         ast: build_recipe,
                         hash,
@@ -324,10 +330,12 @@ impl<'a> Workspace<'a> {
         // Warn about defines set on the command-line that have no effect.
         for key in self.defines.keys() {
             if !self.manifest.globals.configs.contains_key(key) {
-                self.render.warning(None, &format!("Unused define: {key}"));
+                self.render
+                    .warning(None, &Warning::UnusedDefine(key.as_str().to_owned()));
             }
         }
 
+        self.manifest.source_map = source_map;
         Ok(())
     }
 
@@ -656,14 +664,6 @@ impl<'a> werk_util::DiagnosticFileRepository for &'a Workspace<'a> {
         &self,
         id: werk_util::DiagnosticFileId,
     ) -> Option<werk_util::DiagnosticSource<'_>> {
-        // TODO: Multiple input files
-        if id.0 == 0 {
-            Some(werk_util::DiagnosticSource::new(
-                &self.werkfile_path,
-                self.werkfile_source,
-            ))
-        } else {
-            None
-        }
+        self.manifest.get_source(id)
     }
 }
