@@ -10,7 +10,7 @@ use crate::{
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
     eval::{self, Eval, UsedVariable},
     ir::{self, BuildRecipe, TaskRecipe},
-    DirEntry, Error, EvalError, Io, Render, RootScope, Value, Warning,
+    DirEntry, Error, EvalError, Io, Render, Value, Warning,
 };
 
 #[derive(Clone)]
@@ -255,8 +255,7 @@ impl Workspace {
         for stmt in ast.statements {
             match stmt.statement {
                 ast::RootStmt::Include(ref stmt) => {
-                    let scope = RootScope::new(self);
-                    let value = eval::eval_chain(&scope, &stmt.param, file)?;
+                    let value = eval::eval_chain(self, &stmt.param, file)?;
                     let mut files = vec![];
                     value.value.try_visit(|include_file| {
                         let path = werk_fs::PathBuf::new(include_file.string)
@@ -311,8 +310,7 @@ impl Workspace {
                     }
                 }
                 ast::RootStmt::Default(ast::DefaultStmt::Target(ref stmt)) => {
-                    let scope = RootScope::new(self);
-                    let value = eval::eval_string_expr(&scope, &stmt.value, file)?;
+                    let value = eval::eval_string_expr(self, &stmt.value, file)?;
                     self.default_target = Some(value.value.string);
                 }
                 ast::RootStmt::Default(_) => {
@@ -351,8 +349,7 @@ impl Workspace {
                             .global_variables
                             .insert(config_stmt.ident.ident, evaluated);
                     } else {
-                        let scope = RootScope::new(self);
-                        let mut value = eval::eval_chain(&scope, &config_stmt.value, file)?;
+                        let mut value = eval::eval_chain(self, &config_stmt.value, file)?;
                         value
                             .used
                             .insert(UsedVariable::Global(config_stmt.ident.ident, hash));
@@ -370,8 +367,7 @@ impl Workspace {
                 }
                 ast::RootStmt::Let(ref let_stmt) => {
                     let hash = compute_stable_semantic_hash(&let_stmt.value);
-                    let scope = RootScope::new(self);
-                    let mut value = eval::eval_chain(&scope, &let_stmt.value, file)?;
+                    let mut value = eval::eval_chain(self, &let_stmt.value, file)?;
                     value
                         .used
                         .insert(UsedVariable::Global(let_stmt.ident.ident, hash));
@@ -402,9 +398,8 @@ impl Workspace {
                             .to_string();
 
                     let hash = compute_stable_semantic_hash(&build_recipe);
-                    let scope = RootScope::new(self);
                     let mut pattern_builder =
-                        eval::eval_pattern_builder(&scope, &build_recipe.pattern, file)?;
+                        eval::eval_pattern_builder(self, &build_recipe.pattern, file)?;
 
                     // TODO: Consider if it isn't better to do this while matching recipes.
                     pattern_builder.ensure_absolute_path();

@@ -11,8 +11,8 @@ use crate::{
     eval::{self, Eval},
     ir::{self},
     AmbiguousPatternError, BuildRecipeScope, ChildCaptureOutput, ChildLinesStream, Env, Error,
-    Outdatedness, OutdatednessTracker, Reason, RootScope, Scope as _, ShellCommandLine,
-    TaskRecipeScope, Value, Warning, Workspace, WorkspaceSettings,
+    Outdatedness, OutdatednessTracker, Reason, Scope as _, ShellCommandLine, TaskRecipeScope,
+    Value, Warning, Workspace, WorkspaceSettings,
 };
 
 /// Workspace-wide runner state.
@@ -455,9 +455,7 @@ impl<'a> Inner<'a> {
         recipe_match: ir::BuildRecipeMatch<'_>,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
-        let global_scope = RootScope::new(self.workspace);
-
-        let mut scope = BuildRecipeScope::new(&global_scope, task_id, &recipe_match);
+        let mut scope = BuildRecipeScope::new(self.workspace, task_id, &recipe_match);
         scope.set(
             Symbol::new("out"),
             Eval::inherent(Value::from(recipe_match.target_file.to_string())),
@@ -637,8 +635,7 @@ impl<'a> Inner<'a> {
         recipe: &ir::TaskRecipe,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
-        let global_scope = RootScope::new(self.workspace);
-        let mut scope = TaskRecipeScope::new(&global_scope, task_id);
+        let mut scope = TaskRecipeScope::new(self.workspace, task_id);
 
         // Evaluate dependencies (`out` is not available in commands).
 

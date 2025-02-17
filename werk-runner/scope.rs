@@ -18,18 +18,14 @@ pub struct ConfigVar {
     pub span: DiagnosticSpan,
 }
 
-pub struct RootScope<'a> {
-    pub workspace: &'a Workspace,
-}
-
 pub struct TaskRecipeScope<'a> {
-    parent: &'a RootScope<'a>,
+    workspace: &'a Workspace,
     vars: LocalVariables,
     task_id: TaskId,
 }
 
 pub struct BuildRecipeScope<'a> {
-    parent: &'a RootScope<'a>,
+    workspace: &'a Workspace,
     vars: LocalVariables,
     task_id: TaskId,
     recipe_match: &'a ir::BuildRecipeMatch<'a>,
@@ -147,19 +143,12 @@ pub trait Scope: Send + Sync {
     }
 }
 
-impl<'a> RootScope<'a> {
-    #[inline]
-    pub fn new(workspace: &'a Workspace) -> Self {
-        Self { workspace }
-    }
-}
-
 impl<'a> TaskRecipeScope<'a> {
     #[inline]
     #[must_use]
-    pub fn new(root: &'a RootScope<'a>, task_id: TaskId) -> Self {
+    pub fn new(workspace: &'a Workspace, task_id: TaskId) -> Self {
         Self {
-            parent: root,
+            workspace,
             vars: LocalVariables::new(),
             task_id,
         }
@@ -178,12 +167,12 @@ impl<'a> BuildRecipeScope<'a> {
     #[inline]
     #[must_use]
     pub fn new(
-        root: &'a RootScope<'a>,
+        workspace: &'a Workspace,
         task_id: TaskId,
         recipe_match: &'a ir::BuildRecipeMatch<'a>,
     ) -> Self {
         Self {
-            parent: root,
+            workspace,
             vars: LocalVariables::new(),
             task_id,
             recipe_match,
@@ -429,15 +418,13 @@ impl SymCache {
     }
 }
 
-impl Scope for RootScope<'_> {
-    #[inline]
+impl Scope for Workspace {
     fn get(&self, name: Lookup) -> Option<LookupValue<'_>> {
         let Lookup::Ident(name) = name else {
             return None;
         };
 
         if let Some(var) = self
-            .workspace
             .manifest
             .global_variables
             .get(&name)
@@ -459,7 +446,7 @@ impl Scope for RootScope<'_> {
         let cache = SymCache::get();
         if name == cache.symbol_color {
             return Some(LookupValue::Owned(Eval::inherent(Value::from(
-                if self.workspace.force_color { "1" } else { "0" }.to_owned(),
+                if self.force_color { "1" } else { "0" }.to_owned(),
             ))));
         }
 
@@ -468,7 +455,7 @@ impl Scope for RootScope<'_> {
 
     #[inline]
     fn workspace(&self) -> &Workspace {
-        self.workspace
+        self
     }
 
     #[inline]
@@ -478,7 +465,7 @@ impl Scope for RootScope<'_> {
 
     #[inline]
     fn render(&self) -> &dyn Render {
-        &*self.workspace.render
+        &*self.render
     }
 }
 
@@ -490,7 +477,7 @@ impl Scope for TaskRecipeScope<'_> {
         };
 
         let Some(local) = self.vars.get(&name) else {
-            return self.parent.get(lookup);
+            return self.workspace.get(lookup);
         };
 
         Some(LookupValue::Ref(&local.value, &local.used))
@@ -498,7 +485,7 @@ impl Scope for TaskRecipeScope<'_> {
 
     #[inline]
     fn workspace(&self) -> &Workspace {
-        self.parent.workspace
+        self.workspace
     }
 
     #[inline]
@@ -508,7 +495,7 @@ impl Scope for TaskRecipeScope<'_> {
 
     #[inline]
     fn render(&self) -> &dyn Render {
-        &*self.parent.workspace.render
+        &*self.workspace.render
     }
 }
 
@@ -536,7 +523,7 @@ impl Scope for BuildRecipeScope<'_> {
                 }
 
                 let Some(local) = self.vars.get(&name) else {
-                    return self.parent.get(lookup);
+                    return self.workspace.get(lookup);
                 };
                 Some(LookupValue::EvalRef(local))
             }
@@ -545,7 +532,7 @@ impl Scope for BuildRecipeScope<'_> {
 
     #[inline]
     fn workspace(&self) -> &Workspace {
-        self.parent.workspace
+        self.workspace
     }
 
     #[inline]
@@ -555,7 +542,7 @@ impl Scope for BuildRecipeScope<'_> {
 
     #[inline]
     fn render(&self) -> &dyn Render {
-        &*self.parent.workspace.render
+        &*self.workspace.render
     }
 }
 
