@@ -321,6 +321,8 @@ pub enum EvalError {
         Option<DiagnosticSpan>,
         Absolute<werk_fs::PathBuf>,
     ),
+    #[error("`default` statements are not allowed in included files")]
+    DefaultInInclude(DiagnosticSpan),
     #[error("{1}")]
     Parse(DiagnosticFileId, werk_parser::Error),
 }
@@ -374,7 +376,8 @@ impl EvalError {
             | EvalError::AmbiguousPathResolution(span, _)
             | EvalError::IncludeIoError(span, ..)
             | EvalError::IncludeError(span, ..)
-            | EvalError::IncludeDuplicate(span, ..) => *span,
+            | EvalError::IncludeDuplicate(span, ..)
+            | EvalError::DefaultInInclude(span) => *span,
             EvalError::Parse(file, err) => file.span(err.span()),
         }
     }
@@ -426,6 +429,7 @@ impl werk_util::AsDiagnostic for EvalError {
                     .annotation(span.annotation(Level::Note, "included here"));
             }
             EvalError::IncludeDuplicate(..) => "E0035",
+            EvalError::DefaultInInclude(..) => "E0036",
             EvalError::Parse(file, err) => {
                 return err.with_file_ref(*file).as_diagnostic();
             }
@@ -447,6 +451,7 @@ impl werk_util::AsDiagnostic for EvalError {
             EvalError::DuplicateConfigStatement(_, previous_span) => diag
                 .annotation(previous_span.annotation(Level::Note, "previous config statement here")),
             EvalError::IncludeDuplicate(_, Some(previous_span), _) => diag.annotation(previous_span.annotation(Level::Note, "already included here")),
+            EvalError::DefaultInInclude(_) => diag.footer("move `default` statements to the top-level Werkfile"),
             _ => diag,
         }
     }

@@ -113,3 +113,4 @@ error_case!(include_missing);
 error_case!(include_with_error);
 error_case!(include_self);
 error_case!(include_twice);
+error_case!(include_with_default);

@@ -139,6 +139,25 @@ pub enum DefaultStmt {
     Edition(DefaultStmtEntry<keyword::Edition, ConfigString>),
 }
 
+impl Spanned for DefaultStmt {
+    #[inline]
+    fn span(&self) -> Span {
+        match self {
+            DefaultStmt::Target(stmt) => stmt.span,
+            DefaultStmt::OutDir(stmt) => stmt.span,
+            DefaultStmt::PrintCommands(stmt) => stmt.span,
+            DefaultStmt::PrintFresh(stmt) => stmt.span,
+            DefaultStmt::Quiet(stmt) => stmt.span,
+            DefaultStmt::Loud(stmt) => stmt.span,
+            DefaultStmt::Explain(stmt) => stmt.span,
+            DefaultStmt::Verbose(stmt) => stmt.span,
+            DefaultStmt::WatchDelay(stmt) => stmt.span,
+            DefaultStmt::Jobs(stmt) => stmt.span,
+            DefaultStmt::Edition(stmt) => stmt.span,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct DefaultStmtEntry<K, V> {
