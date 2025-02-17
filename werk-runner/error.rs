@@ -315,6 +315,12 @@ pub enum EvalError {
     IncludeIoError(DiagnosticSpan, String, IoError),
     #[error("{1}")]
     IncludeError(DiagnosticSpan, Box<EvalError>),
+    #[error("same file included twice: {2}")]
+    IncludeDuplicate(
+        DiagnosticSpan,
+        Option<DiagnosticSpan>,
+        Absolute<werk_fs::PathBuf>,
+    ),
     #[error("{1}")]
     Parse(DiagnosticFileId, werk_parser::Error),
 }
@@ -367,7 +373,8 @@ impl EvalError {
             | EvalError::AssertCustomFailed(span, _)
             | EvalError::AmbiguousPathResolution(span, _)
             | EvalError::IncludeIoError(span, ..)
-            | EvalError::IncludeError(span, ..) => *span,
+            | EvalError::IncludeError(span, ..)
+            | EvalError::IncludeDuplicate(span, ..) => *span,
             EvalError::Parse(file, err) => file.span(err.span()),
         }
     }
@@ -418,6 +425,7 @@ impl werk_util::AsDiagnostic for EvalError {
                     .as_diagnostic()
                     .annotation(span.annotation(Level::Note, "included here"));
             }
+            EvalError::IncludeDuplicate(..) => "E0035",
             EvalError::Parse(file, err) => {
                 return err.with_file_ref(*file).as_diagnostic();
             }
@@ -438,6 +446,7 @@ impl werk_util::AsDiagnostic for EvalError {
                 .footer("use `<...:out-dir>` or `<...:workspace>` to disambiguate between paths in the workspace and the output directory"),
             EvalError::DuplicateConfigStatement(_, previous_span) => diag
                 .annotation(previous_span.annotation(Level::Note, "previous config statement here")),
+            EvalError::IncludeDuplicate(_, Some(previous_span), _) => diag.annotation(previous_span.annotation(Level::Note, "already included here")),
             _ => diag,
         }
     }

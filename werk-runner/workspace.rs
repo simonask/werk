@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::{borrow::Cow, collections::hash_map, sync::Arc};
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_parser::ast;
-use werk_util::{DiagnosticFileId, Symbol};
+use werk_util::{DiagnosticFileId, DiagnosticSpan, Symbol};
 
 use crate::{
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
@@ -195,26 +195,39 @@ impl Workspace {
 
     fn register_werkfile_source(
         &mut self,
-        path: &std::path::Path,
+        path: &Absolute<werk_fs::Path>,
         source: &str,
-    ) -> DiagnosticFileId {
-        let path = path.display().to_string();
-        let id = self
-            .manifest
-            .source_map
-            .insert(path.clone(), source.to_owned());
-        self.render.add_source_file(id, &path, source);
-        id
+        included_from: Option<DiagnosticSpan>,
+    ) -> Result<DiagnosticFileId, EvalError> {
+        let id = match self.manifest.source_map.insert_check_duplicate(
+            path.to_owned().into_inner().into(),
+            source.to_owned(),
+            included_from,
+        ) {
+            Ok(id) => id,
+            Err(previously_included_from) => {
+                return Err(EvalError::IncludeDuplicate(
+                    included_from.unwrap_or(DiagnosticFileId(0).span(
+                        werk_util::Span::from_offset_and_len(werk_util::Offset(0), 0),
+                    )),
+                    previously_included_from,
+                    path.to_owned(),
+                ));
+            }
+        };
+
+        self.render.add_source_file(id, path.as_str(), source);
+        Ok(id)
     }
 
     /// Parse a werkfile source document and add it to the workspace, evaluating
     /// all statements in global scope.
     pub fn add_werkfile_source(
         &mut self,
-        path: &std::path::Path,
+        path: &Absolute<werk_fs::Path>,
         source: &str,
     ) -> Result<DiagnosticFileId, EvalError> {
-        let file = self.register_werkfile_source(path, source);
+        let file = self.register_werkfile_source(path, source, None)?;
         let ast = werk_parser::parse_werk(source).map_err(|err| EvalError::Parse(file, err))?;
         self.eval_werkfile(file, ast)
     }
@@ -225,11 +238,11 @@ impl Workspace {
     /// creating the workspace.
     pub fn add_werkfile_parsed(
         &mut self,
-        path: &std::path::Path,
+        path: &Absolute<werk_fs::Path>,
         source: &str,
         ast: ast::Root,
     ) -> Result<DiagnosticFileId, EvalError> {
-        let file = self.register_werkfile_source(path, source);
+        let file = self.register_werkfile_source(path, source, None)?;
         self.eval_werkfile(file, ast)
     }
 
@@ -282,13 +295,19 @@ impl Workspace {
                                 file_entry.path.clone().into_inner(),
                             )
                         })?;
-                        let path = file_entry.path.to_path_buf();
 
-                        // TODO: Make `let` variables from the parent scope
-                        // available to included files.
-                        self.add_werkfile_source(&path, &source).map_err(|err| {
-                            EvalError::IncludeError(file.span(stmt.span), Box::new(err))
-                        })?;
+                        let id = self.register_werkfile_source(
+                            &included_file,
+                            &source,
+                            Some(file.span(stmt.span)),
+                        )?;
+                        werk_parser::parse_werk(&source)
+                            .map_err(|err| EvalError::Parse(id, err))
+                            .and_then(|ast| self.eval_werkfile(id, ast))
+                            .map_err(|err| match err {
+                                EvalError::IncludeDuplicate(..) => err,
+                                _ => EvalError::IncludeError(file.span(stmt.span), Box::new(err)),
+                            })?;
                     }
                 }
                 ast::RootStmt::Default(ast::DefaultStmt::Target(ref stmt)) => {

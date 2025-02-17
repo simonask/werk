@@ -111,3 +111,5 @@ error_case!(capture_group_out_of_bounds);
 error_case!(duplicate_config);
 error_case!(include_missing);
 error_case!(include_with_error);
+error_case!(include_self);
+error_case!(include_twice);

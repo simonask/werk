@@ -39,7 +39,8 @@ fn with_werk<T: Default>(f: impl FnOnce(Workspace) -> Result<T, anyhow::Error> +
             get_workspace_settings(&config, &args, &workspace_dir, ColorOutputKind::Never)?;
 
         let mut workspace = Workspace::new(io, renderer, workspace_dir.into_owned(), &settings)?;
-        workspace.add_werkfile_parsed(&werkfile, &source_code, ast)?;
+        let werkfile_path = workspace.unresolve_path(&werkfile)?;
+        workspace.add_werkfile_parsed(&werkfile_path, &source_code, ast)?;
 
         let result = f(workspace)?;
 

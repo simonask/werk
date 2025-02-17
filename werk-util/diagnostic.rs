@@ -1,5 +1,5 @@
 pub use annotate_snippets::Level;
-use indexmap::IndexMap;
+use indexmap::{map::Entry, IndexMap};
 
 use crate::DiagnosticSpan;
 
@@ -133,7 +133,13 @@ impl<T: DiagnosticSourceMap + ?Sized> DiagnosticSourceMap for &T {
 
 #[derive(Clone, Debug, Default)]
 pub struct DiagnosticMainSourceMap {
-    map: IndexMap<String, String>,
+    map: IndexMap<String, SourceMapEntry>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SourceMapEntry {
+    pub source: String,
+    pub included_from: Option<DiagnosticSpan>,
 }
 
 impl DiagnosticMainSourceMap {
@@ -142,10 +148,50 @@ impl DiagnosticMainSourceMap {
         Self::default()
     }
 
+    #[inline]
     #[must_use]
-    pub fn insert(&mut self, file: String, source: String) -> DiagnosticFileId {
-        let (index, _) = self.map.insert_full(file, source);
+    pub fn insert(
+        &mut self,
+        file: String,
+        source: String,
+        included_from: Option<DiagnosticSpan>,
+    ) -> DiagnosticFileId {
+        let (index, _) = self.map.insert_full(
+            file,
+            SourceMapEntry {
+                source,
+                included_from,
+            },
+        );
         DiagnosticFileId(index.try_into().unwrap())
+    }
+
+    #[inline]
+    pub fn insert_check_duplicate(
+        &mut self,
+        file: String,
+        source: String,
+        included_from: Option<DiagnosticSpan>,
+    ) -> Result<DiagnosticFileId, Option<DiagnosticSpan>> {
+        match self.map.entry(file) {
+            Entry::Occupied(occupied_entry) => Err(occupied_entry.get().included_from),
+            Entry::Vacant(vacant_entry) => {
+                let index = vacant_entry.index();
+                vacant_entry.insert(SourceMapEntry {
+                    source,
+                    included_from,
+                });
+                Ok(DiagnosticFileId(index.try_into().unwrap()))
+            }
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn get_included_at(&self, id: DiagnosticFileId) -> Option<DiagnosticSpan> {
+        self.map
+            .get_index(id.0 as usize)
+            .and_then(|(_, entry)| entry.included_from)
     }
 
     #[inline]
@@ -159,7 +205,7 @@ impl DiagnosticSourceMap for DiagnosticMainSourceMap {
     fn get_source(&self, id: DiagnosticFileId) -> Option<DiagnosticSource<'_>> {
         self.map
             .get_index(id.0 as usize)
-            .map(|(file, source)| DiagnosticSource { file, source })
+            .map(|(file, SourceMapEntry { source, .. })| DiagnosticSource { file, source })
     }
 }
 

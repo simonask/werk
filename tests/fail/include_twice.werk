@@ -1,0 +1,4 @@
+include "included"
+include "included"
+
+#!file included=let a = "foo"

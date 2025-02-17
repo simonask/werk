@@ -1,12 +1,12 @@
 error[P1001]: parse error
- --> /workspace/included:1:1
+ --> /included:1:1
   |
 1 | let a=
   | -     ^ expected expression
   | |
   | info: while parsing `let` statement
   |
- ::: INPUT:1:1
+ ::: /INPUT:1:1
   |
 1 | include "included"
   | ------------------ note: included here

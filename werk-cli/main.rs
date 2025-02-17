@@ -246,8 +246,9 @@ async fn try_main(args: Args) -> Result<(), Error> {
     .map_err(|err| {
         print_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
     })?;
+    let werkfile_abstract_path = workspace.unresolve_path(&werkfile).unwrap();
     workspace
-        .add_werkfile_parsed(&werkfile, &source_code, ast)
+        .add_werkfile_parsed(&werkfile_abstract_path, &source_code, ast)
         .map_err(|err| print_eval_error(err.into_diagnostic_error(&workspace)))?;
 
     if args.list {
@@ -435,7 +436,8 @@ async fn autowatch_loop(
                     continue;
                 }
             };
-        match workspace.add_werkfile_parsed(&werkfile, &source_code, ast) {
+        let werkfile_abstract_path = workspace.unresolve_path(&werkfile).unwrap();
+        match workspace.add_werkfile_parsed(&werkfile_abstract_path, &source_code, ast) {
             Ok(_) => (),
             Err(err) => {
                 print_eval_error(err.into_diagnostic_error(&workspace));

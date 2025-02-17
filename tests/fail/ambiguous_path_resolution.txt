@@ -1,5 +1,5 @@
 error[E0032]: ambiguous path resolution: /bar exists in the workspace, but also matches a build recipe
- --> INPUT:6:10
+ --> /INPUT:6:10
   |
 5 | build "bar" {
   |       ----- note: matched this build recipe

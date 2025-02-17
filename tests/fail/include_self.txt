@@ -1,0 +1,11 @@
+error[E0035]: same file included twice: /included
+ --> /included:1:1
+  |
+1 | include "included"
+  | ^^^^^^^^^^^^^^^^^^ same file included twice: /included
+  |
+ ::: /INPUT:1:1
+  |
+1 | include "included"
+  | ------------------ note: already included here
+  |

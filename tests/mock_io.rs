@@ -261,7 +261,14 @@ impl<'a> Test<'a> {
         };
         let workspace = self.workspace.insert(workspace);
 
-        match workspace.add_werkfile_parsed(std::path::Path::new("INPUT"), self.source, ast) {
+        match workspace.add_werkfile_parsed(
+            &werk_fs::Path::new("INPUT")
+                .unwrap()
+                .absolutize(werk_fs::Path::ROOT)
+                .unwrap(),
+            self.source,
+            ast,
+        ) {
             Ok(_) => (),
             Err(err) => {
                 return Err(Error::Eval(err).into_diagnostic_error(&workspace.manifest as _))
