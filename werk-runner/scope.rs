@@ -20,7 +20,6 @@ pub struct ConfigVar {
 
 pub struct RootScope<'a> {
     pub workspace: &'a Workspace,
-    pub vars: &'a LocalVariables,
 }
 
 pub struct TaskRecipeScope<'a> {
@@ -150,8 +149,8 @@ pub trait Scope: Send + Sync {
 
 impl<'a> RootScope<'a> {
     #[inline]
-    pub fn new(workspace: &'a Workspace, vars: &'a LocalVariables) -> Self {
-        Self { workspace, vars }
+    pub fn new(workspace: &'a Workspace) -> Self {
+        Self { workspace }
     }
 }
 
@@ -437,7 +436,13 @@ impl Scope for RootScope<'_> {
             return None;
         };
 
-        if let Some(var) = self.vars.get(&name).map(LookupValue::EvalRef) {
+        if let Some(var) = self
+            .workspace
+            .manifest
+            .global_variables
+            .get(&name)
+            .map(LookupValue::EvalRef)
+        {
             return Some(var);
         }
 

@@ -455,12 +455,7 @@ impl<'a> Inner<'a> {
         recipe_match: ir::BuildRecipeMatch<'_>,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
-        let global_vars = self
-            .workspace
-            .variables_per_file
-            .get(&recipe_match.recipe.span.file)
-            .expect("recipe file not in variables_per_file");
-        let global_scope = RootScope::new(self.workspace, global_vars);
+        let global_scope = RootScope::new(self.workspace);
 
         let mut scope = BuildRecipeScope::new(&global_scope, task_id, &recipe_match);
         scope.set(
@@ -642,12 +637,7 @@ impl<'a> Inner<'a> {
         recipe: &ir::TaskRecipe,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
-        let global_vars = self
-            .workspace
-            .variables_per_file
-            .get(&recipe.span.file)
-            .expect("task recipe file not in variables_per_file");
-        let global_scope = RootScope::new(self.workspace, global_vars);
+        let global_scope = RootScope::new(self.workspace);
         let mut scope = TaskRecipeScope::new(&global_scope, task_id);
 
         // Evaluate dependencies (`out` is not available in commands).

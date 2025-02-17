@@ -4,7 +4,8 @@ use werk_parser::ast;
 use werk_util::{DiagnosticFileId, DiagnosticMainSourceMap, DiagnosticSpan, Symbol};
 
 use crate::{
-    cache::Hash128, AmbiguousPatternError, ConfigVar, EvalError, Pattern, PatternMatchData, Value,
+    cache::Hash128, AmbiguousPatternError, ConfigVar, EvalError, LocalVariables, Pattern,
+    PatternMatchData, Value,
 };
 
 type Result<T, E = EvalError> = std::result::Result<T, E>;
@@ -20,6 +21,8 @@ pub struct Manifest {
     /// `config` variables and their value at the point of declaration,
     /// collected across all included source files.
     pub config_variables: IndexMap<Symbol, ConfigVar>,
+    /// `let` statements in the global scope.
+    pub global_variables: LocalVariables,
     pub task_recipes: IndexMap<&'static str, TaskRecipe>,
     pub build_recipes: Vec<BuildRecipe>,
     /// Populated by `include` statements during evaluation of the root scope in

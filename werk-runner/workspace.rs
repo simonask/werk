@@ -10,7 +10,7 @@ use crate::{
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
     eval::{self, Eval, UsedVariable},
     ir::{self, BuildRecipe, TaskRecipe},
-    DirEntry, Error, EvalError, Io, LocalVariables, Render, RootScope, Value, Warning,
+    DirEntry, Error, EvalError, Io, Render, RootScope, Value, Warning,
 };
 
 #[derive(Clone)]
@@ -115,11 +115,6 @@ pub struct Workspace {
     pub render: Arc<dyn Render>,
     pub(crate) runner_state: crate::runner::RunnerState,
     pub(crate) artificial_delay: Option<std::time::Duration>,
-
-    /// After a file has been evaluated, this contains all the global variables
-    /// in that file, which is used to reconstruct `RootScope` during recipe
-    /// evaluation.
-    pub variables_per_file: HashMap<DiagnosticFileId, LocalVariables>,
 }
 
 #[derive(Default)]
@@ -193,7 +188,6 @@ impl Workspace {
             render,
             runner_state: crate::RunnerState::new(settings.jobs),
             artificial_delay: settings.artificial_delay,
-            variables_per_file: HashMap::default(),
         };
 
         Ok(workspace)
@@ -245,13 +239,10 @@ impl Workspace {
         file: DiagnosticFileId,
         ast: ast::Root,
     ) -> Result<DiagnosticFileId, EvalError> {
-        // Variables in the file's global scope (`let` statements).
-        let mut vars = LocalVariables::new();
-
         for stmt in ast.statements {
             match stmt.statement {
                 ast::RootStmt::Include(ref stmt) => {
-                    let scope = RootScope::new(self, &vars);
+                    let scope = RootScope::new(self);
                     let value = eval::eval_chain(&scope, &stmt.param, file)?;
                     let mut files = vec![];
                     value.value.try_visit(|include_file| {
@@ -301,7 +292,7 @@ impl Workspace {
                     }
                 }
                 ast::RootStmt::Default(ast::DefaultStmt::Target(ref stmt)) => {
-                    let scope = RootScope::new(self, &vars);
+                    let scope = RootScope::new(self);
                     let value = eval::eval_string_expr(&scope, &stmt.value, file)?;
                     self.default_target = Some(value.value.string);
                 }
@@ -337,9 +328,11 @@ impl Workspace {
                             file.span(config_stmt.span),
                             doc_comment,
                         )?;
-                        vars.insert(config_stmt.ident.ident, evaluated);
+                        self.manifest
+                            .global_variables
+                            .insert(config_stmt.ident.ident, evaluated);
                     } else {
-                        let scope = RootScope::new(self, &vars);
+                        let scope = RootScope::new(self);
                         let mut value = eval::eval_chain(&scope, &config_stmt.value, file)?;
                         value
                             .used
@@ -351,18 +344,22 @@ impl Workspace {
                             file.span(config_stmt.span),
                             doc_comment,
                         )?;
-                        vars.insert(config_stmt.ident.ident, value);
+                        self.manifest
+                            .global_variables
+                            .insert(config_stmt.ident.ident, value);
                     }
                 }
                 ast::RootStmt::Let(ref let_stmt) => {
                     let hash = compute_stable_semantic_hash(&let_stmt.value);
-                    let scope = RootScope::new(self, &vars);
+                    let scope = RootScope::new(self);
                     let mut value = eval::eval_chain(&scope, &let_stmt.value, file)?;
                     value
                         .used
                         .insert(UsedVariable::Global(let_stmt.ident.ident, hash));
                     tracing::trace!("(global) let `{}` = {:?}", let_stmt.ident, value);
-                    vars.insert(let_stmt.ident.ident, value);
+                    self.manifest
+                        .global_variables
+                        .insert(let_stmt.ident.ident, value);
                 }
                 ast::RootStmt::Task(task_recipe) => {
                     let doc_comment =
@@ -386,7 +383,7 @@ impl Workspace {
                             .to_string();
 
                     let hash = compute_stable_semantic_hash(&build_recipe);
-                    let scope = RootScope::new(self, &vars);
+                    let scope = RootScope::new(self);
                     let mut pattern_builder =
                         eval::eval_pattern_builder(&scope, &build_recipe.pattern, file)?;
 
@@ -411,9 +408,6 @@ impl Workspace {
                     .warning(None, &Warning::UnusedDefine(key.as_str().to_owned()));
             }
         }
-
-        // Save the local variables for later (used in recipe evaluation).
-        self.variables_per_file.insert(file, vars);
 
         Ok(file)
     }

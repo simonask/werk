@@ -2,7 +2,7 @@ use macro_rules_attribute::apply;
 use tests::mock_io::*;
 use werk_fs::Absolute;
 use werk_runner::{Runner, TaskId, Value};
-use werk_util::{Annotated, DiagnosticFileId, Symbol};
+use werk_util::{Annotated, Symbol};
 
 #[test]
 fn test_path_resolution() {
@@ -42,10 +42,7 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
             panic!("could not create workspace")
         }
     };
-    let globals = workspace
-        .variables_per_file
-        .get(&DiagnosticFileId(0))
-        .unwrap();
+    let globals = &workspace.manifest.global_variables;
     assert_eq!(
         globals.get(&Symbol::new("exists-resolved")).unwrap().value,
         Value::from(foo_workspace.clone())

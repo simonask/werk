@@ -1,0 +1,5 @@
+# Path to the C compiler.
+config cc = which "clang"
+config ld = cc
+# "debug" or "release"
+config profile = "debug"
