@@ -1,13 +1,13 @@
-use std::ops::Range;
-
 pub use annotate_snippets::Level;
 use indexmap::IndexMap;
+
+use crate::DiagnosticSpan;
 
 pub trait AnnotateLevelExt {
     fn diagnostic(self, id: &'static str) -> Diagnostic;
     fn annotation(
         self,
-        span: impl Into<Range<usize>>,
+        span: impl Into<DiagnosticSpan>,
         message: impl std::fmt::Display,
     ) -> DiagnosticAnnotation;
 }
@@ -20,7 +20,7 @@ impl AnnotateLevelExt for Level {
             id,
             level: self,
             title: String::new(),
-            snippets: vec![],
+            annotations: vec![],
             footer: vec![],
         }
     }
@@ -28,7 +28,7 @@ impl AnnotateLevelExt for Level {
     #[must_use]
     fn annotation(
         self,
-        span: impl Into<Range<usize>>,
+        span: impl Into<DiagnosticSpan>,
         message: impl std::fmt::Display,
     ) -> DiagnosticAnnotation {
         DiagnosticAnnotation {
@@ -93,20 +93,12 @@ pub struct DiagnosticFileId(pub u32);
 
 impl DiagnosticFileId {
     #[must_use]
-    pub fn snippet(
-        self,
-        annotations: impl IntoIterator<Item = DiagnosticAnnotation>,
-    ) -> DiagnosticSnippet {
-        DiagnosticSnippet {
-            file_id: self,
-            annotations: annotations.into_iter().collect(),
+    pub fn span(self, span: impl Into<crate::Span>) -> DiagnosticSpan {
+        DiagnosticSpan {
+            file: self,
+            span: span.into(),
         }
     }
-}
-
-pub struct DiagnosticLocation {
-    pub file: DiagnosticFileId,
-    pub span: Range<usize>,
 }
 
 /// A source file used in diagnostics reporting.
@@ -131,6 +123,12 @@ impl<'a> DiagnosticSource<'a> {
 
 pub trait DiagnosticSourceMap {
     fn get_source(&self, id: DiagnosticFileId) -> Option<DiagnosticSource<'_>>;
+}
+
+impl<T: DiagnosticSourceMap + ?Sized> DiagnosticSourceMap for &T {
+    fn get_source(&self, id: DiagnosticFileId) -> Option<DiagnosticSource<'_>> {
+        T::get_source(self, id)
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -216,7 +214,7 @@ pub struct Diagnostic {
     /// Title on the first line.
     pub title: String,
     /// Snippets and annotations.
-    pub snippets: Vec<DiagnosticSnippet>,
+    pub annotations: Vec<DiagnosticAnnotation>,
     /// Help strings in the footer.
     pub footer: Vec<String>,
 }
@@ -235,14 +233,17 @@ impl Diagnostic {
     }
 
     #[must_use]
-    pub fn snippets(mut self, snippets: impl IntoIterator<Item = DiagnosticSnippet>) -> Self {
-        self.snippets.extend(snippets);
+    pub fn annotations(
+        mut self,
+        annotations: impl IntoIterator<Item = DiagnosticAnnotation>,
+    ) -> Self {
+        self.annotations.extend(annotations);
         self
     }
 
     #[must_use]
-    pub fn snippet(mut self, snippet: DiagnosticSnippet) -> Self {
-        self.snippets.push(snippet);
+    pub fn annotation(mut self, snippet: DiagnosticAnnotation) -> Self {
+        self.annotations.push(snippet);
         self
     }
 
@@ -274,7 +275,7 @@ impl Diagnostic {
             id,
             level: Level::Error,
             title: String::new(),
-            snippets: Vec::new(),
+            annotations: Vec::new(),
             footer: Vec::new(),
         }
     }
@@ -318,25 +319,32 @@ struct Display<'a, D>(
 impl<D: AsRef<Diagnostic>> std::fmt::Display for Display<'_, D> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let diag = self.0.as_ref();
-        let message = diag
-            .level
-            .title(&diag.title)
-            .id(diag.id)
-            .snippets(diag.snippets.iter().filter_map(|snippet| {
-                let source = self.1.get_source(snippet.file_id)?;
-                let annotations = snippet.annotations.iter().map(|annotation| {
-                    annotation
-                        .level
-                        .span(annotation.span.clone())
-                        .label(&annotation.message)
-                });
+
+        // Group annotations by file, but preserve their order.
+        let snippets = diag
+            .annotations
+            .chunk_by(|a, b| a.span.file == b.span.file)
+            .filter_map(|annotations| {
+                let file_id = annotations[0].span.file; // `chunk_by` guarantees non-empty chunks.
+                let source = self.1.get_source(file_id)?;
                 Some(
                     annotate_snippets::Snippet::source(source.source)
                         .origin(source.file)
                         .fold(true)
-                        .annotations(annotations),
+                        .annotations(annotations.iter().map(|annotation| {
+                            annotation
+                                .level
+                                .span(annotation.span.span.into())
+                                .label(&annotation.message)
+                        })),
                 )
-            }))
+            });
+
+        let message = diag
+            .level
+            .title(&diag.title)
+            .id(diag.id)
+            .snippets(snippets)
             .footers(
                 diag.footer
                     .iter()
@@ -348,19 +356,8 @@ impl<D: AsRef<Diagnostic>> std::fmt::Display for Display<'_, D> {
 }
 
 #[derive(Debug, Clone)]
-pub struct DiagnosticSnippet {
-    pub file_id: DiagnosticFileId,
-    pub annotations: Vec<DiagnosticAnnotation>,
-}
-
-#[derive(Debug, Clone)]
 pub struct DiagnosticAnnotation {
-    pub span: Range<usize>,
+    pub span: DiagnosticSpan,
     pub level: Level,
-    pub message: String,
-}
-
-pub struct DiagnosticAnnotationInfo {
-    pub span: Range<usize>,
     pub message: String,
 }

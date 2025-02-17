@@ -396,6 +396,32 @@ impl Value {
         try_visit_mut(self, visitor)
     }
 
+    /// Map strings in place, preserving the structure of the value.
+    pub fn try_map_strings<V: FnMut(StringValue) -> Result<Value, E>, E>(
+        mut self,
+        mut map: V,
+    ) -> Result<Value, E> {
+        fn try_map_strings<V: FnMut(StringValue) -> Result<Value, E>, E>(
+            this: &mut Value,
+            visitor: &mut V,
+        ) -> Result<(), E> {
+            match this {
+                Value::List(ref mut values) => {
+                    for value in values {
+                        try_map_strings(value, visitor)?;
+                    }
+                }
+                Value::String(string_value) => {
+                    *this = visitor(std::mem::take(string_value))?;
+                }
+            }
+            Ok(())
+        }
+
+        try_map_strings(&mut self, &mut map)?;
+        Ok(self)
+    }
+
     pub fn collect_strings_into(self, strings: &mut Vec<StringValue>) {
         self.visit(|s| strings.push(s));
     }

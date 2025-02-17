@@ -1,10 +1,10 @@
 use indexmap::IndexMap;
 use werk_fs::Absolute;
-use werk_parser::{ast, parser::Span};
-use werk_util::{Annotated, AsDiagnostic, DiagnosticMainSourceMap, Symbol};
+use werk_parser::ast;
+use werk_util::{DiagnosticFileId, DiagnosticMainSourceMap, DiagnosticSpan, Symbol};
 
 use crate::{
-    cache::Hash128, AmbiguousPatternError, EvalError, GlobalVariables, Pattern, PatternMatchData,
+    cache::Hash128, AmbiguousPatternError, ConfigVar, EvalError, Pattern, PatternMatchData, Value,
 };
 
 type Result<T, E = EvalError> = std::result::Result<T, E>;
@@ -16,19 +16,44 @@ type Result<T, E = EvalError> = std::result::Result<T, E>;
 /// - Doc comments for all global items are gathered.
 /// - Recipe bodies are *not* evaluated, and refer directly into the AST.
 #[derive(Default)]
-pub struct Manifest<'a> {
-    pub globals: GlobalVariables,
-    pub task_recipes: IndexMap<&'static str, TaskRecipe<'a>>,
-    pub build_recipes: Vec<BuildRecipe<'a>>,
+pub struct Manifest {
+    /// `config` variables and their value at the point of declaration,
+    /// collected across all included source files.
+    pub config_variables: IndexMap<Symbol, ConfigVar>,
+    pub task_recipes: IndexMap<&'static str, TaskRecipe>,
+    pub build_recipes: Vec<BuildRecipe>,
     /// Populated by `include` statements during evaluation of the root scope in
     /// the werkfile.
     pub source_map: DiagnosticMainSourceMap,
 }
 
-impl<'a> Manifest<'a> {
+impl Manifest {
+    pub fn set_config(
+        &mut self,
+        name: Symbol,
+        value: Value,
+        span: DiagnosticSpan,
+        comment: String,
+    ) -> Result<(), EvalError> {
+        if let Some(previous_value) = self.config_variables.insert(
+            name,
+            ConfigVar {
+                value,
+                comment,
+                span,
+            },
+        ) {
+            return Err(EvalError::DuplicateConfigStatement(
+                span,
+                previous_value.span,
+            ));
+        }
+        Ok(())
+    }
+
     #[inline]
     #[must_use]
-    pub fn match_task_recipe(&self, name: &str) -> Option<&TaskRecipe<'a>> {
+    pub fn match_task_recipe(&self, name: &str) -> Option<&TaskRecipe> {
         self.task_recipes.get(name)
     }
 
@@ -102,7 +127,7 @@ impl<'a> Manifest<'a> {
                     if let Some(task) = task {
                         return Err(crate::AmbiguousPatternError {
                             pattern1: build_recipe_match.recipe.pattern.span,
-                            pattern2: task.ast.name.span,
+                            pattern2: task.ast.name.span.with_file(task.span.file),
                             path: name.to_owned(),
                         }
                         .into());
@@ -118,12 +143,12 @@ impl<'a> Manifest<'a> {
 }
 
 pub enum RecipeMatch<'a> {
-    Task(&'a TaskRecipe<'a>),
+    Task(&'a TaskRecipe),
     Build(BuildRecipeMatch<'a>),
 }
 
 pub struct BuildRecipeMatch<'a> {
-    pub recipe: &'a BuildRecipe<'a>,
+    pub recipe: &'a BuildRecipe,
     pub match_data: PatternMatchData,
     pub target_file: Box<Absolute<werk_fs::Path>>,
 }
@@ -135,26 +160,26 @@ pub enum Edition {
 }
 
 #[derive(Debug)]
-pub struct TaskRecipe<'a> {
-    pub span: Span,
+pub struct TaskRecipe {
+    pub span: DiagnosticSpan,
     pub name: Symbol,
     pub doc_comment: String,
-    pub ast: &'a ast::TaskRecipe<'a>,
+    pub ast: ast::TaskRecipe,
     pub hash: Hash128,
 }
 
 #[derive(Debug)]
-pub struct BuildRecipe<'a> {
-    pub span: Span,
+pub struct BuildRecipe {
+    pub span: DiagnosticSpan,
     pub pattern: Pattern,
     pub doc_comment: String,
-    pub ast: &'a ast::BuildRecipe<'a>,
+    pub ast: ast::BuildRecipe,
     pub hash: Hash128,
 }
 
 #[derive(Debug, Default, PartialEq)]
-pub struct Defaults<'a> {
-    pub output_directory: Option<&'a str>,
+pub struct Defaults {
+    pub output_directory: Option<String>,
     pub print_commands: Option<bool>,
     pub print_fresh: Option<bool>,
     pub quiet: Option<bool>,
@@ -166,16 +191,10 @@ pub struct Defaults<'a> {
     pub edition: Edition,
 }
 
-impl<'a> Defaults<'a> {
-    pub fn new_with_diagnostics(
-        doc: &'a werk_parser::Document<'a>,
-    ) -> Result<Self, Annotated<EvalError, &'a werk_parser::Document<'a>>> {
-        Self::new(doc).map_err(|err| err.into_diagnostic_error(doc))
-    }
-
-    pub fn new(doc: &'a werk_parser::Document<'a>) -> Result<Self> {
+impl Defaults {
+    pub fn new(ast: &ast::Root, file: DiagnosticFileId) -> Result<Self> {
         let mut defaults = Self::default();
-        for stmt in &doc.root.statements {
+        for stmt in &ast.statements {
             let ast::RootStmt::Default(ref stmt) = stmt.statement else {
                 continue;
             };
@@ -183,7 +202,7 @@ impl<'a> Defaults<'a> {
             match stmt {
                 ast::DefaultStmt::Target(_) => continue, // Evaluated on workspace creation.
                 ast::DefaultStmt::OutDir(entry) => {
-                    defaults.output_directory = Some(&*entry.value.1);
+                    defaults.output_directory = Some(entry.value.1.clone());
                 }
                 ast::DefaultStmt::PrintCommands(entry) => {
                     defaults.print_commands = Some(entry.value.1);
@@ -199,7 +218,7 @@ impl<'a> Defaults<'a> {
                     if entry.value.1 == "v1" {
                         defaults.edition = Edition::V1;
                     } else {
-                        return Err(EvalError::InvalidEdition(entry.value.0));
+                        return Err(EvalError::InvalidEdition(file.span(entry.value.0)));
                     }
                 }
             }
@@ -209,7 +228,7 @@ impl<'a> Defaults<'a> {
     }
 }
 
-impl werk_util::DiagnosticSourceMap for Manifest<'_> {
+impl werk_util::DiagnosticSourceMap for Manifest {
     #[inline]
     fn get_source(
         &self,

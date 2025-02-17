@@ -1,15 +1,16 @@
 use werk_runner::Value;
 
 use tests::mock_io::*;
-use werk_util::Symbol;
+use werk_util::{DiagnosticFileId, Symbol};
 
 fn evaluate_global(source: &str, global_variable_name_to_check: &str) -> Value {
-    let test = Test::new(source).unwrap();
-    let workspace = test.create_workspace(&[]).unwrap();
+    let mut test = Test::new(source).unwrap();
+    let workspace = test.create_workspace().unwrap();
     workspace
-        .manifest
-        .globals
-        .get(Symbol::new(global_variable_name_to_check))
+        .variables_per_file
+        .get(&DiagnosticFileId(0))
+        .unwrap()
+        .get(&Symbol::new(global_variable_name_to_check))
         .ok_or_else(|| anyhow::anyhow!("global variable not found"))
         .unwrap()
         .value

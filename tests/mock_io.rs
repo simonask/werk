@@ -9,12 +9,14 @@ use std::{
 
 use parking_lot::Mutex;
 use werk_fs::Absolute;
-use werk_parser::parser::{Offset, Span};
 use werk_runner::{
-    globset, BuildStatus, DirEntry, Env, Error, GlobSettings, Io, Metadata, Outdatedness,
-    ShellCommandLine, TaskId, Warning, WhichError, WorkspaceSettings,
+    globset, BuildStatus, DirEntry, Env, Error, EvalError, GlobSettings, Io, Metadata,
+    Outdatedness, ShellCommandLine, TaskId, Warning, WhichError, Workspace, WorkspaceSettings,
 };
-use werk_util::{Annotated, AsDiagnostic as _, DiagnosticSource};
+use werk_util::{
+    Annotated, AsDiagnostic as _, DiagnosticFileId, DiagnosticSource, DiagnosticSourceMap, Offset,
+    Span,
+};
 use winnow::stream::Offset as _;
 
 #[inline]
@@ -100,9 +102,7 @@ impl<'a> TestBuilder<'a> {
         self
     }
 
-    pub fn build(&self) -> Result<Test<'a>, werk_parser::Error> {
-        let ast = werk_parser::parse_werk(self.werkfile_path, self.werkfile)?;
-
+    pub fn build(&self) -> Result<Test<'a>, Error> {
         let io = MockIo::default();
         io.set_env("PROFILE", "debug");
         if self.default_filesystem {
@@ -167,16 +167,43 @@ impl<'a> TestBuilder<'a> {
         if self.create_workspace_dir {
             io.create_parent_dirs(&self.workspace_dir).unwrap()
         }
+
+        let io = Arc::new(io);
+        let render = Arc::new(MockRender::default());
+
         Ok(Test {
-            io: Arc::new(io),
-            render: Arc::new(MockRender::default()),
+            io,
+            render,
             workspace_dir: self.workspace_dir.clone(),
             output_dir: self.output_dir.clone(),
-            ast,
             source: self.werkfile,
             pragma_check_files: vec![],
+            defines: self.defines.clone(),
+            workspace: None,
         })
     }
+}
+
+fn workspace_settings(
+    output_dir: &Absolute<std::path::Path>,
+    defines: impl IntoIterator<Item = (String, String)>,
+) -> werk_runner::WorkspaceSettings {
+    let mut settings = WorkspaceSettings::new(output_dir.to_owned());
+
+    // Normally this would be covered by `.gitignore`, but we don't have that,
+    // so just use a manual ignore pattern.
+    let ignore_pattern = output_dir.join("**").unwrap();
+    settings.ignore_explicitly(
+        globset::GlobSet::builder()
+            .add(ignore_pattern.to_string_lossy().parse().unwrap())
+            .build()
+            .unwrap(),
+    );
+
+    for (key, value) in defines {
+        settings.define(key, value);
+    }
+    settings
 }
 
 pub struct Test<'a> {
@@ -184,50 +211,91 @@ pub struct Test<'a> {
     pub render: Arc<MockRender>,
     pub workspace_dir: Absolute<std::path::PathBuf>,
     pub output_dir: Absolute<std::path::PathBuf>,
-    pub ast: werk_parser::Document<'a>,
     pub source: &'a str,
+    pub defines: Vec<(String, String)>,
+    workspace: Option<Workspace>,
     pragma_check_files: Vec<(Span, String, Vec<u8>)>,
 }
 
+impl DiagnosticSourceMap for Test<'_> {
+    fn get_source(&self, id: DiagnosticFileId) -> Option<DiagnosticSource<'_>> {
+        if id == DiagnosticFileId::default() {
+            Some(DiagnosticSource {
+                file: "INPUT",
+                source: self.source,
+            })
+        } else {
+            self.workspace
+                .as_ref()
+                .and_then(|workspace| workspace.manifest.get_source(id))
+        }
+    }
+}
+
 impl<'a> Test<'a> {
-    pub fn new(
-        source: &'a str,
-    ) -> Result<Self, werk_util::Annotated<werk_parser::Error, DiagnosticSource<'a>>> {
-        let mut test = TestBuilder::default()
-            .werkfile(source)
-            .build()
-            .map_err(|err| {
-                err.into_diagnostic_error(DiagnosticSource::new(
-                    std::path::Path::new("input"),
-                    source,
-                ))
-            })?;
-        test.reload_test_pragmas();
-        Ok(test)
+    pub fn new(source: &'a str) -> Result<Self, Error> {
+        TestBuilder::default().werkfile(source).build()
+    }
+
+    pub fn create_workspace(
+        &mut self,
+    ) -> Result<&mut Workspace, Annotated<werk_runner::Error, &dyn DiagnosticSourceMap>> {
+        let ast = match werk_parser::parse_werk(self.source) {
+            Ok(ast) => ast,
+            Err(err) => {
+                return Err(Error::Eval(EvalError::Parse(DiagnosticFileId(0), err))
+                    .into_diagnostic_error(&*self as _))
+            }
+        };
+        self.reload_test_pragmas(&ast);
+
+        let settings = workspace_settings(&self.output_dir, self.defines.iter().cloned());
+        let workspace = match werk_runner::Workspace::new(
+            self.io.clone(),
+            self.render.clone(),
+            self.workspace_dir.clone(),
+            &settings,
+        ) {
+            Ok(workspace) => workspace,
+            Err(err) => return Err(err.into_diagnostic_error(&*self as _)),
+        };
+        let workspace = self.workspace.insert(workspace);
+
+        match workspace.add_werkfile_parsed(std::path::Path::new("INPUT"), self.source, ast) {
+            Ok(_) => (),
+            Err(err) => {
+                return Err(Error::Eval(err).into_diagnostic_error(&workspace.manifest as _))
+            }
+        }
+
+        Ok(workspace)
     }
 
     pub fn reload(
         &mut self,
         source: &'a str,
-    ) -> Result<(), werk_util::Annotated<werk_parser::Error, DiagnosticSource<'a>>> {
-        self.ast = werk_parser::parse_werk(self.ast.origin, source).map_err(|err| {
-            err.into_diagnostic_error(DiagnosticSource::new(std::path::Path::new("input"), source))
-        })?;
+        defines: &[(&str, &str)],
+    ) -> Result<&mut Workspace, werk_util::Annotated<Error, &dyn DiagnosticSourceMap>> {
         self.source = source;
-        self.reload_test_pragmas();
-        Ok(())
+        self.defines = defines
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        self.create_workspace()
     }
 
-    fn reload_test_pragmas(&mut self) {
+    fn reload_test_pragmas(&mut self, ast: &werk_parser::ast::Root) {
         self.pragma_check_files.clear();
 
         // Interpret pragmas in the trailing comment of the werkfile.
-        let trailing_whitespace = self.ast.get_whitespace(self.ast.root.ws_trailing);
+        let main_source = DiagnosticSource::new(std::path::Path::new("INPUT"), self.source);
+        let trailing_whitespace =
+            werk_parser::extract_whitespace(&main_source, DiagnosticFileId(0), ast.ws_trailing);
         let trailing_whitespace_lines = trailing_whitespace.trim().lines();
-        let trailing_ws_span_start = if self.ast.root.ws_trailing.0.is_ignored() {
+        let trailing_ws_span_start = if ast.ws_trailing.0.is_ignored() {
             0
         } else {
-            self.ast.root.ws_trailing.0.start.0 as usize
+            ast.ws_trailing.0.start.0 as usize
         };
 
         let regexes = regexes();
@@ -244,6 +312,11 @@ impl<'a> Test<'a> {
                     let filename = captures.get(1).unwrap().as_str();
                     let content = captures.get(2).unwrap().as_str();
                     let path = self.workspace_path(filename.split('/'));
+                    tracing::debug!(
+                        "inserting file from test pragma: {} = \"{}\"",
+                        path.display(),
+                        content.escape_debug()
+                    );
                     insert_fs(
                         &mut fs,
                         &path,
@@ -285,45 +358,13 @@ impl<'a> Test<'a> {
             let (_entry, actual) = read_fs(&fs, &out_file).unwrap();
             if actual != expected {
                 return Err(werk_runner::EvalError::AssertCustomFailed(
-                    *span,
+                    DiagnosticFileId(0).span(*span),
                     format!("contents of output file `{filename}` do not match\nexpected: {expected:?}\n  actual: {actual:?}"),
                 ));
             }
         }
 
         Ok(())
-    }
-
-    pub fn create_workspace<'b>(
-        &'b self,
-        defines: &[(&str, &str)],
-    ) -> Result<
-        werk_runner::Workspace<'b>,
-        Annotated<werk_runner::Error, &'b werk_parser::Document<'b>>,
-    > {
-        let mut settings = WorkspaceSettings::new(self.output_dir.clone());
-
-        // Normally this would be covered by `.gitignore`, but we don't have that,
-        // so just use a manual ignore pattern.
-        let ignore_pattern = self.output_dir.join("**").unwrap();
-        settings.ignore_explicitly(
-            globset::GlobSet::builder()
-                .add(ignore_pattern.to_string_lossy().parse().unwrap())
-                .build()
-                .unwrap(),
-        );
-
-        for (key, value) in defines {
-            settings.define(*key, *value);
-        }
-
-        werk_runner::Workspace::new_with_diagnostics(
-            &self.ast,
-            &*self.io,
-            &*self.render,
-            self.workspace_dir.clone(),
-            &settings,
-        )
     }
 
     pub fn workspace_path(
@@ -1233,10 +1274,10 @@ struct PragmaRegexes {
 impl Default for PragmaRegexes {
     fn default() -> Self {
         Self {
-            file: regex::Regex::new(r"^#\!file (.*)=(.*)$").unwrap(),
+            file: regex::Regex::new(r"^#\!file ([^=]*)=(.*)$").unwrap(),
             dir: regex::Regex::new(r"^#\!dir (.*)$").unwrap(),
-            assert_file: regex::Regex::new(r"^#\!assert-file (.*)=(.*)$").unwrap(),
-            env: regex::Regex::new(r"^#\!env (.*)=(.*)$").unwrap(),
+            assert_file: regex::Regex::new(r"^#\!assert-file ([^=]*)=(.*)$").unwrap(),
+            env: regex::Regex::new(r"^#\!env ([^=]*)=(.*)$").unwrap(),
         }
     }
 }

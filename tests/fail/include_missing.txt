@@ -1,0 +1,6 @@
+error[E0027]: error including '/does-not-exist.werk': file not found
+ --> INPUT:1:1
+  |
+1 | include "does-not-exist.werk"
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ error including '/does-not-exist.werk': file not found
+  |

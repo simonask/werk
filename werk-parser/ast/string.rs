@@ -1,36 +1,19 @@
-use std::{borrow::Cow, fmt::Write, hash::Hash as _};
+use std::{fmt::Write, hash::Hash as _};
 
-use werk_util::Symbol;
+use werk_util::{SemanticHash, Span, Symbol};
 
-use crate::{
-    parser::{
-        escape_pattern_literal, escape_string_literal, parse_pattern_expr_unquoted,
-        parse_string_expr_unquoted, Span,
-    },
-    SemanticHash,
+use crate::parser::{
+    escape_pattern_literal, escape_string_literal, parse_pattern_expr_unquoted,
+    parse_string_expr_unquoted,
 };
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct StringExpr<'a> {
+pub struct StringExpr {
     pub span: Span,
-    pub fragments: Vec<StringFragment<'a>>,
+    pub fragments: Vec<StringFragment>,
 }
 
-impl StringExpr<'_> {
-    #[inline]
-    pub fn into_static(self) -> StringExpr<'static> {
-        StringExpr {
-            span: self.span,
-            fragments: self
-                .fragments
-                .into_iter()
-                .map(StringFragment::into_static)
-                .collect(),
-        }
-    }
-}
-
-impl std::fmt::Display for StringExpr<'_> {
+impl std::fmt::Display for StringExpr {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for fragment in &self.fragments {
@@ -44,13 +27,13 @@ impl std::fmt::Display for StringExpr<'_> {
     }
 }
 
-impl serde::Serialize for StringExpr<'_> {
+impl serde::Serialize for StringExpr {
     fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         ser.serialize_str(&self.to_string())
     }
 }
 
-impl<'de> serde::Deserialize<'de> for StringExpr<'_> {
+impl<'de> serde::Deserialize<'de> for StringExpr {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -59,20 +42,20 @@ impl<'de> serde::Deserialize<'de> for StringExpr<'_> {
         parse_string_expr_unquoted(&s)
             .map(|mut expr| {
                 expr.span = Span::ignore();
-                expr.into_static()
+                expr
             })
             .map_err(serde::de::Error::custom)
     }
 }
 
-impl SemanticHash for StringExpr<'_> {
+impl SemanticHash for StringExpr {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.fragments.as_slice().semantic_hash(state);
     }
 }
 
-impl<'a> StringExpr<'a> {
-    pub fn literal(span: impl Into<Span>, s: impl Into<Cow<'a, str>>) -> Self {
+impl StringExpr {
+    pub fn literal(span: impl Into<Span>, s: impl Into<String>) -> Self {
         Self {
             span: span.into(),
             fragments: vec![StringFragment::Literal(s.into())],
@@ -82,28 +65,15 @@ impl<'a> StringExpr<'a> {
 
 /// Interpolated string fragment.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum StringFragment<'a> {
-    Literal(Cow<'a, str>),
+pub enum StringFragment {
+    Literal(String),
     /// `%`, shorthand for `{%}`
     PatternStem,
     /// `{...}` or `<...>`
-    Interpolation(Interpolation<'a>),
+    Interpolation(Interpolation),
 }
 
-impl StringFragment<'_> {
-    #[must_use]
-    pub fn into_static(self) -> StringFragment<'static> {
-        match self {
-            StringFragment::Literal(s) => StringFragment::Literal(s.into_owned().into()),
-            StringFragment::PatternStem => StringFragment::PatternStem,
-            StringFragment::Interpolation(interp) => {
-                StringFragment::Interpolation(interp.into_static())
-            }
-        }
-    }
-}
-
-impl SemanticHash for StringFragment<'_> {
+impl SemanticHash for StringFragment {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
@@ -114,37 +84,22 @@ impl SemanticHash for StringFragment<'_> {
     }
 }
 
-impl Default for StringFragment<'_> {
+impl Default for StringFragment {
     #[inline]
     fn default() -> Self {
-        StringFragment::Literal(Cow::Borrowed(""))
+        StringFragment::Literal(String::new())
     }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct PatternExpr<'a> {
+pub struct PatternExpr {
     pub span: Span,
-    pub fragments: Vec<PatternFragment<'a>>,
+    pub fragments: Vec<PatternFragment>,
 }
 
-impl PatternExpr<'_> {
+impl std::fmt::Display for PatternExpr {
     #[inline]
-    #[must_use]
-    pub fn into_static(self) -> PatternExpr<'static> {
-        PatternExpr {
-            span: self.span,
-            fragments: self
-                .fragments
-                .into_iter()
-                .map(PatternFragment::into_static)
-                .collect(),
-        }
-    }
-}
-
-impl std::fmt::Display for PatternExpr<'_> {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         for fragment in &self.fragments {
             match fragment {
                 PatternFragment::Literal(s) => escape_pattern_literal(s).fmt(f)?,
@@ -166,13 +121,13 @@ impl std::fmt::Display for PatternExpr<'_> {
     }
 }
 
-impl serde::Serialize for PatternExpr<'_> {
+impl serde::Serialize for PatternExpr {
     fn serialize<S: serde::Serializer>(&self, ser: S) -> Result<S::Ok, S::Error> {
         ser.serialize_str(&self.to_string())
     }
 }
 
-impl<'de> serde::Deserialize<'de> for PatternExpr<'_> {
+impl<'de> serde::Deserialize<'de> for PatternExpr {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -181,13 +136,13 @@ impl<'de> serde::Deserialize<'de> for PatternExpr<'_> {
         parse_pattern_expr_unquoted(&s)
             .map(|mut expr| {
                 expr.span = Span::ignore();
-                expr.into_static()
+                expr
             })
             .map_err(serde::de::Error::custom)
     }
 }
 
-impl SemanticHash for PatternExpr<'_> {
+impl SemanticHash for PatternExpr {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.fragments.as_slice().semantic_hash(state);
     }
@@ -195,33 +150,17 @@ impl SemanticHash for PatternExpr<'_> {
 
 /// Interpolated pattern fragment (i.e., can have capture patterns like `%` and `(a|b|c)`).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PatternFragment<'a> {
-    Literal(Cow<'a, str>),
+pub enum PatternFragment {
+    Literal(String),
     /// `%`
     PatternStem,
     /// `(a|b|c)`
-    OneOf(Vec<Cow<'a, str>>),
+    OneOf(Vec<String>),
     /// `{...}`
-    Interpolation(Interpolation<'a>),
+    Interpolation(Interpolation),
 }
 
-impl PatternFragment<'_> {
-    #[must_use]
-    pub fn into_static(self) -> PatternFragment<'static> {
-        match self {
-            PatternFragment::Literal(s) => PatternFragment::Literal(s.into_owned().into()),
-            PatternFragment::PatternStem => PatternFragment::PatternStem,
-            PatternFragment::OneOf(v) => {
-                PatternFragment::OneOf(v.into_iter().map(Cow::into_owned).map(Cow::Owned).collect())
-            }
-            PatternFragment::Interpolation(interp) => {
-                PatternFragment::Interpolation(interp.into_static())
-            }
-        }
-    }
-}
-
-impl SemanticHash for PatternFragment<'_> {
+impl SemanticHash for PatternFragment {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
@@ -234,20 +173,12 @@ impl SemanticHash for PatternFragment<'_> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Interpolation<'a> {
+pub struct Interpolation {
     pub stem: InterpolationStem,
-    pub options: Option<Box<InterpolationOptions<'a>>>,
+    pub options: Option<Box<InterpolationOptions>>,
 }
 
-impl Interpolation<'_> {
-    #[must_use]
-    pub fn into_static(self) -> Interpolation<'static> {
-        Interpolation {
-            stem: self.stem,
-            options: self.options.map(|o| Box::new(o.into_static())),
-        }
-    }
-
+impl Interpolation {
     #[inline]
     #[must_use]
     pub fn is_path_interpolation(&self) -> bool {
@@ -275,15 +206,15 @@ impl Interpolation<'_> {
     }
 }
 
-impl SemanticHash for Interpolation<'_> {
+impl SemanticHash for Interpolation {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.stem.semantic_hash(state);
         self.options.semantic_hash(state);
     }
 }
 
-impl std::fmt::Display for Interpolation<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl std::fmt::Display for Interpolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let is_path = self.is_path_interpolation();
 
         f.write_char(if is_path { '<' } else { '{' })?;
@@ -348,28 +279,15 @@ impl std::fmt::Display for Interpolation<'_> {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct InterpolationOptions<'a> {
+pub struct InterpolationOptions {
     /// `{stem:operation}`
-    pub ops: Vec<InterpolationOp<'a>>,
+    pub ops: Vec<InterpolationOp>,
     /// `{...*}` - This is not a normal operation because we need to treat it
     /// specially when building shell commands.
-    pub join: Option<Cow<'a, str>>,
+    pub join: Option<String>,
 }
 
-impl InterpolationOptions<'_> {
-    pub fn into_static(self) -> InterpolationOptions<'static> {
-        InterpolationOptions {
-            ops: self
-                .ops
-                .into_iter()
-                .map(InterpolationOp::into_static)
-                .collect(),
-            join: self.join.map(Cow::into_owned).map(Cow::Owned),
-        }
-    }
-}
-
-impl SemanticHash for InterpolationOptions<'_> {
+impl SemanticHash for InterpolationOptions {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.ops.as_slice().semantic_hash(state);
         self.join.as_deref().semantic_hash(state);
@@ -400,7 +318,7 @@ impl SemanticHash for InterpolationStem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum InterpolationOp<'a> {
+pub enum InterpolationOp {
     Dedup,
     /// Get the filename part of a path.
     Filename,
@@ -410,12 +328,12 @@ pub enum InterpolationOp<'a> {
     Ext,
     /// Replace extension - input must be path.
     ReplaceExtension {
-        from: Cow<'a, str>,
-        to: Cow<'a, str>,
+        from: String,
+        to: String,
     },
-    PrependEach(Cow<'a, str>),
-    AppendEach(Cow<'a, str>),
-    RegexReplace(RegexInterpolationOp<'a>),
+    PrependEach(String),
+    AppendEach(String),
+    RegexReplace(RegexInterpolationOp),
     // Interpret the string as an OS path and resolve it. This is the `<..>`
     // interpolation syntax.
     ResolveOsPath,
@@ -423,30 +341,7 @@ pub enum InterpolationOp<'a> {
     ResolveWorkspace,
 }
 
-impl InterpolationOp<'_> {
-    #[inline]
-    #[must_use]
-    pub fn into_static(self) -> InterpolationOp<'static> {
-        match self {
-            InterpolationOp::ReplaceExtension { from, to } => InterpolationOp::ReplaceExtension {
-                from: from.into_owned().into(),
-                to: to.into_owned().into(),
-            },
-            InterpolationOp::PrependEach(s) => InterpolationOp::PrependEach(s.into_owned().into()),
-            InterpolationOp::AppendEach(s) => InterpolationOp::AppendEach(s.into_owned().into()),
-            InterpolationOp::RegexReplace(r) => InterpolationOp::RegexReplace(r.into_static()),
-            InterpolationOp::Dedup => InterpolationOp::Dedup,
-            InterpolationOp::Filename => InterpolationOp::Filename,
-            InterpolationOp::Dirname => InterpolationOp::Dirname,
-            InterpolationOp::Ext => InterpolationOp::Ext,
-            InterpolationOp::ResolveOsPath => InterpolationOp::ResolveOsPath,
-            InterpolationOp::ResolveOutDir => InterpolationOp::ResolveOutDir,
-            InterpolationOp::ResolveWorkspace => InterpolationOp::ResolveWorkspace,
-        }
-    }
-}
-
-impl SemanticHash for InterpolationOp<'_> {
+impl SemanticHash for InterpolationOp {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
@@ -469,31 +364,20 @@ impl SemanticHash for InterpolationOp<'_> {
 }
 
 #[derive(Clone, Debug)]
-pub struct RegexInterpolationOp<'a> {
+pub struct RegexInterpolationOp {
     pub regex: regex::Regex,
-    pub replacer: Cow<'a, str>,
+    pub replacer: String,
 }
 
-impl RegexInterpolationOp<'_> {
-    #[inline]
-    #[must_use]
-    pub fn into_static(self) -> RegexInterpolationOp<'static> {
-        RegexInterpolationOp {
-            regex: self.regex,
-            replacer: self.replacer.into_owned().into(),
-        }
-    }
-}
-
-impl PartialEq for RegexInterpolationOp<'_> {
+impl PartialEq for RegexInterpolationOp {
     fn eq(&self, other: &Self) -> bool {
         self.regex.as_str() == other.regex.as_str() && self.replacer == other.replacer
     }
 }
 
-impl Eq for RegexInterpolationOp<'_> {}
+impl Eq for RegexInterpolationOp {}
 
-impl std::hash::Hash for RegexInterpolationOp<'_> {
+impl std::hash::Hash for RegexInterpolationOp {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.regex.as_str().hash(state);
         self.replacer.hash(state);

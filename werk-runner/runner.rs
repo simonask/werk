@@ -4,8 +4,7 @@ use futures::{channel::oneshot, StreamExt};
 use indexmap::{map::Entry, IndexMap};
 use parking_lot::Mutex;
 use werk_fs::{Absolute, Normalize as _, Path, SymPath};
-use werk_parser::parser::Span;
-use werk_util::{Annotated, AsDiagnostic, Symbol};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, Symbol};
 
 use crate::{
     depfile::Depfile,
@@ -36,7 +35,7 @@ pub struct Runner<'a> {
 }
 
 struct Inner<'a> {
-    workspace: &'a Workspace<'a>,
+    workspace: &'a Workspace,
     executor: smol::Executor<'a>,
 }
 
@@ -218,7 +217,7 @@ impl<'a> Runner<'a> {
     pub async fn build_file(
         &self,
         target: &Path,
-    ) -> Result<BuildStatus, Annotated<Error, &'a Workspace<'a>>> {
+    ) -> Result<BuildStatus, Annotated<Error, &'a Workspace>> {
         let target = target
             .absolutize(werk_fs::Path::ROOT)
             .map_err(|err| Error::InvalidTargetPath(target.to_string(), err))
@@ -240,7 +239,7 @@ impl<'a> Runner<'a> {
     pub async fn run_command(
         &self,
         target: &str,
-    ) -> Result<BuildStatus, Annotated<Error, &'a Workspace<'a>>> {
+    ) -> Result<BuildStatus, Annotated<Error, &'a Workspace>> {
         tracing::debug!("Run: {target}");
         let spec = self
             .inner
@@ -258,7 +257,7 @@ impl<'a> Runner<'a> {
     pub async fn build_or_run(
         &self,
         target: &str,
-    ) -> Result<BuildStatus, Annotated<Error, &'a Workspace<'a>>> {
+    ) -> Result<BuildStatus, Annotated<Error, &'a Workspace>> {
         tracing::debug!("Build or run: {target}");
         let spec = self
             .inner
@@ -319,7 +318,7 @@ impl<'a> Inner<'a> {
             if let Some(build_recipe_match) = self.workspace.manifest.match_build_recipe(&path)? {
                 if let Some(task_recipe) = task_recipe_match {
                     return Err(AmbiguousPatternError {
-                        pattern1: task_recipe.ast.name.span,
+                        pattern1: task_recipe.span.file.span(task_recipe.ast.name.span),
                         pattern2: build_recipe_match.recipe.pattern.span,
                         path: path.to_string(),
                     }
@@ -456,7 +455,13 @@ impl<'a> Inner<'a> {
         recipe_match: ir::BuildRecipeMatch<'_>,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
-        let global_scope = RootScope::new(self.workspace);
+        let global_vars = self
+            .workspace
+            .variables_per_file
+            .get(&recipe_match.recipe.span.file)
+            .expect("recipe file not in variables_per_file");
+        let global_scope = RootScope::new(self.workspace, global_vars);
+
         let mut scope = BuildRecipeScope::new(&global_scope, task_id, &recipe_match);
         scope.set(
             Symbol::new("out"),
@@ -483,6 +488,7 @@ impl<'a> Inner<'a> {
         let evaluated = eval::eval_build_recipe_statements(
             &mut scope,
             &recipe_match.recipe.ast.body.statements,
+            recipe_match.recipe.span.file,
         )?;
         outdatedness.did_use(evaluated.used);
         let evaluated = evaluated.value;
@@ -633,15 +639,24 @@ impl<'a> Inner<'a> {
     async fn execute_task_recipe(
         self: &Arc<Self>,
         task_id: TaskId,
-        recipe: &ir::TaskRecipe<'a>,
+        recipe: &ir::TaskRecipe,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
-        let global_scope = RootScope::new(self.workspace);
+        let global_vars = self
+            .workspace
+            .variables_per_file
+            .get(&recipe.span.file)
+            .expect("task recipe file not in variables_per_file");
+        let global_scope = RootScope::new(self.workspace, global_vars);
         let mut scope = TaskRecipeScope::new(&global_scope, task_id);
 
         // Evaluate dependencies (`out` is not available in commands).
 
-        let evaluated = eval::eval_task_recipe_statements(&mut scope, &recipe.ast.body.statements)?;
+        let evaluated = eval::eval_task_recipe_statements(
+            &mut scope,
+            &recipe.ast.body.statements,
+            recipe.span.file,
+        )?;
         let dependency_specs = evaluated
             .build
             .iter()
@@ -822,7 +837,7 @@ impl<'a> Inner<'a> {
         task_id: TaskId,
         paths: &[Absolute<std::path::PathBuf>],
         silent: bool,
-        span: Span,
+        span: DiagnosticSpan,
     ) -> Result<(), Error> {
         for path in paths {
             if self.workspace.is_in_output_directory(path) {
@@ -964,10 +979,10 @@ pub(crate) enum RunCommand {
     // We don't know yet if the source file is in the workspace or output
     // directory, so we will resolve the path when running it.
     Copy(Absolute<werk_fs::PathBuf>, Absolute<std::path::PathBuf>),
-    Info(Span, String),
-    Warn(Span, String),
+    Info(DiagnosticSpan, String),
+    Warn(DiagnosticSpan, String),
     // Path is always in the output directory. They don't need to exist.
-    Delete(Span, Vec<Absolute<std::path::PathBuf>>),
+    Delete(DiagnosticSpan, Vec<Absolute<std::path::PathBuf>>),
     SetCapture(bool),
     SetEnv(String, String),
     RemoveEnv(String),

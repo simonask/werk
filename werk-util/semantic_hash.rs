@@ -39,6 +39,7 @@ impl<T: SemanticHash + ?Sized> SemanticHash for &T {
     }
 }
 
+#[macro_export]
 macro_rules! hash_is_semantic {
     ($t:tt $(<$($lifetime_param:tt),+>)?) => {
         impl $(<$($lifetime_param),*>)* $crate::SemanticHash for $t $(<$($lifetime_param),+>)? {

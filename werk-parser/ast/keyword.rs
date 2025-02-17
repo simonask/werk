@@ -1,9 +1,10 @@
 use winnow::Parser as _;
 
 use crate::{
-    parser::{Input, Offset, PResult, Parse, Parser as _, Span, Spanned},
+    parser::{Input, PResult, Parse, Parser as _},
     Failure,
 };
+use werk_util::{Offset, Span, Spanned};
 
 pub trait Keyword: Spanned + std::marker::Copy {
     const TOKEN: &'static str;
@@ -48,7 +49,7 @@ macro_rules! def_keyword {
                 self.0.fmt(f)
             }
         }
-        impl crate::parser::Spanned for $t {
+        impl Spanned for $t {
             #[inline]
             #[allow(clippy::cast_possible_truncation)]
             fn span(&self) -> Span {
@@ -58,8 +59,8 @@ macro_rules! def_keyword {
                 }
             }
         }
-        impl<'a> Parse<'a> for $t {
-            fn parse(input: &mut Input<'a>) -> PResult<Self> {
+        impl Parse for $t {
+            fn parse(input: &mut Input) -> PResult<Self> {
                 winnow::combinator::terminated($s, winnow::combinator::peek(end_of_keyword))
                     .or_fail(Failure::ExpectedKeyword(&$s))
                     .token_span()
@@ -101,6 +102,7 @@ macro_rules! def_keyword {
 def_keyword!(Let, "let");
 def_keyword!(Config, "config");
 def_keyword!(Default, "default");
+def_keyword!(Include, "include");
 def_keyword!(Build, "build");
 def_keyword!(Task, "task");
 def_keyword!(Shell, "shell");

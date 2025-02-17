@@ -1,17 +1,21 @@
 use tests::mock_io::*;
 use werk_parser::parser::{pattern_expr_inside_quotes, Input};
-use werk_runner::{Pattern, PatternMatchData, RootScope};
+use werk_runner::{LocalVariables, Pattern, PatternMatchData, RootScope};
+use werk_util::DiagnosticFileId;
 
 fn parse_and_compile_pattern(scope: &RootScope, pattern: &str) -> Pattern {
     let expr = pattern_expr_inside_quotes(&mut Input::new(pattern)).unwrap();
-    werk_runner::eval::eval_pattern(scope, &expr).unwrap().value
+    werk_runner::eval::eval_pattern(scope, &expr, DiagnosticFileId(0))
+        .unwrap()
+        .value
 }
 
 #[test]
 fn test_pattern_match() -> anyhow::Result<()> {
-    let test = Test::new("").unwrap();
-    let workspace = test.create_workspace(&[]).unwrap();
-    let scope = RootScope::new(&workspace);
+    let mut test = Test::new("").unwrap();
+    let workspace = test.create_workspace().unwrap();
+    let vars = LocalVariables::new();
+    let scope = RootScope::new(workspace, &vars);
 
     let empty = parse_and_compile_pattern(&scope, "");
     let all = parse_and_compile_pattern(&scope, "%");
@@ -53,9 +57,10 @@ fn test_pattern_match() -> anyhow::Result<()> {
 
 #[test]
 fn test_capture_groups() -> anyhow::Result<()> {
-    let test = Test::new("").unwrap();
-    let workspace = test.create_workspace(&[]).unwrap();
-    let scope = RootScope::new(&workspace);
+    let mut test = Test::new("").unwrap();
+    let workspace = test.create_workspace().unwrap();
+    let vars = LocalVariables::new();
+    let scope = RootScope::new(workspace, &vars);
 
     let abc = parse_and_compile_pattern(&scope, "(a|b|c)");
 

@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use clap::{CommandFactory, FromArgMatches};
 use clap_complete::CompletionCandidate;
 use werk_fs::Normalize;
 use werk_runner::Workspace;
+use werk_util::DiagnosticFileId;
 
 use crate::dry_run::DryRun;
 use crate::render::null::NullRender;
@@ -9,7 +12,7 @@ use crate::render::ColorOutputKind;
 use crate::Args;
 use crate::{find_werkfile, get_workspace_dir, get_workspace_settings};
 
-fn with_werk<T: Default>(f: impl FnOnce(Workspace<'_>) -> Result<T, anyhow::Error> + 'static) -> T {
+fn with_werk<T: Default>(f: impl FnOnce(Workspace) -> Result<T, anyhow::Error> + 'static) -> T {
     let result = (|| -> Result<T, anyhow::Error> {
         let args = std::env::args().skip(2);
         let arg_matches = Args::command()
@@ -25,18 +28,18 @@ fn with_werk<T: Default>(f: impl FnOnce(Workspace<'_>) -> Result<T, anyhow::Erro
         };
 
         let source_code = std::fs::read_to_string(&werkfile)?;
-        let ast = werk_parser::parse_werk(&werkfile, &source_code)?;
-        let config = werk_runner::ir::Defaults::new(&ast)?;
+        let ast = werk_parser::parse_werk(&source_code)?;
+        let config = werk_runner::ir::Defaults::new(&ast, DiagnosticFileId(0))?;
 
-        let io = DryRun::new();
-        let renderer = NullRender;
+        let io = Arc::new(DryRun::new());
+        let renderer = Arc::new(NullRender);
 
         let workspace_dir = get_workspace_dir(&args, &werkfile)?;
         let settings =
             get_workspace_settings(&config, &args, &workspace_dir, ColorOutputKind::Never)?;
 
-        let workspace =
-            Workspace::new(&ast, &io, &renderer, workspace_dir.into_owned(), &settings)?;
+        let mut workspace = Workspace::new(io, renderer, workspace_dir.into_owned(), &settings)?;
+        workspace.add_werkfile_parsed(&werkfile, &source_code, ast)?;
 
         let result = f(workspace)?;
 
@@ -72,8 +75,7 @@ pub fn defines() -> Vec<CompletionCandidate> {
     with_werk(|workspace| {
         let defines = workspace
             .manifest
-            .globals
-            .configs
+            .config_variables
             .iter()
             .map(|(symbol, global)| {
                 let help = global.value.to_string();

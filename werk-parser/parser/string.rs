@@ -1,12 +1,12 @@
-use std::{borrow::Cow, fmt::Write, sync::Arc};
+use std::{fmt::Write, sync::Arc};
 
 use crate::{
     ast::{self, token},
     fatal,
-    parser::{Input, Offset, Parser as _},
+    parser::{Input, Parser as _},
     Error, Failure, ModalErr,
 };
-use werk_util::Symbol;
+use werk_util::{Offset, Symbol};
 use winnow::{
     ascii::{digit1, multispace1, space0},
     combinator::{
@@ -20,8 +20,8 @@ use winnow::{
 
 use super::{parse, PResult, Parse, Spanned};
 
-impl<'a> Parse<'a> for ast::StringExpr<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::StringExpr {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (mut expr, span) = delimited(
             parse::<token::DoubleQuote>.expect(&"string literal"),
             string_expr_inside_quotes,
@@ -35,15 +35,15 @@ impl<'a> Parse<'a> for ast::StringExpr<'a> {
     }
 }
 
-impl Spanned for ast::StringExpr<'_> {
+impl Spanned for ast::StringExpr {
     #[inline]
     fn span(&self) -> super::Span {
         self.span
     }
 }
 
-impl<'a> Parse<'a> for ast::PatternExpr<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::PatternExpr {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (mut expr, span) = delimited(
             parse::<token::DoubleQuote>.expect(&"pattern literal"),
             pattern_expr_inside_quotes,
@@ -57,7 +57,7 @@ impl<'a> Parse<'a> for ast::PatternExpr<'a> {
     }
 }
 
-pub fn string_expr_inside_quotes<'a>(input: &mut Input<'a>) -> PResult<ast::StringExpr<'a>> {
+pub fn string_expr_inside_quotes(input: &mut Input) -> PResult<ast::StringExpr> {
     let (mut expr, span) = repeat(0.., string_fragment)
         .fold(ast::StringExpr::default, |mut expr, fragment| {
             push_string_fragment(&mut expr, fragment);
@@ -69,7 +69,7 @@ pub fn string_expr_inside_quotes<'a>(input: &mut Input<'a>) -> PResult<ast::Stri
     Ok(expr)
 }
 
-pub fn pattern_expr_inside_quotes<'a>(input: &mut Input<'a>) -> PResult<ast::PatternExpr<'a>> {
+pub fn pattern_expr_inside_quotes(input: &mut Input) -> PResult<ast::PatternExpr> {
     let (mut expr, span) = repeat(0.., pattern_fragment)
         .fold(ast::PatternExpr::default, |mut expr, fragment| {
             push_pattern_fragment(&mut expr, fragment);
@@ -83,7 +83,7 @@ pub fn pattern_expr_inside_quotes<'a>(input: &mut Input<'a>) -> PResult<ast::Pat
 
 /// Parse the inside of a pattern expr (i.e. without surrounding quotes). This
 /// is used for deserialization and testing.
-pub fn parse_pattern_expr_unquoted(pattern: &str) -> Result<ast::PatternExpr<'_>, Error> {
+pub fn parse_pattern_expr_unquoted(pattern: &str) -> Result<ast::PatternExpr, Error> {
     pattern_expr_inside_quotes
         .parse(Input::new(pattern))
         .map_err(winnow::error::ParseError::into_inner)
@@ -91,7 +91,7 @@ pub fn parse_pattern_expr_unquoted(pattern: &str) -> Result<ast::PatternExpr<'_>
 
 /// Parse the inside of a string expr (i.e. without surrounding quotes). This
 /// is used for deserialization and testing.
-pub fn parse_string_expr_unquoted(string: &str) -> Result<ast::StringExpr<'_>, Error> {
+pub fn parse_string_expr_unquoted(string: &str) -> Result<ast::StringExpr, Error> {
     string_expr_inside_quotes
         .parse(Input::new(string))
         .map_err(winnow::error::ParseError::into_inner)
@@ -163,7 +163,7 @@ pub fn escape_special_char(ch: char) -> Option<char> {
 struct Escape<'a, const IS_PATTERN: bool>(pub &'a str);
 impl<const IS_PATTERN: bool> std::fmt::Display for Escape<'_, IS_PATTERN> {
     #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         for ch in self.0.chars() {
             if needs_escape::<IS_PATTERN>(ch) {
                 f.write_char('\\')?;
@@ -199,7 +199,7 @@ fn string_literal_fragment<'a, const IS_PATTERN: bool>(input: &mut Input<'a>) ->
 
 fn escaped_char(input: &mut Input) -> Result<char, ModalErr> {
     let escape_seq_char = winnow::combinator::dispatch! {
-        any::<Input<'_>, ModalErr>;
+        any::<Input, ModalErr>;
         '\\' => empty.value('\\'),
         '{' => empty.value('{'),
         '}' => empty.value('}'),
@@ -242,7 +242,7 @@ fn ident_str<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
         .parse_next(input)
 }
 
-fn ident(input: &mut Input<'_>) -> PResult<Symbol> {
+fn ident(input: &mut Input) -> PResult<Symbol> {
     ident_str.map(Symbol::new).parse_next(input)
 }
 
@@ -251,27 +251,27 @@ enum StringFragment<'a> {
     Literal(&'a str),
     EscapedChar(char),
     EscapedWhitespace,
-    Interpolation(ast::Interpolation<'a>),
+    Interpolation(ast::Interpolation),
     PatternStem,
-    OneOf(Vec<Cow<'a, str>>),
+    OneOf(Vec<String>),
 }
 
-fn push_string_fragment<'a>(expr: &mut ast::StringExpr<'a>, frag: StringFragment<'a>) {
+fn push_string_fragment(expr: &mut ast::StringExpr, frag: StringFragment) {
     match frag {
         StringFragment::Literal(lit) => {
             if let Some(ast::StringFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
-                last.to_mut().push_str(lit);
+                last.push_str(lit);
             } else {
                 expr.fragments
-                    .push(ast::StringFragment::Literal(Cow::Borrowed(lit)));
+                    .push(ast::StringFragment::Literal(lit.to_owned()));
             }
         }
         StringFragment::EscapedChar(ch) => {
             if let Some(ast::StringFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
-                last.to_mut().push(ch);
+                last.push(ch);
             } else {
                 expr.fragments
-                    .push(ast::StringFragment::Literal(Cow::Owned(ch.to_string())));
+                    .push(ast::StringFragment::Literal(ch.to_string()));
             }
         }
         StringFragment::EscapedWhitespace => {}
@@ -284,22 +284,22 @@ fn push_string_fragment<'a>(expr: &mut ast::StringExpr<'a>, frag: StringFragment
     }
 }
 
-fn push_pattern_fragment<'a>(expr: &mut ast::PatternExpr<'a>, frag: StringFragment<'a>) {
+fn push_pattern_fragment(expr: &mut ast::PatternExpr, frag: StringFragment) {
     match frag {
         StringFragment::Literal(lit) => {
             if let Some(ast::PatternFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
-                last.to_mut().push_str(lit);
+                last.push_str(lit);
             } else {
                 expr.fragments
-                    .push(ast::PatternFragment::Literal(Cow::Borrowed(lit)));
+                    .push(ast::PatternFragment::Literal(lit.to_owned()));
             }
         }
         StringFragment::EscapedChar(ch) => {
             if let Some(ast::PatternFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
-                last.to_mut().push(ch);
+                last.push(ch);
             } else {
                 expr.fragments
-                    .push(ast::PatternFragment::Literal(Cow::Owned(ch.to_string())));
+                    .push(ast::PatternFragment::Literal(ch.to_string()));
             }
         }
         StringFragment::EscapedWhitespace => {}
@@ -312,18 +312,18 @@ fn push_pattern_fragment<'a>(expr: &mut ast::PatternExpr<'a>, frag: StringFragme
     }
 }
 
-fn pattern_one_of<'a>(input: &mut Input<'a>) -> PResult<Vec<Cow<'a, str>>> {
+fn pattern_one_of(input: &mut Input) -> PResult<Vec<String>> {
     delimited(
         parse::<token::ParenOpen>.expect(&"start of pattern one-of group"),
         // TODO: Allow more than just identifiers here.
-        separated(1.., cut_err(ident).map(|s| Cow::Borrowed(s.as_str())), '|'),
+        separated(1.., cut_err(ident).map(|s| s.as_str().to_owned()), '|'),
         cut_err(parse::<token::ParenClose>),
     )
     .while_parsing("pattern capture group")
     .parse_next(input)
 }
 
-fn string_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation<'a>> {
+fn string_interpolation(input: &mut Input) -> PResult<ast::Interpolation> {
     delimited(
         parse::<token::BraceOpen>.expect(&"string interpolation block"),
         cut_err(interpolation_inner::<'}'>),
@@ -333,7 +333,7 @@ fn string_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation
     .parse_next(input)
 }
 
-fn path_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation<'a>> {
+fn path_interpolation(input: &mut Input) -> PResult<ast::Interpolation> {
     let mut interp = delimited(
         parse::<token::LessThan>.expect(&"path interpolation block"),
         cut_err(interpolation_inner::<'>'>),
@@ -351,9 +351,7 @@ fn path_interpolation<'a>(input: &mut Input<'a>) -> PResult<ast::Interpolation<'
     Ok(interp)
 }
 
-fn interpolation_inner<'a, const TERMINATE: char>(
-    input: &mut Input<'a>,
-) -> PResult<ast::Interpolation<'a>> {
+fn interpolation_inner<const TERMINATE: char>(input: &mut Input) -> PResult<ast::Interpolation> {
     alt((
         // Interpolation with stem
         interpolation_inner_with_stem::<TERMINATE>,
@@ -371,9 +369,9 @@ fn interpolation_inner<'a, const TERMINATE: char>(
     .parse_next(input)
 }
 
-fn interpolation_inner_with_stem<'a, const TERMINATE: char>(
-    input: &mut Input<'a>,
-) -> PResult<ast::Interpolation<'a>> {
+fn interpolation_inner_with_stem<const TERMINATE: char>(
+    input: &mut Input,
+) -> PResult<ast::Interpolation> {
     (
         interpolation_stem.expect(&"interpolation stem"),
         alt((
@@ -401,9 +399,7 @@ fn interpolation_stem(input: &mut Input) -> PResult<ast::InterpolationStem> {
     .parse_next(input)
 }
 
-fn interpolation_options<'a>(
-    input: &mut Input<'a>,
-) -> PResult<Option<ast::InterpolationOptions<'a>>> {
+fn interpolation_options(input: &mut Input) -> PResult<Option<ast::InterpolationOptions>> {
     let join = opt(interpolation_join).parse_next(input)?;
     let ops = if join.is_some() {
         opt(interpolation_ops).parse_next(input)?
@@ -423,19 +419,19 @@ fn interpolation_options<'a>(
     })
 }
 
-fn interpolation_join<'a>(input: &mut Input<'a>) -> PResult<Cow<'a, str>> {
+fn interpolation_join(input: &mut Input) -> PResult<String> {
     const VALID_JOIN_SEPARATORS: &[char] = &['+', ',', '.', '|', '/', '\\', ':', ';', ' '];
     let sep: String = terminated(repeat(0.., one_of(VALID_JOIN_SEPARATORS)), '*')
         .expect(&"join separator")
         .parse_next(input)?;
     if sep.is_empty() {
-        return Ok(Cow::Borrowed(" "));
+        return Ok(String::from(" "));
     }
-    Ok(Cow::Owned(sep))
+    Ok(sep)
 }
 
 // At least one interpolation option
-fn interpolation_ops<'a>(input: &mut Input<'a>) -> PResult<Vec<ast::InterpolationOp<'a>>> {
+fn interpolation_ops(input: &mut Input) -> PResult<Vec<ast::InterpolationOp>> {
     preceded(
         ':'.expect(&"interpolation options"),
         separated(0.., interpolation_op, ','),
@@ -443,11 +439,11 @@ fn interpolation_ops<'a>(input: &mut Input<'a>) -> PResult<Vec<ast::Interpolatio
     .parse_next(input)
 }
 
-fn interpolation_op<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationOp<'a>> {
+fn interpolation_op(input: &mut Input) -> PResult<ast::InterpolationOp> {
     alt((
         interpolation_op_replace_ext.map(|(from, to)| ast::InterpolationOp::ReplaceExtension {
-            from: Cow::from(from),
-            to: Cow::from(to),
+            from: from.to_owned(),
+            to: to.to_owned(),
         }),
         interpolation_op_regex_replace.map(ast::InterpolationOp::RegexReplace),
         interpolation_op_kw,
@@ -455,7 +451,7 @@ fn interpolation_op<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationOp<'
     .parse_next(input)
 }
 
-fn interpolation_op_kw<'a>(input: &mut Input<'a>) -> PResult<ast::InterpolationOp<'a>> {
+fn interpolation_op_kw(input: &mut Input) -> PResult<ast::InterpolationOp> {
     let location = input.current_token_start();
     let ident = ident_str.parse_next(input)?;
     match ident {
@@ -478,14 +474,12 @@ fn interpolation_op_replace_ext<'a>(input: &mut Input<'a>) -> PResult<(&'a str, 
         .parse_next(input)
 }
 
-fn interpolation_op_regex_replace<'a>(
-    input: &mut Input<'a>,
-) -> PResult<ast::RegexInterpolationOp<'a>> {
+fn interpolation_op_regex_replace(input: &mut Input) -> PResult<ast::RegexInterpolationOp> {
     winnow::combinator::seq! { ast::RegexInterpolationOp {
         _: "s/",
         regex: cut_err(regex_replace_pattern),
         _: '/',
-        replacer: take_till(0.., ['/']).map(Cow::Borrowed),
+        replacer: take_till(0.., ['/']).map(String::from),
         _: '/'
     }}
     .parse_next(input)
@@ -516,7 +510,8 @@ fn file_extension<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::{parse, span, Span};
+    use crate::parser::parse;
+    use werk_util::{span, Span};
 
     use super::*;
 
@@ -814,7 +809,7 @@ mod tests {
                 stem: ast::InterpolationStem::Implied,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
-                    join: Some(Cow::from(" ")),
+                    join: Some(String::from(" ")),
                 })),
             }
         );
@@ -828,7 +823,7 @@ mod tests {
                 stem: ast::InterpolationStem::Implied,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
-                    join: Some(Cow::from(" ")),
+                    join: Some(String::from(" ")),
                 })),
             }
         );
@@ -842,7 +837,7 @@ mod tests {
                 stem: ast::InterpolationStem::Implied,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
-                    join: Some(Cow::from(",")),
+                    join: Some(String::from(",")),
                 })),
             }
         );
@@ -859,7 +854,7 @@ mod tests {
                 stem: ast::InterpolationStem::Ident("name".into()),
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
-                    join: Some(Cow::from(" ")),
+                    join: Some(String::from(" ")),
                 })),
             }
         );
@@ -873,7 +868,7 @@ mod tests {
                 stem: ast::InterpolationStem::Ident("name".into()),
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
-                    join: Some(Cow::from(" ")),
+                    join: Some(String::from(" ")),
                 })),
             }
         );
@@ -887,7 +882,7 @@ mod tests {
                 stem: ast::InterpolationStem::Ident("name".into()),
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
-                    join: Some(Cow::from(",")),
+                    join: Some(String::from(",")),
                 })),
             }
         );
