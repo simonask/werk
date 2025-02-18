@@ -213,6 +213,11 @@ impl Spanned for ConfigInt {
         self.0
     }
 }
+impl SemanticHash for ConfigInt {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.1.hash(state);
+    }
+}
 
 #[derive(Debug, PartialEq, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]

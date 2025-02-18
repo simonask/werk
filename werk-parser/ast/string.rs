@@ -175,6 +175,7 @@ impl SemanticHash for PatternFragment {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Interpolation {
     pub stem: InterpolationStem,
+    pub index: Option<InterpolationIndex>,
     pub options: Option<Box<InterpolationOptions>>,
 }
 
@@ -224,6 +225,12 @@ impl std::fmt::Display for Interpolation {
             InterpolationStem::PatternCapture => f.write_char('%')?,
             InterpolationStem::CaptureGroup(i) => write!(f, "{i}")?,
             InterpolationStem::Ident(ident) => write!(f, "{ident}")?,
+        }
+
+        match &self.index {
+            Some(InterpolationIndex::Const(i)) => write!(f, "[{i}]")?,
+            Some(InterpolationIndex::Ident(ident)) => write!(f, "[{ident}]")?,
+            None => (),
         }
 
         if let Some(join) = self.join() {
@@ -313,6 +320,23 @@ impl SemanticHash for InterpolationStem {
             InterpolationStem::PatternCapture | InterpolationStem::Implied => (),
             InterpolationStem::CaptureGroup(i) => i.hash(state),
             InterpolationStem::Ident(s) => s.as_str().hash(state),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InterpolationIndex {
+    /// `{ident[index]}` - output is string
+    Const(i32),
+    /// `{ident[ident]}` - output is string
+    Ident(Symbol),
+}
+
+impl SemanticHash for InterpolationIndex {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            InterpolationIndex::Const(i) => i.hash(state),
+            InterpolationIndex::Ident(s) => s.as_str().hash(state),
         }
     }
 }

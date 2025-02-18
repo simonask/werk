@@ -284,6 +284,10 @@ pub enum EvalError {
     UnterminatedQuote(DiagnosticSpan),
     #[error("`{1}` expressions are not allowed in this context")]
     UnexpectedExpressionType(DiagnosticSpan, &'static str),
+    #[error("expected an integer value, got \"{}\"", .1.escape_default())]
+    ExpectedInt(DiagnosticSpan, String),
+    #[error("index out of bounds: got {1}, and the array length is {2}")]
+    IndexOutOfBounds(DiagnosticSpan, i32, usize),
     #[error("command not found: {1}: {2}")]
     CommandNotFound(DiagnosticSpan, String, which::Error),
     #[error("`which` expression resulted in a non-UTF-8 path: {}", .1.display())]
@@ -362,6 +366,8 @@ impl EvalError {
             | EvalError::EmptyList(span)
             | EvalError::UnterminatedQuote(span)
             | EvalError::UnexpectedExpressionType(span, _)
+            | EvalError::ExpectedInt(span, _)
+            | EvalError::IndexOutOfBounds(span, _, _)
             | EvalError::CommandNotFound(span, _, _)
             | EvalError::NonUtf8Which(span, _)
             | EvalError::NonUtf8Read(span, _)
@@ -411,6 +417,8 @@ impl werk_util::AsDiagnostic for EvalError {
             EvalError::EmptyList(..) => "E0018",
             EvalError::UnterminatedQuote(..) => "E0019",
             EvalError::UnexpectedExpressionType(..) => "E0020",
+            EvalError::ExpectedInt(..) => "E0028",
+            EvalError::IndexOutOfBounds(..) => "E0037",
             EvalError::CommandNotFound(..) => "E0021",
             EvalError::NonUtf8Which(..) => "E0022",
             EvalError::NonUtf8Read(..) => "E0023",
@@ -450,6 +458,8 @@ impl werk_util::AsDiagnostic for EvalError {
                 .footer("use `<...:out-dir>` or `<...:workspace>` to disambiguate between paths in the workspace and the output directory"),
             EvalError::DuplicateConfigStatement(_, previous_span) => diag
                 .annotation(previous_span.annotation(Level::Note, "previous config statement here")),
+            EvalError::ExpectedInt(..) => diag.footer("integers are stringly typed in array index operations, so \"0\" is the first element"),
+            EvalError::IndexOutOfBounds(..) => diag.footer("arrays are indexed from zero, and negative indices refer to elements from the end of the array"),
             EvalError::IncludeDuplicate(_, Some(previous_span), _) => diag.annotation(previous_span.annotation(Level::Note, "already included here")),
             EvalError::DefaultInInclude(_) => diag.footer("move `default` statements to the top-level Werkfile"),
             _ => diag,

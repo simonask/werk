@@ -133,6 +133,7 @@ pub fn eval(
     match expr {
         ast::Expr::SubExpr(expr) => eval_chain(scope, &expr.expr, file),
         ast::Expr::StringExpr(expr) => Ok(eval_string_expr(scope, expr, file)?.map(Value::String)),
+        ast::Expr::Index(expr) => Ok(eval_index_expr(scope, expr, file)?),
         ast::Expr::Shell(expr) => Ok(eval_shell(scope, &expr.param, file)?.map(Value::String)),
         ast::Expr::Read(expr) => Ok(eval_read(scope, &expr.param, file)?.map(Value::String)),
         ast::Expr::Glob(expr) => Ok(eval_glob(scope, expr, file)?.map(Value::List)),
@@ -243,6 +244,28 @@ pub fn eval_op(
         ast::ExprOp::Split(expr) => eval_split(scope, expr, param, file),
         ast::ExprOp::Dedup(_) => Ok(eval_dedup(param)),
         ast::ExprOp::Lines(_) => Ok(eval_split_lines(scope, param)),
+        ast::ExprOp::Len(_) => Ok(param.map(|value| value.len().to_string().into())),
+        ast::ExprOp::First(_) => Ok(param.map(|mut value| {
+            if let Some(first) = value.index_mut(0) {
+                std::mem::take(first)
+            } else {
+                Value::String(StringValue::default())
+            }
+        })),
+        ast::ExprOp::Last(_) => Ok(param.map(|mut value| {
+            if let Some(last) = value.index_mut(-1) {
+                std::mem::take(last)
+            } else {
+                Value::String(StringValue::default())
+            }
+        })),
+        ast::ExprOp::Tail(_) => Ok(param.map(|value| match value {
+            Value::List(mut values) => {
+                values.remove(0);
+                Value::List(values)
+            }
+            Value::String(_) => Value::List(vec![]),
+        })),
         ast::ExprOp::Info(expr) => {
             let scope = SubexprScope::new(scope, &param);
             let message = eval_string_expr(&scope, &expr.param, file)?;
@@ -527,6 +550,44 @@ pub fn eval_string_expr<P: Scope + ?Sized>(
     let mut builder = StringBuilder::new(scope);
     builder.eval(file, expr)?;
     Ok(builder.build())
+}
+
+pub fn eval_index_expr(
+    scope: &dyn Scope,
+    expr: &ast::IndexExpr,
+    file: DiagnosticFileId,
+) -> Result<Eval<Value>, EvalError> {
+    let Eval {
+        mut value,
+        mut used,
+    } = eval(scope, &expr.target, file)?;
+
+    let index = match expr.index {
+        ast::IndexValue::Constant(ref config_int) => config_int.1,
+        ast::IndexValue::Expr(ref index) => {
+            let index_value = eval_chain(scope, index, file)?;
+            used |= index_value.used;
+            if let Value::String(string_value) = index_value.value {
+                string_value.string.parse().map_err(|_| {
+                    EvalError::ExpectedInt(file.span(index.span), string_value.string)
+                })?
+            } else {
+                return Err(EvalError::UnexpectedList(file.span(index.span)));
+            }
+        }
+    };
+
+    let len = value.len();
+    let value = value.index_mut(index).ok_or(EvalError::IndexOutOfBounds(
+        file.span(expr.index.span()),
+        index,
+        len,
+    ))?;
+
+    Ok(Eval {
+        value: std::mem::take(value),
+        used,
+    })
 }
 
 #[expect(clippy::too_many_lines)]

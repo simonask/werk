@@ -1,6 +1,8 @@
 use std::hash::Hash as _;
 
-use super::{keyword, token, Body, BodyStmt, Ident, PatternExpr, StringExpr, Trailing, Whitespace};
+use super::{
+    keyword, token, Body, BodyStmt, ConfigInt, Ident, PatternExpr, StringExpr, Trailing, Whitespace,
+};
 use werk_util::{SemanticHash, Span, Spanned};
 
 /// "Atomic" expression (no pipe chaining).
@@ -17,6 +19,7 @@ pub enum Expr {
     // Look up variable in scope.
     Ident(Ident),
     StringExpr(StringExpr),
+    Index(IndexExpr),
     Shell(ShellExpr),
     Read(ReadExpr),
     Glob(GlobExpr),
@@ -40,6 +43,7 @@ impl Spanned for Expr {
         match self {
             Expr::Ident(ident) => ident.span,
             Expr::StringExpr(string_expr) => string_expr.span,
+            Expr::Index(expr) => expr.span,
             Expr::Shell(expr) => expr.span,
             Expr::Read(expr) => expr.span,
             Expr::Glob(expr) => expr.span,
@@ -57,16 +61,74 @@ impl SemanticHash for Expr {
         std::mem::discriminant(self).hash(state);
         match self {
             Expr::Ident(ident) => ident.semantic_hash(state),
-            Expr::StringExpr(s) => s.semantic_hash(state),
-            Expr::Shell(s) => s.semantic_hash(state),
-            Expr::Read(s) => s.semantic_hash(state),
-            Expr::Glob(s) => s.semantic_hash(state),
-            Expr::Which(s) => s.semantic_hash(state),
-            Expr::Env(s) => s.semantic_hash(state),
-            Expr::List(list) => list.semantic_hash(state),
+            Expr::StringExpr(expr) => expr.semantic_hash(state),
+            Expr::Index(expr) => expr.semantic_hash(state),
+            Expr::Shell(expr) => expr.semantic_hash(state),
+            Expr::Read(expr) => expr.semantic_hash(state),
+            Expr::Glob(expr) => expr.semantic_hash(state),
+            Expr::Which(expr) => expr.semantic_hash(state),
+            Expr::Env(expr) => expr.semantic_hash(state),
+            Expr::List(expr) => expr.semantic_hash(state),
             Expr::SubExpr(expr) => expr.expr.semantic_hash(state),
             // The error message does not contribute to outdatedness.
             Expr::Error(_) => (),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct IndexExpr {
+    #[serde(skip, default)]
+    pub span: Span,
+    pub target: Box<Expr>,
+    #[serde(skip, default)]
+    pub ws_1: Whitespace,
+    #[serde(skip, default)]
+    pub token_open: token::BracketOpen,
+    #[serde(skip, default)]
+    pub ws_2: Whitespace,
+    pub index: IndexValue,
+    #[serde(skip, default)]
+    pub ws_3: Whitespace,
+    #[serde(skip, default)]
+    pub token_close: token::BracketClose,
+}
+
+impl Spanned for IndexExpr {
+    #[inline]
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl SemanticHash for IndexExpr {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.target.semantic_hash(state);
+        self.index.semantic_hash(state);
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum IndexValue {
+    Constant(ConfigInt),
+    Expr(Box<ExprChain>),
+}
+
+impl Spanned for IndexValue {
+    #[inline]
+    fn span(&self) -> Span {
+        match self {
+            IndexValue::Constant(c) => c.span(),
+            IndexValue::Expr(expr) => expr.span,
+        }
+    }
+}
+
+impl SemanticHash for IndexValue {
+    fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            IndexValue::Constant(c) => c.semantic_hash(state),
+            IndexValue::Expr(expr) => expr.semantic_hash(state),
         }
     }
 }
@@ -106,6 +168,10 @@ pub enum ExprOp {
     Join(JoinExpr),
     Split(SplitExpr),
     Lines(LinesExpr),
+    Len(LenExpr),
+    First(FirstExpr),
+    Last(LastExpr),
+    Tail(TailExpr),
     Dedup(DedupExpr),
     Info(InfoExpr),
     Warn(WarnExpr),
@@ -130,6 +196,10 @@ impl Spanned for ExprOp {
             ExprOp::Split(expr) => expr.span,
             ExprOp::Dedup(expr) => expr.span(),
             ExprOp::Lines(expr) => expr.span(),
+            ExprOp::Len(expr) => expr.span(),
+            ExprOp::First(expr) => expr.span(),
+            ExprOp::Last(expr) => expr.span(),
+            ExprOp::Tail(expr) => expr.span(),
             ExprOp::Info(expr) => expr.span,
             ExprOp::Warn(expr) => expr.span,
             ExprOp::Error(expr) => expr.span,
@@ -160,7 +230,7 @@ impl SemanticHash for ExprOp {
             | ExprOp::AssertMatch(_)
             // Covered by the discriminant:
             | ExprOp::Dedup(_) | ExprOp::Flatten(_) | ExprOp::Lines(_)
-            => (),
+            | ExprOp::Len(_) | ExprOp::First(_) | ExprOp::Last(_) | ExprOp::Tail(_) => (),
         }
     }
 }
@@ -375,6 +445,10 @@ pub type FlattenExpr = keyword::Flatten;
 pub type SplitExpr = KwExpr<keyword::Split, PatternExpr>;
 pub type DedupExpr = keyword::Dedup;
 pub type LinesExpr = keyword::Lines;
+pub type LenExpr = keyword::Len;
+pub type FirstExpr = keyword::First;
+pub type LastExpr = keyword::Last;
+pub type TailExpr = keyword::Tail;
 pub type FilterExpr = KwExpr<keyword::Filter, PatternExpr>;
 pub type FilterMatchExpr = KwExpr<keyword::FilterMatch, MatchBody>;
 pub type MatchExpr = KwExpr<keyword::Match, MatchBody>;

@@ -6,6 +6,13 @@ pub enum Value {
     String(StringValue),
 }
 
+impl Default for Value {
+    #[inline]
+    fn default() -> Self {
+        Value::String(StringValue::default())
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct StringValue {
     pub string: String,
@@ -286,6 +293,58 @@ impl From<Vec<Value>> for Value {
 }
 
 impl Value {
+    #[inline]
+    #[must_use]
+    #[expect(clippy::cast_sign_loss)]
+    pub fn index(&self, index: i32) -> Option<&Value> {
+        match (self, index) {
+            (Value::String(_), 0 | -1) => Some(self),
+            (Value::String(_), _) => None,
+            (Value::List(list), index) if index >= 0 => list.get(index as usize),
+            (Value::List(list), index) => {
+                let actual_index = list.len().checked_sub(-index as usize)?;
+                Some(&list[actual_index])
+            }
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    #[expect(clippy::cast_sign_loss)]
+    pub fn index_mut(&mut self, index: i32) -> Option<&mut Value> {
+        match (self, index) {
+            (this @ Value::String(_), 0 | -1) => Some(this),
+            (Value::String(_), _) => None,
+            (Value::List(list), index) => {
+                if index >= 0 {
+                    list.get_mut(index as usize)
+                } else {
+                    list.len()
+                        .checked_sub(-index as usize)
+                        .map(|actual_index| &mut list[actual_index])
+                }
+            }
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Value::List(values) => values.len(),
+            Value::String(_) => 1,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Value::List(values) => values.is_empty(),
+            Value::String(_) => false,
+        }
+    }
+
     pub fn visit<V: FnMut(StringValue)>(self, mut visitor: V) {
         fn visit<V: FnMut(StringValue)>(this: Value, visitor: &mut V) {
             match this {

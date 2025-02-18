@@ -521,7 +521,29 @@ fn eval_string_interpolation<P: Scope + ?Sized>(
         }
     }
 
-    let (s, flags) = find_first_string(&value);
+    let value = if let Some(ref index) = interp.index {
+        let index = match index {
+            ast::InterpolationIndex::Const(index) => *index,
+            ast::InterpolationIndex::Ident(ident) => {
+                let lookup = scope
+                    .get(Lookup::Ident(*ident))
+                    .ok_or(EvalError::NoSuchIdentifier(span, ident.to_string()))?;
+                *used |= lookup.used();
+                let (index_string, _) = find_first_string(&lookup);
+                index_string
+                    .parse()
+                    .map_err(|_| EvalError::ExpectedInt(span, index_string.to_owned()))?
+            }
+        };
+
+        value
+            .index(index)
+            .ok_or(EvalError::IndexOutOfBounds(span, index, value.len()))?
+    } else {
+        &value
+    };
+
+    let (s, flags) = find_first_string(value);
     buf.push_str(s);
 
     if flags.contains(StringFlags::CONTAINS_PATHS) && resolve_mode == ResolvePathMode::Illegal {

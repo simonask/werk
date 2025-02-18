@@ -1,0 +1,7 @@
+error[E0037]: index out of bounds: got 3, and the array length is 3
+ --> /INPUT:2:11
+  |
+2 | let d = a[3]
+  |           ^ index out of bounds: got 3, and the array length is 3
+  |
+  = help: arrays are indexed from zero, and negative indices refer to elements from the end of the array
