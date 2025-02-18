@@ -1,9 +1,9 @@
-use werk_parser::parser::Span;
+use werk_util::DiagnosticSpan;
 
 #[derive(Debug, Clone)]
 pub struct Pattern {
     /// The source span for the pattern.
-    pub span: Span,
+    pub span: DiagnosticSpan,
     /// The canonical string representation of the pattern in Werk syntax.
     pub string: String,
     pub(crate) matcher: PatternMatcher,

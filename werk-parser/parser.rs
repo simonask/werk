@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use werk_util::AsDiagnostic as _;
+use werk_util::{AsDiagnostic as _, DiagnosticFileId, DiagnosticSourceMap, Offset, Span, Spanned};
 use winnow::{
     ascii::{line_ending, till_line_ending},
     combinator::{alt, cut_err, delimited, empty, eof, opt, peek, preceded, repeat, seq},
@@ -15,10 +15,8 @@ use crate::{
     fatal, ErrContext, Error, Failure, ModalErr,
 };
 
-mod span;
 mod string;
 
-pub use span::*;
 pub use string::*;
 
 pub type Input<'a> = winnow::stream::LocatingSlice<&'a str>;
@@ -81,41 +79,37 @@ impl<'a, P, O> Parser<'a, O> for P where P: winnow::Parser<Input<'a>, O, ModalEr
 /// including comments and whitespace, which means that any syntactical
 /// difference must also be captured in the AST, which implies that there is, in
 /// fact, a single rule per AST node.
-pub trait Parse<'a>: Sized {
-    fn parse(input: &mut Input<'a>) -> PResult<Self>;
+pub trait Parse: Sized {
+    fn parse(input: &mut Input) -> PResult<Self>;
 }
 
-impl<'a, T: Parse<'a>> Parse<'a> for Box<T> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl<T: Parse> Parse for Box<T> {
+    fn parse(input: &mut Input) -> PResult<Self> {
         T::parse(input).map(Box::new)
     }
 }
 
-pub fn parse<'a, T: Parse<'a>>(input: &mut Input<'a>) -> Result<T, ModalErr> {
+pub fn parse<T: Parse>(input: &mut Input) -> Result<T, ModalErr> {
     T::parse(input)
 }
 
-pub fn parse_werk<'a>(
-    origin: &'a std::path::Path,
-    source_code: &'a str,
-) -> Result<crate::Document<'a>, crate::Error> {
-    let root = root
-        .parse(Input::new(source_code))
-        .map_err(winnow::error::ParseError::into_inner)?;
-    Ok(crate::Document::new(root, origin, source_code, None))
+pub fn parse_werk(source_code: &str) -> Result<ast::Root, Error> {
+    root.parse(Input::new(source_code))
+        .map_err(winnow::error::ParseError::into_inner)
 }
 
-pub fn parse_werk_with_diagnostics<'a>(
-    origin: &'a std::path::Path,
-    source_code: &'a str,
-) -> Result<crate::Document<'a>, werk_util::Annotated<crate::Error, werk_util::DiagnosticSource<'a>>>
-{
-    parse_werk(origin, source_code).map_err(|err| {
-        err.into_diagnostic_error(werk_util::DiagnosticSource::new(origin, source_code))
-    })
+pub fn parse_werk_with_diagnostics<S: DiagnosticSourceMap + ?Sized>(
+    file_id: DiagnosticFileId,
+    source_map: &S,
+) -> Result<ast::Root, werk_util::Annotated<crate::ErrorInFile<Error>, &S>> {
+    let source = source_map
+        .get_source(file_id)
+        .expect("file ID not found in source map");
+    parse_werk(source.source)
+        .map_err(|err| err.with_file(file_id).into_diagnostic_error(source_map))
 }
 
-fn root<'a>(input: &mut Input<'a>) -> PResult<ast::Root<'a>> {
+fn root(input: &mut Input) -> PResult<ast::Root> {
     let ((), statements, decor_trailing, _) =
         statements_delimited(empty, parse, peek(eof)).parse_next(input)?;
     Ok(ast::Root {
@@ -171,8 +165,10 @@ where
             }
 
             if !has_separator {
-                return Err(ModalErr::Error(Error::new(Offset(input.previous_token_end() as u32),
-                    Failure::Expected(&"semicolon or newline before next statement"))));
+                return Err(ModalErr::Error(Error::new(
+                    Offset(input.previous_token_end() as u32),
+                    Failure::Expected(&"semicolon or newline before next statement"),
+                )));
             }
 
             let item = parse_next.parse_next(input)?;
@@ -184,7 +180,10 @@ where
 
             if let Some((semicolon, whitespace_after_semicolon)) = semicolon_and_whitespace {
                 // All whitespace before the semicolon is trailing for the item we just found.
-                trailing = ast::Trailing { ws: whitespace_before_semicolon.into_whitespace(), token: Some(semicolon) };
+                trailing = ast::Trailing {
+                    ws: whitespace_before_semicolon.into_whitespace(),
+                    token: Some(semicolon),
+                };
                 // Whitespace after the semicolon is the comment for the next item.
                 last_decor = whitespace_after_semicolon;
                 // Semicolon is a separator.
@@ -192,7 +191,10 @@ where
             } else {
                 trailing = ast::Trailing {
                     // Attribute the whitespace to the next item.
-                    ws: ast::Whitespace(Span::from_offset_and_len(whitespace_before_semicolon.span.start, 0)),
+                    ws: ast::Whitespace(Span::from_offset_and_len(
+                        whitespace_before_semicolon.span.start,
+                        0,
+                    )),
                     token: None,
                 };
                 has_separator = whitespace_before_semicolon.is_statement_separator();
@@ -210,8 +212,8 @@ where
     }
 }
 
-impl<'a, T: Parse<'a>> Parse<'a> for ast::Body<T> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl<T: Parse> Parse for ast::Body<T> {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (token_open, statements, decor_trailing, token_close) =
             statements_delimited(parse, parse, parse).parse_next(input)?;
 
@@ -224,14 +226,15 @@ impl<'a, T: Parse<'a>> Parse<'a> for ast::Body<T> {
     }
 }
 
-impl<'a> Parse<'a> for ast::RootStmt<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::RootStmt {
+    fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             parse.map(ast::RootStmt::Default),
             parse.map(ast::RootStmt::Config),
             parse.map(ast::RootStmt::Let),
             parse.map(ast::RootStmt::Task),
             parse.map(ast::RootStmt::Build),
+            parse.map(ast::RootStmt::Include),
             fatal(Failure::Expected(&"statement"))
                 .help("one of `default`, `let`, `task`, or `build`"),
         ))
@@ -239,13 +242,13 @@ impl<'a> Parse<'a> for ast::RootStmt<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::DefaultStmt<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
-        fn entry<'a, K: Parse<'a>, V: Parse<'a>>(
+impl Parse for ast::DefaultStmt {
+    fn parse(input: &mut Input) -> PResult<Self> {
+        fn entry<'a, K: Parse, V: Parse>(
             token: keyword::Default,
             ws_1: ast::Whitespace,
         ) -> impl Parser<'a, ast::DefaultStmtEntry<K, V>> {
-            move |input: &mut Input<'a>| {
+            move |input: &mut Input| {
                 let (mut stmt, span) = seq! { ast::DefaultStmtEntry {
                     span: default,
                     token: default,
@@ -284,8 +287,8 @@ impl<'a> Parse<'a> for ast::DefaultStmt<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::ConfigBool {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::ConfigBool {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (value, span) = alt((
             parse::<keyword::True>.value(true),
             parse::<keyword::False>.value(false),
@@ -296,15 +299,15 @@ impl<'a> Parse<'a> for ast::ConfigBool {
     }
 }
 
-impl<'a> Parse<'a> for ast::ConfigString<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::ConfigString {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (value, span) = escaped_string.with_token_span().parse_next(input)?;
         Ok(ast::ConfigString(span, value.into()))
     }
 }
 
-impl<'a> Parse<'a> for ast::ConfigInt {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::ConfigInt {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (value, span) = winnow::ascii::dec_int
             .expect(&"integer")
             .with_token_span()
@@ -313,8 +316,8 @@ impl<'a> Parse<'a> for ast::ConfigInt {
     }
 }
 
-impl<'a> Parse<'a> for ast::ConfigValue<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::ConfigValue {
+    fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             parse.map(ast::ConfigValue::Bool),
             escaped_string.with_token_span().map(|(string, span)| {
@@ -326,8 +329,8 @@ impl<'a> Parse<'a> for ast::ConfigValue<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::TaskRecipeStmt<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::TaskRecipeStmt {
+    fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             parse.map(ast::TaskRecipeStmt::Let),
             parse.map(ast::TaskRecipeStmt::Build),
@@ -346,8 +349,8 @@ impl<'a> Parse<'a> for ast::TaskRecipeStmt<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::TaskRecipe<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::TaskRecipe {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (mut recipe, span) = seq! { ast::TaskRecipe {
             span: default,
             token_task: parse,
@@ -366,8 +369,8 @@ impl<'a> Parse<'a> for ast::TaskRecipe<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::BuildRecipeStmt<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::BuildRecipeStmt {
+    fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             parse.map(ast::BuildRecipeStmt::From),
             parse.map(ast::BuildRecipeStmt::Let),
@@ -387,8 +390,8 @@ impl<'a> Parse<'a> for ast::BuildRecipeStmt<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::BuildRecipe<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::BuildRecipe {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (mut recipe, span) = seq! { ast::BuildRecipe {
             span: default,
             token_build: parse,
@@ -407,8 +410,8 @@ impl<'a> Parse<'a> for ast::BuildRecipe<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::LetStmt<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::LetStmt {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (mut stmt, span) = seq! { ast::LetStmt {
             span: default,
             token_let: parse,
@@ -427,8 +430,8 @@ impl<'a> Parse<'a> for ast::LetStmt<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::ConfigStmt<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::ConfigStmt {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (mut stmt, span) = seq! { ast::ConfigStmt {
             span: default,
             token_config: parse,
@@ -447,14 +450,14 @@ impl<'a> Parse<'a> for ast::ConfigStmt<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::EnvStmt<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::EnvStmt {
+    fn parse(input: &mut Input) -> PResult<Self> {
         env_stmt(input)
     }
 }
 
-fn env_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::EnvStmt<'a>> {
-    fn env_stmt_inner<'a>(input: &mut Input<'a>) -> PResult<ast::EnvStmt<'a>> {
+fn env_stmt(input: &mut Input) -> PResult<ast::EnvStmt> {
+    fn env_stmt_inner(input: &mut Input) -> PResult<ast::EnvStmt> {
         let (token, ws_1, key, ws_2, token_eq, ws_3, value) = seq! {(
             parse,
             cut_err(whitespace_nonempty).expect(&"whitespace after `env`"),
@@ -486,16 +489,16 @@ fn env_stmt<'a>(input: &mut Input<'a>) -> PResult<ast::EnvStmt<'a>> {
     Ok(stmt)
 }
 
-impl<'a, T, Param> Parse<'a> for ast::KwExpr<T, Param>
+impl<T, Param> Parse for ast::KwExpr<T, Param>
 where
-    T: keyword::Keyword + Parse<'a>,
-    Param: Parse<'a>,
+    T: keyword::Keyword + Parse,
+    Param: Parse,
 {
     /// `<keyword> <param>`
     ///
     /// If the keyword is successfully parsed, parse the param with `cut_err(...)`,
     /// so no backtracking.
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (mut expr, span) = seq! { ast::KwExpr {
             span: default,
             token: parse,
@@ -510,8 +513,8 @@ where
     }
 }
 
-impl<'a> Parse<'a> for ast::Expr<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::Expr {
+    fn parse(input: &mut Input) -> PResult<Self> {
         alt((
             parse.map(ast::Expr::StringExpr),
             parse.map(ast::Expr::List),
@@ -530,9 +533,9 @@ impl<'a> Parse<'a> for ast::Expr<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::ChainSubExpr<'a> {
+impl Parse for ast::ChainSubExpr {
     // "|" expression_tail
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (mut subexpr, span) = seq! { ast::ChainSubExpr {
             span: default,
             ws_1: whitespace,
@@ -547,8 +550,8 @@ impl<'a> Parse<'a> for ast::ChainSubExpr<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::ExprChain<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::ExprChain {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let atom = ast::Expr::parse(input)?;
 
         let (tail, tail_span): (Vec<_>, _) = repeat(0.., parse::<ast::ChainSubExpr>)
@@ -563,8 +566,8 @@ impl<'a> Parse<'a> for ast::ExprChain<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::SubExpr<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::SubExpr {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (mut expr, span) = seq! { ast::SubExpr {
             span: default,
             token_open: parse,
@@ -581,7 +584,7 @@ impl<'a> Parse<'a> for ast::SubExpr<'a> {
 }
 
 /// Expression after a `|` in an expression chain.
-fn expression_chain_op<'a>(input: &mut Input<'a>) -> PResult<ast::ExprOp<'a>> {
+fn expression_chain_op(input: &mut Input) -> PResult<ast::ExprOp> {
     alt((
         parse.map(ast::ExprOp::SubExpr),
         parse.map(ast::ExprOp::StringExpr),
@@ -606,10 +609,10 @@ fn expression_chain_op<'a>(input: &mut Input<'a>) -> PResult<ast::ExprOp<'a>> {
     .parse_next(input)
 }
 
-impl<'a> Parse<'a> for ast::RunExpr<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::RunExpr {
+    fn parse(input: &mut Input) -> PResult<Self> {
         alt((
-            parse.map(|string: ast::StringExpr<'_>| {
+            parse.map(|string: ast::StringExpr| {
                 ast::RunExpr::Shell(ast::ShellExpr {
                     span: string.span,
                     token: keyword::Keyword::with_span(string.span),
@@ -634,8 +637,8 @@ impl<'a> Parse<'a> for ast::RunExpr<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::WriteExpr<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::WriteExpr {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (mut expr, span) = seq! {ast::WriteExpr {
             span: default,
             token_write: parse,
@@ -653,8 +656,8 @@ impl<'a> Parse<'a> for ast::WriteExpr<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::CopyExpr<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::CopyExpr {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let (mut expr, span) = seq! {ast::CopyExpr {
             span: default,
             token_copy: parse,
@@ -672,11 +675,11 @@ impl<'a> Parse<'a> for ast::CopyExpr<'a> {
     }
 }
 
-impl<'a> Parse<'a> for ast::MatchBody<'a> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
-        struct MatchArmBraced<'a>(ast::MatchArm<'a>);
-        impl<'a> Parse<'a> for MatchArmBraced<'a> {
-            fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::MatchBody {
+    fn parse(input: &mut Input) -> PResult<Self> {
+        struct MatchArmBraced(ast::MatchArm);
+        impl Parse for MatchArmBraced {
+            fn parse(input: &mut Input) -> PResult<Self> {
                 let (mut arm, span) = seq! {ast::MatchArm {
             span: default,
             pattern: cut_err(parse).help("`match` arm must start with a pattern"),
@@ -693,9 +696,9 @@ impl<'a> Parse<'a> for ast::MatchBody<'a> {
         }
 
         #[allow(dead_code)] // False positive!
-        struct MatchArmSingle<'a>(ast::MatchArm<'a>);
-        impl<'a> Parse<'a> for MatchArmSingle<'a> {
-            fn parse(input: &mut Input<'a>) -> PResult<MatchArmSingle<'a>> {
+        struct MatchArmSingle(ast::MatchArm);
+        impl Parse for MatchArmSingle {
+            fn parse(input: &mut Input) -> PResult<MatchArmSingle> {
                 let (mut arm, span) = seq! {ast::MatchArm {
             span: default,
             pattern: cut_err(parse).help("`match` must be followed by a `{...}` block, or a single pattern"),
@@ -741,8 +744,8 @@ impl<'a> Parse<'a> for ast::MatchBody<'a> {
     }
 }
 
-impl<'a, T: Parse<'a>> Parse<'a> for ast::ListExpr<T> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl<T: Parse> Parse for ast::ListExpr<T> {
+    fn parse(input: &mut Input) -> PResult<Self> {
         let token_open = parse::<token::BracketOpen>.parse_next(input)?;
         let mut accum = Vec::new();
 
@@ -809,8 +812,8 @@ impl<'a, T: Parse<'a>> Parse<'a> for ast::ListExpr<T> {
     }
 }
 
-impl<'a> Parse<'a> for ast::Ident {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl Parse for ast::Ident {
+    fn parse(input: &mut Input) -> PResult<Self> {
         fn identifier_chars<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
             const KEYWORDS: &[&str] = &["let"];
 
@@ -839,7 +842,7 @@ impl<'a> Parse<'a> for ast::Ident {
 }
 
 fn escaped_string<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
-    fn escaped_string_char(input: &mut Input<'_>) -> PResult<()> {
+    fn escaped_string_char(input: &mut Input) -> PResult<()> {
         alt((none_of(['\\', '\"']).value(()), ('\\', any).value(()))).parse_next(input)
     }
 
@@ -1035,8 +1038,9 @@ mod tests {
             keyword::{self, Keyword as _},
             trailing_ignore, ws, ws_ignore,
         },
-        parser::{parse, span, Offset, ParsedWhitespace},
+        parser::{parse, Offset, ParsedWhitespace},
     };
+    use werk_util::span;
     use winnow::Parser as _;
 
     #[test]

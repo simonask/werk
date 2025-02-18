@@ -1,22 +1,24 @@
 use tests::mock_io::*;
 use werk_parser::parser::{pattern_expr_inside_quotes, Input};
-use werk_runner::{Pattern, PatternMatchData, RootScope};
+use werk_runner::{Pattern, PatternMatchData, Workspace};
+use werk_util::DiagnosticFileId;
 
-fn parse_and_compile_pattern(scope: &RootScope, pattern: &str) -> Pattern {
+fn parse_and_compile_pattern(workspace: &Workspace, pattern: &str) -> Pattern {
     let expr = pattern_expr_inside_quotes(&mut Input::new(pattern)).unwrap();
-    werk_runner::eval::eval_pattern(scope, &expr).unwrap().value
+    werk_runner::eval::eval_pattern(workspace, &expr, DiagnosticFileId(0))
+        .unwrap()
+        .value
 }
 
 #[test]
 fn test_pattern_match() -> anyhow::Result<()> {
-    let test = Test::new("").unwrap();
-    let workspace = test.create_workspace(&[]).unwrap();
-    let scope = RootScope::new(&workspace);
+    let mut test = Test::new("").unwrap();
+    let workspace = test.create_workspace().unwrap();
 
-    let empty = parse_and_compile_pattern(&scope, "");
-    let all = parse_and_compile_pattern(&scope, "%");
-    let specific = parse_and_compile_pattern(&scope, "foo");
-    let c_ext = parse_and_compile_pattern(&scope, "%.c");
+    let empty = parse_and_compile_pattern(workspace, "");
+    let all = parse_and_compile_pattern(workspace, "%");
+    let specific = parse_and_compile_pattern(workspace, "foo");
+    let c_ext = parse_and_compile_pattern(workspace, "%.c");
 
     assert_eq!(
         empty.match_whole_string(""),
@@ -53,11 +55,10 @@ fn test_pattern_match() -> anyhow::Result<()> {
 
 #[test]
 fn test_capture_groups() -> anyhow::Result<()> {
-    let test = Test::new("").unwrap();
-    let workspace = test.create_workspace(&[]).unwrap();
-    let scope = RootScope::new(&workspace);
+    let mut test = Test::new("").unwrap();
+    let workspace = test.create_workspace().unwrap();
 
-    let abc = parse_and_compile_pattern(&scope, "(a|b|c)");
+    let abc = parse_and_compile_pattern(workspace, "(a|b|c)");
 
     assert_eq!(
         abc.match_whole_string("a"),
@@ -72,7 +73,7 @@ fn test_capture_groups() -> anyhow::Result<()> {
         Some(PatternMatchData::new(None::<&str>, [String::from("c")]))
     );
 
-    let stem_abc = parse_and_compile_pattern(&scope, "%(a|b|c)");
+    let stem_abc = parse_and_compile_pattern(workspace, "%(a|b|c)");
     assert_eq!(
         stem_abc.match_whole_string("aaa"),
         Some(PatternMatchData::new(Some("aa"), [String::from("a")]))
@@ -87,7 +88,7 @@ fn test_capture_groups() -> anyhow::Result<()> {
     );
     assert_eq!(stem_abc.match_whole_string("bbd"), None);
 
-    let abc_stem = parse_and_compile_pattern(&scope, "(a|b|c)%");
+    let abc_stem = parse_and_compile_pattern(workspace, "(a|b|c)%");
     assert_eq!(
         abc_stem.match_whole_string("aaa"),
         Some(PatternMatchData::new(Some("aa"), [String::from("a")]))

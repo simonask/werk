@@ -33,11 +33,12 @@ macro_rules! error_case {
 
             let input = std::fs::read_to_string(input_path).unwrap();
             let expected = std::fs::read_to_string(expected_path).unwrap();
-            let Err(err) = parse_werk(std::path::Path::new(input_path), &input) else {
+            let Err(err) = parse_werk(&input) else {
                 panic!("expected error, got Ok")
             };
 
             let rendered = err
+                .with_file(werk_util::DiagnosticFileId::default())
                 .into_diagnostic_error(DiagnosticSource::new(std::path::Path::new("INPUT"), &input))
                 .to_string();
 
@@ -73,10 +74,11 @@ macro_rules! success_case {
 
             let input = std::fs::read_to_string(input_path).unwrap();
             let expected_json = std::fs::read_to_string(expected_path).unwrap();
-            let input = match parse_werk(std::path::Path::new(input_path), &input) {
+            let input = match parse_werk(&input) {
                 Ok(input) => input,
                 Err(err) => {
                     let rendered = err
+                        .with_file(werk_util::DiagnosticFileId::default())
                         .into_diagnostic_error(DiagnosticSource::new(
                             std::path::Path::new("INPUT"),
                             &input,
@@ -89,8 +91,8 @@ macro_rules! success_case {
 
             let expected_ast = serde_json::from_str::<ast::Root>(&expected_json).unwrap();
 
-            if input.root != expected_ast {
-                let input_json = serde_json::to_string(&input.root).unwrap();
+            if input != expected_ast {
+                let input_json = serde_json::to_string(&input).unwrap();
                 eprintln!("AST mismatch!");
                 // eprintln!("Expected:\n{:?}", expected_ast);
                 // eprintln!("Got:\n{:?}\n", input.root);

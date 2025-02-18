@@ -1,10 +1,6 @@
-use std::{borrow::Cow, hash::Hash as _};
+use std::hash::Hash as _;
 
-use crate::{
-    hash_is_semantic,
-    parser::{Span, Spanned},
-    SemanticHash,
-};
+use werk_util::{hash_is_semantic, SemanticHash, Span, Spanned};
 
 mod expr;
 pub mod keyword;
@@ -56,7 +52,7 @@ impl<const CHAR: char> PartialEq for Trailing<token::Token<CHAR>> {
 
 #[inline]
 pub fn ws(span: std::ops::Range<u32>) -> Whitespace {
-    Whitespace(crate::parser::span(span))
+    Whitespace(werk_util::span(span))
 }
 
 #[inline]
@@ -85,14 +81,14 @@ pub const fn trailing_ignore<const CHAR: char>() -> Trailing<token::Token<CHAR>>
 
 #[derive(Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
-pub struct Root<'a> {
-    pub statements: Vec<BodyStmt<RootStmt<'a>>>,
+pub struct Root {
+    pub statements: Vec<BodyStmt<RootStmt>>,
     /// Comment at the end of the document, not associated with any item.
     #[serde(skip, default)]
     pub ws_trailing: Whitespace,
 }
 
-impl Root<'_> {
+impl Root {
     #[must_use]
     pub fn find_global(&self, name: &str) -> Option<&LetStmt> {
         self.statements.iter().find_map(|stmt| match stmt {
@@ -117,18 +113,21 @@ impl Root<'_> {
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum RootStmt<'a> {
-    Default(DefaultStmt<'a>),
-    Config(ConfigStmt<'a>),
-    Let(LetStmt<'a>),
-    Task(TaskRecipe<'a>),
-    Build(BuildRecipe<'a>),
+pub enum RootStmt {
+    Default(DefaultStmt),
+    Config(ConfigStmt),
+    Let(LetStmt),
+    Task(TaskRecipe),
+    Build(BuildRecipe),
+    Include(IncludeStmt),
 }
 
+pub type IncludeStmt = KwExpr<keyword::Include, ExprChain>;
+
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum DefaultStmt<'a> {
-    Target(DefaultStmtEntry<keyword::Target, StringExpr<'a>>),
-    OutDir(DefaultStmtEntry<keyword::OutDir, ConfigString<'a>>),
+pub enum DefaultStmt {
+    Target(DefaultStmtEntry<keyword::Target, StringExpr>),
+    OutDir(DefaultStmtEntry<keyword::OutDir, ConfigString>),
     PrintCommands(DefaultStmtEntry<keyword::PrintCommands, ConfigBool>),
     PrintFresh(DefaultStmtEntry<keyword::PrintFresh, ConfigBool>),
     Quiet(DefaultStmtEntry<keyword::Quiet, ConfigBool>),
@@ -137,7 +136,26 @@ pub enum DefaultStmt<'a> {
     Verbose(DefaultStmtEntry<keyword::Verbose, ConfigBool>),
     WatchDelay(DefaultStmtEntry<keyword::WatchDelay, ConfigInt>),
     Jobs(DefaultStmtEntry<keyword::Jobs, ConfigInt>),
-    Edition(DefaultStmtEntry<keyword::Edition, ConfigString<'a>>),
+    Edition(DefaultStmtEntry<keyword::Edition, ConfigString>),
+}
+
+impl Spanned for DefaultStmt {
+    #[inline]
+    fn span(&self) -> Span {
+        match self {
+            DefaultStmt::Target(stmt) => stmt.span,
+            DefaultStmt::OutDir(stmt) => stmt.span,
+            DefaultStmt::PrintCommands(stmt) => stmt.span,
+            DefaultStmt::PrintFresh(stmt) => stmt.span,
+            DefaultStmt::Quiet(stmt) => stmt.span,
+            DefaultStmt::Loud(stmt) => stmt.span,
+            DefaultStmt::Explain(stmt) => stmt.span,
+            DefaultStmt::Verbose(stmt) => stmt.span,
+            DefaultStmt::WatchDelay(stmt) => stmt.span,
+            DefaultStmt::Jobs(stmt) => stmt.span,
+            DefaultStmt::Edition(stmt) => stmt.span,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -162,12 +180,12 @@ pub struct DefaultStmtEntry<K, V> {
 
 #[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(untagged)]
-pub enum ConfigValue<'a> {
-    String(ConfigString<'a>),
+pub enum ConfigValue {
+    String(ConfigString),
     Bool(ConfigBool),
 }
 
-impl Spanned for ConfigValue<'_> {
+impl Spanned for ConfigValue {
     fn span(&self) -> Span {
         match self {
             ConfigValue::String(s) => s.0,
@@ -178,8 +196,8 @@ impl Spanned for ConfigValue<'_> {
 
 #[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
-pub struct ConfigString<'a>(#[serde(skip, default)] pub Span, pub Cow<'a, str>);
-impl Spanned for ConfigString<'_> {
+pub struct ConfigString(#[serde(skip, default)] pub Span, pub String);
+impl Spanned for ConfigString {
     #[inline]
     fn span(&self) -> Span {
         self.0
@@ -272,7 +290,7 @@ pub enum MessageType {
 hash_is_semantic!(MessageType);
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct TaskRecipe<'a> {
+pub struct TaskRecipe {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
@@ -282,10 +300,10 @@ pub struct TaskRecipe<'a> {
     pub name: Ident,
     #[serde(skip, default)]
     pub ws_2: Whitespace,
-    pub body: Body<TaskRecipeStmt<'a>>,
+    pub body: Body<TaskRecipeStmt>,
 }
 
-impl SemanticHash for TaskRecipe<'_> {
+impl SemanticHash for TaskRecipe {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.name.semantic_hash(state);
         self.body.semantic_hash(state);
@@ -293,21 +311,21 @@ impl SemanticHash for TaskRecipe<'_> {
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct BuildRecipe<'a> {
+pub struct BuildRecipe {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
     pub token_build: keyword::Build,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
-    pub pattern: PatternExpr<'a>,
+    pub pattern: PatternExpr,
     /// Comment between the pattern and the opening brace.
     #[serde(skip, default)]
     pub ws_2: Whitespace,
-    pub body: Body<BuildRecipeStmt<'a>>,
+    pub body: Body<BuildRecipeStmt>,
 }
 
-impl SemanticHash for BuildRecipe<'_> {
+impl SemanticHash for BuildRecipe {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.pattern.semantic_hash(state);
         self.body.semantic_hash(state);
@@ -357,20 +375,20 @@ impl<T: SemanticHash> SemanticHash for BodyStmt<T> {
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum BuildRecipeStmt<'a> {
-    Let(LetStmt<'a>),
-    From(FromStmt<'a>),
-    Depfile(DepfileStmt<'a>),
-    Run(RunStmt<'a>),
-    Info(InfoExpr<'a>),
-    Warn(WarnExpr<'a>),
+pub enum BuildRecipeStmt {
+    Let(LetStmt),
+    From(FromStmt),
+    Depfile(DepfileStmt),
+    Run(RunStmt),
+    Info(InfoExpr),
+    Warn(WarnExpr),
     SetCapture(KwExpr<keyword::SetCapture, ConfigBool>),
     SetNoCapture(KwExpr<keyword::SetNoCapture, ConfigBool>),
-    Env(EnvStmt<'a>),
-    EnvRemove(EnvRemoveStmt<'a>),
+    Env(EnvStmt),
+    EnvRemove(EnvRemoveStmt),
 }
 
-impl SemanticHash for BuildRecipeStmt<'_> {
+impl SemanticHash for BuildRecipeStmt {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
@@ -390,19 +408,19 @@ impl SemanticHash for BuildRecipeStmt<'_> {
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum TaskRecipeStmt<'a> {
-    Let(LetStmt<'a>),
-    Build(BuildStmt<'a>),
-    Run(RunStmt<'a>),
-    Info(InfoExpr<'a>),
-    Warn(WarnExpr<'a>),
+pub enum TaskRecipeStmt {
+    Let(LetStmt),
+    Build(BuildStmt),
+    Run(RunStmt),
+    Info(InfoExpr),
+    Warn(WarnExpr),
     SetCapture(KwExpr<keyword::SetCapture, ConfigBool>),
     SetNoCapture(KwExpr<keyword::SetNoCapture, ConfigBool>),
-    Env(EnvStmt<'a>),
-    EnvRemove(EnvRemoveStmt<'a>),
+    Env(EnvStmt),
+    EnvRemove(EnvRemoveStmt),
 }
 
-impl SemanticHash for TaskRecipeStmt<'_> {
+impl SemanticHash for TaskRecipeStmt {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
@@ -421,7 +439,7 @@ impl SemanticHash for TaskRecipeStmt<'_> {
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct LetStmt<'a> {
+pub struct LetStmt {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
@@ -436,10 +454,10 @@ pub struct LetStmt<'a> {
     #[serde(skip, default)]
     pub ws_3: Whitespace,
     #[serde(flatten)]
-    pub value: ExprChain<'a>,
+    pub value: ExprChain,
 }
 
-impl SemanticHash for LetStmt<'_> {
+impl SemanticHash for LetStmt {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.ident.semantic_hash(state);
         self.value.semantic_hash(state);
@@ -447,7 +465,7 @@ impl SemanticHash for LetStmt<'_> {
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ConfigStmt<'a> {
+pub struct ConfigStmt {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
@@ -462,10 +480,10 @@ pub struct ConfigStmt<'a> {
     #[serde(skip, default)]
     pub ws_3: Whitespace,
     #[serde(flatten)]
-    pub value: ExprChain<'a>,
+    pub value: ExprChain,
 }
 
-impl SemanticHash for ConfigStmt<'_> {
+impl SemanticHash for ConfigStmt {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.ident.semantic_hash(state);
         self.value.semantic_hash(state);
@@ -473,65 +491,65 @@ impl SemanticHash for ConfigStmt<'_> {
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct EnvStmt<'a> {
+pub struct EnvStmt {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
     pub token: keyword::Env,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
-    pub key: StringExpr<'a>,
+    pub key: StringExpr,
     #[serde(skip, default)]
     pub ws_2: Whitespace,
     #[serde(skip, default)]
     pub token_eq: token::Eq,
     #[serde(skip, default)]
     pub ws_3: Whitespace,
-    pub value: StringExpr<'a>,
+    pub value: StringExpr,
 }
 
-impl SemanticHash for EnvStmt<'_> {
+impl SemanticHash for EnvStmt {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.key.semantic_hash(state);
         self.value.semantic_hash(state);
     }
 }
 
-pub type FromStmt<'a> = KwExpr<keyword::From, ExprChain<'a>>;
-pub type BuildStmt<'a> = KwExpr<keyword::Build, ExprChain<'a>>;
-pub type DepfileStmt<'a> = KwExpr<keyword::Depfile, ExprChain<'a>>;
-pub type RunStmt<'a> = KwExpr<keyword::Run, RunExpr<'a>>;
-pub type ErrorStmt<'a> = KwExpr<keyword::Error, StringExpr<'a>>;
-pub type DeleteExpr<'a> = KwExpr<keyword::Delete, Expr<'a>>;
-pub type EnvRemoveStmt<'a> = KwExpr<keyword::RemoveEnv, StringExpr<'a>>;
+pub type FromStmt = KwExpr<keyword::From, ExprChain>;
+pub type BuildStmt = KwExpr<keyword::Build, ExprChain>;
+pub type DepfileStmt = KwExpr<keyword::Depfile, ExprChain>;
+pub type RunStmt = KwExpr<keyword::Run, RunExpr>;
+pub type ErrorStmt = KwExpr<keyword::Error, StringExpr>;
+pub type DeleteExpr = KwExpr<keyword::Delete, Expr>;
+pub type EnvRemoveStmt = KwExpr<keyword::RemoveEnv, StringExpr>;
 
 /// Things that can appear in the `command` part of recipes.
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", content = "value")]
-pub enum RunExpr<'a> {
+pub enum RunExpr {
     /// Run shell command.
-    Shell(ShellExpr<'a>),
+    Shell(ShellExpr),
     /// Write the result of the expression to the path. The string is an OS path.
-    Write(WriteExpr<'a>),
+    Write(WriteExpr),
     /// Copy one file to another.
-    Copy(CopyExpr<'a>),
+    Copy(CopyExpr),
     /// Delete a file.
-    Delete(DeleteExpr<'a>),
+    Delete(DeleteExpr),
     /// Set an environment variable.
-    Env(EnvStmt<'a>),
+    Env(EnvStmt),
     /// Remove an environment variable.
-    EnvRemove(EnvRemoveStmt<'a>),
+    EnvRemove(EnvRemoveStmt),
     /// Print a message while running the command.
-    Info(InfoExpr<'a>),
+    Info(InfoExpr),
     /// Print a warning while running the command.
-    Warn(WarnExpr<'a>),
+    Warn(WarnExpr),
     /// List of run expressions.
-    List(ListExpr<RunExpr<'a>>),
+    List(ListExpr<RunExpr>),
     /// A `{...}` block.
-    Block(Body<RunExpr<'a>>),
+    Block(Body<RunExpr>),
 }
 
-impl Spanned for RunExpr<'_> {
+impl Spanned for RunExpr {
     fn span(&self) -> Span {
         match self {
             RunExpr::Shell(expr) => expr.span,
@@ -548,7 +566,7 @@ impl Spanned for RunExpr<'_> {
     }
 }
 
-impl SemanticHash for RunExpr<'_> {
+impl SemanticHash for RunExpr {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
@@ -567,24 +585,24 @@ impl SemanticHash for RunExpr<'_> {
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct CopyExpr<'a> {
+pub struct CopyExpr {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
     pub token_copy: keyword::Copy,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
-    pub src: StringExpr<'a>,
+    pub src: StringExpr,
     #[serde(skip, default)]
     pub ws_2: Whitespace,
     #[serde(skip, default)]
     pub token_to: keyword::To,
     #[serde(skip, default)]
     pub ws_3: Whitespace,
-    pub dest: StringExpr<'a>,
+    pub dest: StringExpr,
 }
 
-impl SemanticHash for CopyExpr<'_> {
+impl SemanticHash for CopyExpr {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.src.semantic_hash(state);
         self.dest.semantic_hash(state);
@@ -592,24 +610,24 @@ impl SemanticHash for CopyExpr<'_> {
 }
 
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct WriteExpr<'a> {
+pub struct WriteExpr {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
     pub token_write: keyword::Write,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
-    pub value: Expr<'a>,
+    pub value: Expr,
     #[serde(skip, default)]
     pub ws_2: Whitespace,
     #[serde(skip, default)]
     pub token_to: keyword::To,
     #[serde(skip, default)]
     pub ws_3: Whitespace,
-    pub path: Expr<'a>,
+    pub path: Expr,
 }
 
-impl SemanticHash for WriteExpr<'_> {
+impl SemanticHash for WriteExpr {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.path.semantic_hash(state);
         self.value.semantic_hash(state);

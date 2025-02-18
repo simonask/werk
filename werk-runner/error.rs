@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use werk_fs::Absolute;
-use werk_parser::parser::{Span, Spanned as _};
-use werk_util::{AnnotateLevelExt, DiagnosticFileId, Level};
+use werk_util::{AnnotateLevelExt, DiagnosticFileId, DiagnosticSpan, Level};
 
 use crate::{depfile::DepfileError, OwnedDependencyChain, ShellCommandLine, TaskId, Value};
 
@@ -177,12 +176,11 @@ impl werk_util::AsDiagnostic for Error {
         let diag = level.diagnostic(id).title(self); // Use the Display impl from thiserror.
 
         // Additional context and help
-        let file_id = DiagnosticFileId::default(); // TODO
         match self {
-            Error::AmbiguousPattern(ref err) => diag.snippet(file_id.snippet([
-                Level::Note.annotation(err.pattern1, "first pattern here"),
-                Level::Note.annotation(err.pattern2, "second pattern here"),
-            ])),
+            Error::AmbiguousPattern(ref err) => diag.annotations([
+                err.pattern1.annotation(Level::Note, "first pattern here"),
+                err.pattern2.annotation(Level::Note, "second pattern here"),
+            ]),
             _ => diag,
         }
     }
@@ -191,8 +189,8 @@ impl werk_util::AsDiagnostic for Error {
 #[derive(Debug, thiserror::Error, PartialEq)]
 #[error("ambiguous pattern match: {path}")]
 pub struct AmbiguousPatternError {
-    pub pattern1: Span,
-    pub pattern2: Span,
+    pub pattern1: DiagnosticSpan,
+    pub pattern2: DiagnosticSpan,
     pub path: String,
 }
 
@@ -202,7 +200,7 @@ pub struct AmbiguousPatternError {
 )]
 pub struct AmbiguousPathError {
     pub path: Absolute<werk_fs::PathBuf>,
-    pub build_recipe: Span,
+    pub build_recipe: DiagnosticSpan,
 }
 
 #[derive(Debug, Clone)]
@@ -243,81 +241,104 @@ impl std::fmt::Display for ShellError {
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 pub enum EvalError {
     #[error("invalid edition identifier; expected `v1`")]
-    InvalidEdition(Span),
+    InvalidEdition(DiagnosticSpan),
     #[error("expected a string value")]
-    ExpectedConfigString(Span),
+    ExpectedConfigString(DiagnosticSpan),
     #[error("expected a boolean value")]
-    ExpectedConfigBool(Span),
+    ExpectedConfigBool(DiagnosticSpan),
     #[error("unknown config key")]
-    UnknownConfigKey(Span),
+    UnknownConfigKey(DiagnosticSpan),
     #[error("no pattern in scope that contains a pattern stem `%`")]
-    NoPatternStem(Span),
+    NoPatternStem(DiagnosticSpan),
     #[error("one-of patterns not allowed in this context")]
-    IllegalOneOfPattern(Span),
+    IllegalOneOfPattern(DiagnosticSpan),
     #[error("duplicate pattern")]
-    DuplicatePattern(Span, Span),
+    DuplicatePattern(DiagnosticSpan, DiagnosticSpan),
     #[error("duplicate config statement")]
-    DuplicateConfigStatement(Span, Span),
+    DuplicateConfigStatement(DiagnosticSpan, DiagnosticSpan),
     #[error("no implied interpolation value in this context; provide an identifier or a capture group index")]
-    NoImpliedValue(Span),
+    NoImpliedValue(DiagnosticSpan),
     #[error("capture group with index {1} is out of bounds in the current scope")]
-    NoSuchCaptureGroup(Span, u32),
+    NoSuchCaptureGroup(DiagnosticSpan, u32),
     #[error("no identifier with name {1}")]
-    NoSuchIdentifier(Span, String),
+    NoSuchIdentifier(DiagnosticSpan, String),
     #[error("unexpected list; perhaps a join operation `{{var*}}` is missing?")]
-    UnexpectedList(Span),
+    UnexpectedList(DiagnosticSpan),
     #[error("pattern stems `{{%}}` cannot be interpolated in patterns")]
-    PatternStemInterpolationInPattern(Span),
+    PatternStemInterpolationInPattern(DiagnosticSpan),
     #[error("path resolution `<...>` interpolations cannot be used in patterns")]
-    ResolvePathInPattern(Span),
+    ResolvePathInPattern(DiagnosticSpan),
     #[error("path resolution `<...>` of a string that already contains resolved paths, but is not a resolved path")]
-    DoubleResolvePath(Span),
+    DoubleResolvePath(DiagnosticSpan),
     #[error("join interpolations `{{...*}}` cannot be used in patterns")]
-    JoinInPattern(Span),
+    JoinInPattern(DiagnosticSpan),
     #[error("unexpected list in pattern")]
-    ListInPattern(Span),
+    ListInPattern(DiagnosticSpan),
     #[error("invalid path interpolation within quotes; path arguments are automatically quoted")]
-    PathWithinQuotes(Span),
+    PathWithinQuotes(DiagnosticSpan),
     #[error("empty command")]
-    EmptyCommand(Span),
+    EmptyCommand(DiagnosticSpan),
     #[error("empty list")]
-    EmptyList(Span),
+    EmptyList(DiagnosticSpan),
     #[error("unterminated quote in shell argument")]
-    UnterminatedQuote(Span),
+    UnterminatedQuote(DiagnosticSpan),
     #[error("`{1}` expressions are not allowed in this context")]
-    UnexpectedExpressionType(Span, &'static str),
+    UnexpectedExpressionType(DiagnosticSpan, &'static str),
     #[error("command not found: {1}: {2}")]
-    CommandNotFound(Span, String, which::Error),
+    CommandNotFound(DiagnosticSpan, String, which::Error),
     #[error("`which` expression resulted in a non-UTF-8 path: {}", .1.display())]
-    NonUtf8Which(Span, std::path::PathBuf),
+    NonUtf8Which(DiagnosticSpan, std::path::PathBuf),
     #[error("`read` failed because file is not valid UTF-8: {}", .1.display())]
-    NonUtf8Read(Span, std::path::PathBuf),
+    NonUtf8Read(DiagnosticSpan, std::path::PathBuf),
     #[error("{1}")]
-    Glob(Span, Arc<globset::Error>),
+    Glob(DiagnosticSpan, Arc<globset::Error>),
     /// Shell command failed during evaluation. Note: This error is not reported
     /// when executing commands as part of a rule, only when executing commands
     /// during evaluation (settings variables etc.)
     #[error("{1}")]
-    Shell(Span, Arc<ShellError>),
+    Shell(DiagnosticSpan, Arc<ShellError>),
     #[error("{1}")]
-    Path(Span, werk_fs::PathError),
+    Path(DiagnosticSpan, werk_fs::PathError),
     #[error("I/O error during evaluation: {1}")]
-    Io(Span, IoError),
+    Io(DiagnosticSpan, IoError),
     #[error("{1}")]
-    ErrorExpression(Span, String),
+    ErrorExpression(DiagnosticSpan, String),
     #[error("assertion failed: {} != {}", .1 .0, .1 .1)]
-    AssertEqFailed(Span, Box<(Value, Value)>),
+    AssertEqFailed(DiagnosticSpan, Box<(Value, Value)>),
     #[error("assertion failed: \"{}\" does not match the pattern '{}'", .1 .0.escape_default(), .1 .1)]
-    AssertMatchFailed(Span, Box<(String, String)>),
+    AssertMatchFailed(DiagnosticSpan, Box<(String, String)>),
     #[error("assertion failed: {1}")]
-    AssertCustomFailed(Span, String),
+    AssertCustomFailed(DiagnosticSpan, String),
     #[error("{1}")]
-    AmbiguousPathResolution(Span, Arc<AmbiguousPathError>),
+    AmbiguousPathResolution(DiagnosticSpan, Arc<AmbiguousPathError>),
+    #[error("error including '{1}': {2}")]
+    IncludeIoError(DiagnosticSpan, String, IoError),
+    #[error("{1}")]
+    IncludeError(DiagnosticSpan, Box<EvalError>),
+    #[error("same file included twice: {2}")]
+    IncludeDuplicate(
+        DiagnosticSpan,
+        Option<DiagnosticSpan>,
+        Absolute<werk_fs::PathBuf>,
+    ),
+    #[error("`default` statements are not allowed in included files")]
+    DefaultInInclude(DiagnosticSpan),
+    #[error("{1}")]
+    Parse(DiagnosticFileId, werk_parser::Error),
 }
 
-impl werk_parser::parser::Spanned for EvalError {
+/// Error in an `include` statement.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum IncludeError {
+    #[error("{1}")]
+    Parse(DiagnosticFileId, werk_parser::Error),
+    #[error(transparent)]
+    Eval(#[from] EvalError),
+}
+
+impl EvalError {
     #[inline]
-    fn span(&self) -> Span {
+    fn span(&self) -> DiagnosticSpan {
         match self {
             EvalError::InvalidEdition(span)
             | EvalError::ExpectedConfigString(span)
@@ -352,7 +373,12 @@ impl werk_parser::parser::Spanned for EvalError {
             | EvalError::AssertEqFailed(span, _)
             | EvalError::AssertMatchFailed(span, _)
             | EvalError::AssertCustomFailed(span, _)
-            | EvalError::AmbiguousPathResolution(span, _) => *span,
+            | EvalError::AmbiguousPathResolution(span, _)
+            | EvalError::IncludeIoError(span, ..)
+            | EvalError::IncludeError(span, ..)
+            | EvalError::IncludeDuplicate(span, ..)
+            | EvalError::DefaultInInclude(span) => *span,
+            EvalError::Parse(file, err) => file.span(err.span()),
         }
     }
 }
@@ -361,7 +387,6 @@ impl werk_util::AsDiagnostic for EvalError {
     fn as_diagnostic(&self) -> werk_util::Diagnostic {
         let level = Level::Error;
         let span = self.span();
-        let file_id = DiagnosticFileId::default(); // TODO
 
         let id = match self {
             EvalError::InvalidEdition(..) => "E0001",
@@ -392,33 +417,47 @@ impl werk_util::AsDiagnostic for EvalError {
             EvalError::Glob(..) => "E0024",
             EvalError::Shell(..) => "E0025",
             EvalError::Path(..) => "E0026",
-            EvalError::Io(..) => "E0027",
+            EvalError::Io(..) | EvalError::IncludeIoError(..) => "E0027",
             EvalError::ErrorExpression(..) => "E9999",
             EvalError::AssertEqFailed(..) => "E0029",
             EvalError::AssertMatchFailed(..) => "E0030",
             EvalError::AssertCustomFailed(..) => "E0031",
             EvalError::AmbiguousPathResolution(..) => "E0032",
+            EvalError::IncludeError(_, err) => {
+                return err
+                    .as_diagnostic()
+                    .annotation(span.annotation(Level::Note, "included here"));
+            }
+            EvalError::IncludeDuplicate(..) => "E0035",
+            EvalError::DefaultInInclude(..) => "E0036",
+            EvalError::Parse(file, err) => {
+                return err.with_file_ref(*file).as_diagnostic();
+            }
         };
 
         let diag = level
             .diagnostic(id)
             .title(self) // Use the `Display` implementation from thiserror.
-            .snippet(file_id.snippet([level.annotation(span, self)]));
+            .annotation(span.annotation(level, self));
 
         // Help messages and additional context.
         match self {
             EvalError::NoSuchCaptureGroup(..) => diag.footer(
                 "pattern capture groups are zero-indexed, starting from 0",
             ),
-            EvalError::AmbiguousPathResolution(_, err) => diag.snippet(file_id.snippet(Some(Level::Note.annotation(err.build_recipe, "matched this build recipe")))).footer(
-                "use `<...:out-dir>` or `<...:workspace>` to disambiguate between paths in the workspace and the output directory",
-            ),
-            EvalError::DuplicateConfigStatement(_, previous_span) => diag.snippet(file_id.snippet(Some(Level::Note.annotation(*previous_span, "previous config statement here")))),
+            EvalError::AmbiguousPathResolution(_, err) => diag
+                .annotation(err.build_recipe.annotation(Level::Note, "matched this build recipe"))
+                .footer("use `<...:out-dir>` or `<...:workspace>` to disambiguate between paths in the workspace and the output directory"),
+            EvalError::DuplicateConfigStatement(_, previous_span) => diag
+                .annotation(previous_span.annotation(Level::Note, "previous config statement here")),
+            EvalError::IncludeDuplicate(_, Some(previous_span), _) => diag.annotation(previous_span.annotation(Level::Note, "already included here")),
+            EvalError::DefaultInInclude(_) => diag.footer("move `default` statements to the top-level Werkfile"),
             _ => diag,
         }
     }
 }
 
+/// Clonable `std::io::Error`
 #[derive(Clone)]
 pub struct IoError {
     pub error: Arc<std::io::Error>,
@@ -451,5 +490,11 @@ impl PartialEq for IoError {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.error, &other.error) || self.error.kind() == other.error.kind()
+    }
+}
+
+impl std::error::Error for IoError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.error.source()
     }
 }

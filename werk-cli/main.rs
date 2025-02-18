@@ -13,7 +13,7 @@ use owo_colors::OwoColorize as _;
 use render::{AutoStream, ColorOutputKind};
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_runner::{Runner, Warning, Workspace, WorkspaceSettings};
-use werk_util::{Annotated, AsDiagnostic, DiagnosticSource, DiagnosticSourceMap};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticSource, DiagnosticSourceMap};
 
 shadow_rs::shadow!(build);
 
@@ -206,12 +206,17 @@ async fn try_main(args: Args) -> Result<(), Error> {
     // Parse the werk manifest!
     let source_code = std::fs::read_to_string(&werkfile)?;
 
-    let ast = werk_parser::parse_werk(&werkfile, &source_code).map_err(|err| {
-        print_parse_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
+    let main_file_id = DiagnosticFileId(0);
+
+    let ast = werk_parser::parse_werk(&source_code).map_err(|err| {
+        print_parse_error(
+            err.with_file(main_file_id)
+                .into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)),
+        )
     })?;
 
     // Read the `default` statements from the AST.
-    let defaults = werk_runner::ir::Defaults::new(&ast).map_err(|err| {
+    let defaults = werk_runner::ir::Defaults::new(&ast, main_file_id).map_err(|err| {
         print_eval_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
     })?;
 
@@ -232,14 +237,19 @@ async fn try_main(args: Args) -> Result<(), Error> {
         color_stderr,
     ));
 
-    let workspace = Workspace::new_with_diagnostics(
-        &ast,
-        &*io,
-        &*renderer,
+    let mut workspace = Workspace::new(
+        io.clone(),
+        renderer.clone(),
         workspace_dir.into_owned(),
         &settings,
     )
-    .map_err(print_error)?;
+    .map_err(|err| {
+        print_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
+    })?;
+    let werkfile_abstract_path = workspace.unresolve_path(&werkfile).unwrap();
+    workspace
+        .add_werkfile_parsed(&werkfile_abstract_path, &source_code, ast)
+        .map_err(|err| print_eval_error(err.into_diagnostic_error(&workspace)))?;
 
     if args.list {
         let mut output = AutoStream::new(std::io::stdout(), color_stdout);
@@ -290,7 +300,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
 async fn autowatch_loop(
     timeout: std::time::Duration,
     // The initial workspace built by main(). Must be finalize()d.
-    workspace: Workspace<'_>,
+    workspace: Workspace,
     werkfile: Absolute<std::path::PathBuf>,
     // Target to keep building
     target_from_args: Option<String>,
@@ -304,7 +314,7 @@ async fn autowatch_loop(
         _ = ctrlc_sender.try_send(());
     });
 
-    let (io, render) = (workspace.io, workspace.render);
+    let (io, render) = (workspace.io.clone(), workspace.render.clone());
 
     let watch_manifest = HashSet::from_iter([werkfile.clone()]);
     let mut watch_set = watch_manifest.clone();
@@ -363,22 +373,28 @@ async fn autowatch_loop(
             }
         };
 
-        let ast = werk_parser::parse_werk_with_diagnostics(&werkfile, &source_code);
+        let main_file_id = DiagnosticFileId(0);
+        let ast = werk_parser::parse_werk(&source_code);
 
         let ast = match ast {
             Ok(ast) => ast,
             Err(err) => {
-                print_parse_error(err);
+                print_parse_error(
+                    err.with_file(main_file_id)
+                        .into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)),
+                );
                 watch_set = watch_manifest.clone();
                 continue;
             }
         };
 
         // Reload config.
-        let config = match werk_runner::ir::Defaults::new_with_diagnostics(&ast) {
+        let defaults = match werk_runner::ir::Defaults::new(&ast, main_file_id) {
             Ok(config) => config,
             Err(err) => {
-                print_eval_error(err);
+                print_eval_error(
+                    err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)),
+                );
                 watch_set = watch_manifest.clone();
                 continue;
             }
@@ -387,7 +403,7 @@ async fn autowatch_loop(
         let out_dir = match find_output_directory(
             &workspace_dir,
             output_directory_from_args,
-            config.output_directory,
+            defaults.output_directory.as_deref(),
         ) {
             Ok(out_dir) => out_dir,
             Err(err) => {
@@ -408,21 +424,28 @@ async fn autowatch_loop(
             settings.output_directory = out_dir;
         }
 
-        let workspace = match Workspace::new_with_diagnostics(
-            &ast,
-            io,
-            render,
-            workspace_dir.clone(),
-            &settings,
-        ) {
-            Ok(workspace) => workspace,
+        let mut workspace =
+            match Workspace::new(io.clone(), render.clone(), workspace_dir.clone(), &settings) {
+                Ok(workspace) => workspace,
+                Err(err) => {
+                    print_error(
+                        err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)),
+                    );
+                    // Workspace evaluation may depend on other files, so just keep
+                    // the current watchset.
+                    continue;
+                }
+            };
+        let werkfile_abstract_path = workspace.unresolve_path(&werkfile).unwrap();
+        match workspace.add_werkfile_parsed(&werkfile_abstract_path, &source_code, ast) {
+            Ok(_) => (),
             Err(err) => {
-                print_error(err);
+                print_eval_error(err.into_diagnostic_error(&workspace));
                 // Workspace evaluation may depend on other files, so just keep
                 // the current watchset.
                 continue;
             }
-        };
+        }
 
         let target = target_from_args
             .clone()
@@ -487,10 +510,9 @@ fn make_notifier_for_files(
     Ok(notifier)
 }
 
-pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write) {
-    let configs = doc
-        .globals
-        .configs
+pub fn print_list(manifest: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write) {
+    let configs = manifest
+        .config_variables
         .iter()
         .map(|(k, v)| (*k, format!("{}", v.value.display_friendly(80)), &v.comment))
         .collect::<Vec<_>>();
@@ -511,13 +533,13 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
         .max()
         .unwrap_or(0);
 
-    let max_command_len = doc
+    let max_command_len = manifest
         .task_recipes
         .iter()
         .map(|(name, _)| name.len())
         .max()
         .unwrap_or(0);
-    let max_pattern_len = doc
+    let max_pattern_len = manifest
         .build_recipes
         .iter()
         .map(|recipe| recipe.pattern.string.len())
@@ -561,7 +583,7 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
             "{}",
             "Available commands:".bright_purple().bold().underline()
         );
-        for (name, recipe) in &doc.task_recipes {
+        for (name, recipe) in &manifest.task_recipes {
             if recipe.doc_comment.is_empty() {
                 _ = writeln!(out, "  {}", name.bright_cyan());
             } else {
@@ -584,7 +606,7 @@ pub fn print_list(doc: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write)
             "{}",
             "Available recipes:".bright_purple().bold().underline()
         );
-        for recipe in &doc.build_recipes {
+        for recipe in &manifest.build_recipes {
             if recipe.doc_comment.is_empty() {
                 _ = writeln!(out, "  {}", recipe.pattern.string.bright_yellow());
             } else {
@@ -654,7 +676,7 @@ pub fn get_workspace_settings(
     let out_dir = find_output_directory(
         workspace_dir,
         args.output_dir.as_deref(),
-        config.output_directory,
+        config.output_directory.as_deref(),
     )?;
 
     let mut settings = WorkspaceSettings::new(workspace_dir.to_owned());

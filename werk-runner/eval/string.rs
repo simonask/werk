@@ -2,8 +2,8 @@ use std::{borrow::Cow, fmt::Write as _, sync::Arc};
 
 use indexmap::IndexMap;
 use werk_fs::Absolute;
-use werk_parser::{ast, parser::Span};
-use werk_util::Symbol;
+use werk_parser::ast;
+use werk_util::{DiagnosticFileId, DiagnosticSpan, Symbol};
 
 use crate::{
     AmbiguousPatternError, EvalError, Lookup, LookupValue, Pattern, PatternMatcher, PatternRegex,
@@ -33,8 +33,8 @@ impl<'a, P: Scope + ?Sized> StringBuilder<'a, P> {
 
     pub fn eval_fragment(
         &mut self,
-        fragment: &'a ast::StringFragment<'a>,
-        span: Span,
+        fragment: &ast::StringFragment,
+        span: DiagnosticSpan,
     ) -> Result<(), EvalError> {
         match fragment {
             ast::StringFragment::Literal(lit) => self.string.push_str(lit),
@@ -63,9 +63,13 @@ impl<'a, P: Scope + ?Sized> StringBuilder<'a, P> {
         Ok(())
     }
 
-    pub fn eval(&mut self, expr: &'a ast::StringExpr<'a>) -> Result<(), EvalError> {
+    pub fn eval(
+        &mut self,
+        file: DiagnosticFileId,
+        expr: &ast::StringExpr,
+    ) -> Result<(), EvalError> {
         for fragment in &expr.fragments {
-            self.eval_fragment(fragment, expr.span)?;
+            self.eval_fragment(fragment, expr.span.with_file(file))?;
         }
         Ok(())
     }
@@ -83,19 +87,19 @@ impl<'a, P: Scope + ?Sized> StringBuilder<'a, P> {
 
 pub(crate) struct PatternBuilder<'a, P: ?Sized> {
     scope: &'a P,
-    fragments: Vec<PatternFragment<'a>>,
+    fragments: Vec<PatternFragment>,
     used: Used,
-    span: Span,
+    span: DiagnosticSpan,
 }
 
-enum PatternFragment<'a> {
+enum PatternFragment {
     Literal(String),
     PatternStem,
-    OneOf(&'a [Cow<'a, str>]),
+    OneOf(Vec<String>),
 }
 
 impl<'a, P: Scope + ?Sized> PatternBuilder<'a, P> {
-    pub fn new(scope: &'a P, span: Span) -> Self {
+    pub fn new(scope: &'a P, span: DiagnosticSpan) -> Self {
         Self {
             scope,
             fragments: vec![PatternFragment::Literal(String::new())],
@@ -130,23 +134,25 @@ impl<'a, P: Scope + ?Sized> PatternBuilder<'a, P> {
         buf.push_str(s);
     }
 
-    pub fn eval(&mut self, expr: &'a ast::PatternExpr<'a>) -> Result<(), EvalError> {
-        self.span = expr.span;
+    pub fn eval(
+        &mut self,
+        file: DiagnosticFileId,
+        expr: &ast::PatternExpr,
+    ) -> Result<(), EvalError> {
+        self.span = expr.span.with_file(file);
         for fragment in &expr.fragments {
             self.eval_fragment(fragment)?;
         }
         Ok(())
     }
 
-    pub fn eval_fragment(
-        &mut self,
-        fragment: &'a ast::PatternFragment<'a>,
-    ) -> Result<(), EvalError> {
+    pub fn eval_fragment(&mut self, fragment: &ast::PatternFragment) -> Result<(), EvalError> {
         match fragment {
             ast::PatternFragment::Literal(lit) => self.push_str(lit),
             ast::PatternFragment::PatternStem => self.fragments.push(PatternFragment::PatternStem),
             ast::PatternFragment::OneOf(alternatives) => {
-                self.fragments.push(PatternFragment::OneOf(alternatives));
+                self.fragments
+                    .push(PatternFragment::OneOf(alternatives.clone()));
             }
             ast::PatternFragment::Interpolation(interp) => {
                 let buf = if let Some(PatternFragment::Literal(last)) = self.fragments.last_mut() {
@@ -305,7 +311,7 @@ pub(crate) struct CommandLineBuilder<'a, P: ?Sized> {
     escape: bool,
     parts: Vec<String>,
     used: Used,
-    span: Span,
+    span: DiagnosticSpan,
 }
 
 enum InQuotes {
@@ -314,7 +320,7 @@ enum InQuotes {
 }
 
 impl<'a, P: Scope + ?Sized> CommandLineBuilder<'a, P> {
-    pub fn new(scope: &'a P, span: Span) -> Self {
+    pub fn new(scope: &'a P, span: DiagnosticSpan) -> Self {
         Self {
             scope,
             in_quotes: None,
@@ -455,7 +461,7 @@ impl<'a, P: Scope + ?Sized> CommandLineBuilder<'a, P> {
     }
 
     pub fn eval(&mut self, expr: &ast::StringExpr) -> Result<(), EvalError> {
-        self.span = expr.span;
+        self.span.span = expr.span;
         for fragment in &expr.fragments {
             self.eval_fragment(fragment)?;
         }
@@ -493,7 +499,7 @@ impl<'a, P: Scope + ?Sized> CommandLineBuilder<'a, P> {
 
 fn eval_string_interpolation<P: Scope + ?Sized>(
     scope: &P,
-    span: Span,
+    span: DiagnosticSpan,
     interp: &ast::Interpolation,
     resolve_mode: ResolvePathMode,
     buf: &mut String,
@@ -527,7 +533,7 @@ fn eval_string_interpolation<P: Scope + ?Sized>(
 
 fn eval_string_interpolation_stem<P: Scope + ?Sized>(
     scope: &P,
-    span: Span,
+    span: DiagnosticSpan,
     stem: ast::InterpolationStem,
 ) -> Result<LookupValue, EvalError> {
     Ok(match stem {
@@ -552,7 +558,7 @@ fn eval_string_interpolation_stem<P: Scope + ?Sized>(
 }
 
 fn eval_string_interpolation_ops_and_join(
-    span: Span,
+    span: DiagnosticSpan,
     mut value: Value,
     buf: &mut String,
     options: &ast::InterpolationOptions,
@@ -572,7 +578,7 @@ fn eval_string_interpolation_ops_and_join(
 }
 
 fn eval_string_interpolation_ops(
-    span: Span,
+    span: DiagnosticSpan,
     mut value: Value,
     options: &[ast::InterpolationOp],
     workspace: &Workspace,
@@ -670,7 +676,7 @@ pub(crate) fn flat_join(values: &Value, sep: &str) -> StringValue {
 }
 
 fn recursive_resolve_path(
-    span: Span,
+    span: DiagnosticSpan,
     value: &mut Value,
     working_dir: &Absolute<werk_fs::Path>,
     workspace: &Workspace,
@@ -700,7 +706,7 @@ fn recursive_resolve_path(
 }
 
 fn resolve_path_infer(
-    span: Span,
+    span: DiagnosticSpan,
     path: &Absolute<werk_fs::Path>,
     workspace: &Workspace,
 ) -> Result<Absolute<std::path::PathBuf>, EvalError> {

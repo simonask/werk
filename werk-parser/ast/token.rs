@@ -1,7 +1,9 @@
 use winnow::Parser as _;
 
+use werk_util::{Offset, Span, Spanned};
+
 use crate::{
-    parser::{Input, Offset, PResult, Parse, Parser as _, Span, Spanned},
+    parser::{Input, PResult, Parse, Parser as _},
     Failure,
 };
 
@@ -36,8 +38,8 @@ impl<const CHAR: char> Spanned for Token<CHAR> {
     }
 }
 
-impl<'a, const CHAR: char> Parse<'a> for Token<CHAR> {
-    fn parse(input: &mut Input<'a>) -> PResult<Self> {
+impl<const CHAR: char> Parse for Token<CHAR> {
+    fn parse(input: &mut Input) -> PResult<Self> {
         CHAR.or_fail(Failure::ExpectedChar(CHAR))
             .token_span()
             .map(Token::with_span)

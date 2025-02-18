@@ -31,6 +31,7 @@
   - [Patterns](./language/patterns.md)
   - [Recipe commands](./language/recipe_commands.md)
   - [Built-in variables](./language/builtins.md)
+  - [Include](./language/include.md)
 - [Command-line reference](command_line.md)
   - [Completion](command_line_completion.md)
 - [Environment variables](env.md)

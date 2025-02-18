@@ -1,11 +1,7 @@
-use std::{borrow::Cow, hash::Hash as _};
-
-use crate::{
-    parser::{Span, Spanned},
-    SemanticHash,
-};
+use std::hash::Hash as _;
 
 use super::{keyword, token, Body, BodyStmt, Ident, PatternExpr, StringExpr, Trailing, Whitespace};
+use werk_util::{SemanticHash, Span, Spanned};
 
 /// "Atomic" expression (no pipe chaining).
 ///
@@ -17,28 +13,28 @@ use super::{keyword, token, Body, BodyStmt, Ident, PatternExpr, StringExpr, Trai
 /// passing the output of a pipe expression as a parameter to an operation requires that it is parenthesized.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", content = "value")]
-pub enum Expr<'a> {
+pub enum Expr {
     // Look up variable in scope.
     Ident(Ident),
-    StringExpr(StringExpr<'a>),
-    Shell(ShellExpr<'a>),
-    Read(ReadExpr<'a>),
-    Glob(GlobExpr<'a>),
-    Which(WhichExpr<'a>),
-    Env(EnvExpr<'a>),
-    List(ListExpr<ExprChain<'a>>),
+    StringExpr(StringExpr),
+    Shell(ShellExpr),
+    Read(ReadExpr),
+    Glob(GlobExpr),
+    Which(WhichExpr),
+    Env(EnvExpr),
+    List(ListExpr<ExprChain>),
     /// `(<expr>)`
-    SubExpr(SubExpr<'a>),
-    Error(ErrorExpr<'a>),
+    SubExpr(SubExpr),
+    Error(ErrorExpr),
 }
 
-impl<'a> Expr<'a> {
-    pub fn literal(span: impl Into<Span>, s: impl Into<Cow<'a, str>>) -> Self {
+impl Expr {
+    pub fn literal(span: impl Into<Span>, s: impl Into<String>) -> Self {
         Self::StringExpr(StringExpr::literal(span, s))
     }
 }
 
-impl Spanned for Expr<'_> {
+impl Spanned for Expr {
     #[inline]
     fn span(&self) -> Span {
         match self {
@@ -56,7 +52,7 @@ impl Spanned for Expr<'_> {
     }
 }
 
-impl SemanticHash for Expr<'_> {
+impl SemanticHash for Expr {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
@@ -78,14 +74,14 @@ impl SemanticHash for Expr<'_> {
 /// Parenthesized sub-expression.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
-pub struct SubExpr<'a> {
+pub struct SubExpr {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
     pub token_open: token::ParenOpen,
     #[serde(skip, default)]
     pub ws_1: Whitespace,
-    pub expr: Box<ExprChain<'a>>,
+    pub expr: Box<ExprChain>,
     #[serde(skip, default)]
     pub ws_2: Whitespace,
     #[serde(skip, default)]
@@ -98,27 +94,27 @@ pub struct SubExpr<'a> {
 /// and produce an output, which will be passed to any subsequent operations, or
 /// returned as the value.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum ExprOp<'a> {
-    SubExpr(SubExpr<'a>),
-    StringExpr(StringExpr<'a>),
-    Match(MatchExpr<'a>),
-    Map(MapExpr<'a>),
-    Flatten(FlattenExpr<'a>),
-    Filter(FilterExpr<'a>),
-    FilterMatch(FilterMatchExpr<'a>),
-    Discard(DiscardExpr<'a>),
-    Join(JoinExpr<'a>),
-    Split(SplitExpr<'a>),
-    Lines(LinesExpr<'a>),
-    Dedup(DedupExpr<'a>),
-    Info(InfoExpr<'a>),
-    Warn(WarnExpr<'a>),
-    Error(ErrorExpr<'a>),
-    AssertEq(AssertEqExpr<'a>),
-    AssertMatch(AssertMatchExpr<'a>),
+pub enum ExprOp {
+    SubExpr(SubExpr),
+    StringExpr(StringExpr),
+    Match(MatchExpr),
+    Map(MapExpr),
+    Flatten(FlattenExpr),
+    Filter(FilterExpr),
+    FilterMatch(FilterMatchExpr),
+    Discard(DiscardExpr),
+    Join(JoinExpr),
+    Split(SplitExpr),
+    Lines(LinesExpr),
+    Dedup(DedupExpr),
+    Info(InfoExpr),
+    Warn(WarnExpr),
+    Error(ErrorExpr),
+    AssertEq(AssertEqExpr),
+    AssertMatch(AssertMatchExpr),
 }
 
-impl Spanned for ExprOp<'_> {
+impl Spanned for ExprOp {
     #[inline]
     fn span(&self) -> Span {
         match self {
@@ -143,7 +139,7 @@ impl Spanned for ExprOp<'_> {
     }
 }
 
-impl SemanticHash for ExprOp<'_> {
+impl SemanticHash for ExprOp {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
@@ -205,12 +201,12 @@ impl<E: SemanticHash> SemanticHash for ListItem<E> {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum MatchBody<'a> {
-    Single(Box<MatchArm<'a>>),
-    Braced(Body<MatchArm<'a>>),
+pub enum MatchBody {
+    Single(Box<MatchArm>),
+    Braced(Body<MatchArm>),
 }
 
-impl<'a> MatchBody<'a> {
+impl MatchBody {
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
@@ -230,7 +226,7 @@ impl<'a> MatchBody<'a> {
     }
 
     #[must_use]
-    pub fn iter<'b>(&'b self) -> MatchBodyIter<'a, 'b> {
+    pub fn iter(&self) -> MatchBodyIter<'_> {
         match self {
             MatchBody::Single(match_arm) => MatchBodyIter::Single(Some(match_arm)),
             MatchBody::Braced(body) => MatchBodyIter::Braced(body.statements.iter()),
@@ -238,9 +234,9 @@ impl<'a> MatchBody<'a> {
     }
 }
 
-impl<'a, 'b> IntoIterator for &'b MatchBody<'a> {
-    type IntoIter = MatchBodyIter<'a, 'b>;
-    type Item = &'b MatchArm<'a>;
+impl<'a> IntoIterator for &'a MatchBody {
+    type IntoIter = MatchBodyIter<'a>;
+    type Item = &'a MatchArm;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
@@ -248,13 +244,13 @@ impl<'a, 'b> IntoIterator for &'b MatchBody<'a> {
     }
 }
 
-pub enum MatchBodyIter<'a, 'b> {
-    Single(Option<&'b MatchArm<'a>>),
-    Braced(std::slice::Iter<'b, BodyStmt<MatchArm<'a>>>),
+pub enum MatchBodyIter<'a> {
+    Single(Option<&'a MatchArm>),
+    Braced(std::slice::Iter<'a, BodyStmt<MatchArm>>),
 }
 
-impl<'a, 'b> Iterator for MatchBodyIter<'a, 'b> {
-    type Item = &'b MatchArm<'a>;
+impl<'a> Iterator for MatchBodyIter<'a> {
+    type Item = &'a MatchArm;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -265,7 +261,7 @@ impl<'a, 'b> Iterator for MatchBodyIter<'a, 'b> {
     }
 }
 
-impl SemanticHash for MatchBody<'_> {
+impl SemanticHash for MatchBody {
     #[inline]
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
@@ -281,10 +277,10 @@ impl SemanticHash for MatchBody<'_> {
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct MatchArm<'a> {
+pub struct MatchArm {
     #[serde(skip, default)]
     pub span: Span,
-    pub pattern: PatternExpr<'a>,
+    pub pattern: PatternExpr,
     /// Whitespace between the pattern and the fat arrow.
     #[serde(skip, default)]
     pub ws_1: Whitespace,
@@ -293,10 +289,10 @@ pub struct MatchArm<'a> {
     /// Whitespace between the fat arrow and the expression.
     #[serde(skip, default)]
     pub ws_2: Whitespace,
-    pub expr: ExprChain<'a>,
+    pub expr: ExprChain,
 }
 
-impl SemanticHash for MatchArm<'_> {
+impl SemanticHash for MatchArm {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.pattern.semantic_hash(state);
         self.expr.semantic_hash(state);
@@ -306,17 +302,17 @@ impl SemanticHash for MatchArm<'_> {
 /// Expression with optional chain of operations. This is valid after `let =`,
 /// inside parentheses, as list elements, or the right-hand side of braced match arms.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ExprChain<'a> {
+pub struct ExprChain {
     #[serde(skip, default)]
     pub span: Span,
     /// The initial expression of the chain.
-    pub expr: Expr<'a>,
+    pub expr: Expr,
     /// All subsequent links, i.e. each `| expr` part.
-    pub ops: Vec<ChainSubExpr<'a>>,
+    pub ops: Vec<ChainSubExpr>,
 }
 
-impl<'a> From<Expr<'a>> for ExprChain<'a> {
-    fn from(expr: Expr<'a>) -> Self {
+impl From<Expr> for ExprChain {
+    fn from(expr: Expr) -> Self {
         Self {
             span: expr.span(),
             expr,
@@ -325,8 +321,8 @@ impl<'a> From<Expr<'a>> for ExprChain<'a> {
     }
 }
 
-impl<'a> From<StringExpr<'a>> for ExprChain<'a> {
-    fn from(atom: StringExpr<'a>) -> Self {
+impl From<StringExpr> for ExprChain {
+    fn from(atom: StringExpr) -> Self {
         Self {
             span: atom.span,
             expr: Expr::StringExpr(atom),
@@ -335,7 +331,7 @@ impl<'a> From<StringExpr<'a>> for ExprChain<'a> {
     }
 }
 
-impl SemanticHash for ExprChain<'_> {
+impl SemanticHash for ExprChain {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.expr.semantic_hash(state);
         self.ops.as_slice().semantic_hash(state);
@@ -345,7 +341,7 @@ impl SemanticHash for ExprChain<'_> {
 /// Entry in an expression chain `| expr`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
-pub struct ChainSubExpr<'a> {
+pub struct ChainSubExpr {
     #[serde(skip, default)]
     pub span: Span,
     #[serde(skip, default)]
@@ -354,35 +350,35 @@ pub struct ChainSubExpr<'a> {
     pub token_pipe: token::Pipe,
     #[serde(skip, default)]
     pub ws_2: Whitespace,
-    pub expr: ExprOp<'a>,
+    pub expr: ExprOp,
 }
 
-impl SemanticHash for ChainSubExpr<'_> {
+impl SemanticHash for ChainSubExpr {
     fn semantic_hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.expr.semantic_hash(state);
     }
 }
 
-pub type JoinExpr<'a> = KwExpr<keyword::Join, StringExpr<'a>>;
-pub type MapExpr<'a> = KwExpr<keyword::Map, Expr<'a>>;
-pub type GlobExpr<'a> = KwExpr<keyword::Glob, StringExpr<'a>>;
-pub type WhichExpr<'a> = KwExpr<keyword::Which, StringExpr<'a>>;
-pub type EnvExpr<'a> = KwExpr<keyword::Env, StringExpr<'a>>;
-pub type ShellExpr<'a> = KwExpr<keyword::Shell, StringExpr<'a>>;
-pub type ReadExpr<'a> = KwExpr<keyword::Read, StringExpr<'a>>;
-pub type InfoExpr<'a> = KwExpr<keyword::Info, StringExpr<'a>>;
-pub type WarnExpr<'a> = KwExpr<keyword::Warn, StringExpr<'a>>;
-pub type ErrorExpr<'a> = KwExpr<keyword::Error, StringExpr<'a>>;
-pub type AssertEqExpr<'a> = KwExpr<keyword::AssertEq, Box<Expr<'a>>>;
-pub type AssertMatchExpr<'a> = KwExpr<keyword::AssertEq, Box<PatternExpr<'a>>>;
-pub type FlattenExpr<'a> = keyword::Flatten;
-pub type SplitExpr<'a> = KwExpr<keyword::Split, PatternExpr<'a>>;
-pub type DedupExpr<'a> = keyword::Dedup;
-pub type LinesExpr<'a> = keyword::Lines;
-pub type FilterExpr<'a> = KwExpr<keyword::Filter, PatternExpr<'a>>;
-pub type FilterMatchExpr<'a> = KwExpr<keyword::FilterMatch, MatchBody<'a>>;
-pub type MatchExpr<'a> = KwExpr<keyword::Match, MatchBody<'a>>;
-pub type DiscardExpr<'a> = KwExpr<keyword::Discard, PatternExpr<'a>>;
+pub type JoinExpr = KwExpr<keyword::Join, StringExpr>;
+pub type MapExpr = KwExpr<keyword::Map, Expr>;
+pub type GlobExpr = KwExpr<keyword::Glob, StringExpr>;
+pub type WhichExpr = KwExpr<keyword::Which, StringExpr>;
+pub type EnvExpr = KwExpr<keyword::Env, StringExpr>;
+pub type ShellExpr = KwExpr<keyword::Shell, StringExpr>;
+pub type ReadExpr = KwExpr<keyword::Read, StringExpr>;
+pub type InfoExpr = KwExpr<keyword::Info, StringExpr>;
+pub type WarnExpr = KwExpr<keyword::Warn, StringExpr>;
+pub type ErrorExpr = KwExpr<keyword::Error, StringExpr>;
+pub type AssertEqExpr = KwExpr<keyword::AssertEq, Box<Expr>>;
+pub type AssertMatchExpr = KwExpr<keyword::AssertEq, Box<PatternExpr>>;
+pub type FlattenExpr = keyword::Flatten;
+pub type SplitExpr = KwExpr<keyword::Split, PatternExpr>;
+pub type DedupExpr = keyword::Dedup;
+pub type LinesExpr = keyword::Lines;
+pub type FilterExpr = KwExpr<keyword::Filter, PatternExpr>;
+pub type FilterMatchExpr = KwExpr<keyword::FilterMatch, MatchBody>;
+pub type MatchExpr = KwExpr<keyword::Match, MatchBody>;
+pub type DiscardExpr = KwExpr<keyword::Discard, PatternExpr>;
 
 /// Expression that is a pair of a token and a parameter, such as `<keyword>
 /// <expr>`. Example: `join ","`

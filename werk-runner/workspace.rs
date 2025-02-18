@@ -1,16 +1,16 @@
 use ahash::HashMap;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
-use std::{borrow::Cow, collections::hash_map};
+use std::{borrow::Cow, collections::hash_map, sync::Arc};
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_parser::ast;
-use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticMainSourceMap, Symbol};
+use werk_util::{DiagnosticFileId, DiagnosticSpan, Symbol};
 
 use crate::{
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
     eval::{self, Eval, UsedVariable},
     ir::{self, BuildRecipe, TaskRecipe},
-    DirEntry, Error, EvalError, Io, Render, RootScope, Warning,
+    DirEntry, Error, EvalError, Io, Render, Value, Warning,
 };
 
 #[derive(Clone)]
@@ -93,8 +93,8 @@ impl WorkspaceSettings {
     }
 }
 
-pub struct Workspace<'a> {
-    pub manifest: ir::Manifest<'a>,
+pub struct Workspace {
+    pub manifest: ir::Manifest,
     // Project root - note that the workspace only accesses this directory
     // through the `Io` trait, and never directly.
     project_root: Absolute<std::path::PathBuf>,
@@ -111,13 +111,10 @@ pub struct Workspace<'a> {
     pub defines: HashMap<Symbol, String>,
     pub default_target: Option<String>,
     pub force_color: bool,
-    pub io: &'a dyn Io,
-    pub render: &'a dyn Render,
+    pub io: Arc<dyn Io>,
+    pub render: Arc<dyn Render>,
     pub(crate) runner_state: crate::runner::RunnerState,
     pub(crate) artificial_delay: Option<std::time::Duration>,
-
-    pub werkfile_path: std::path::PathBuf,
-    pub werkfile_source: &'a str,
 }
 
 #[derive(Default)]
@@ -130,26 +127,14 @@ struct Caches {
 
 pub const WERK_CACHE_FILENAME: &str = ".werk-cache";
 
-impl<'a> Workspace<'a> {
-    pub fn new_with_diagnostics(
-        ast: &'a werk_parser::Document<'a>,
-        io: &'a dyn Io,
-        render: &'a dyn Render,
-        project_root: Absolute<std::path::PathBuf>,
-        settings: &WorkspaceSettings,
-    ) -> Result<Self, Annotated<Error, &'a werk_parser::Document<'a>>> {
-        Self::new(ast, io, render, project_root, settings)
-            .map_err(|err| err.into_diagnostic_error(ast))
-    }
-
+impl Workspace {
     pub fn new(
-        ast: &'a werk_parser::Document<'a>,
-        io: &'a dyn Io,
-        render: &'a dyn Render,
+        io: Arc<dyn Io>,
+        render: Arc<dyn Render>,
         project_root: Absolute<std::path::PathBuf>,
         settings: &WorkspaceSettings,
     ) -> Result<Self, Error> {
-        let werk_cache = read_workspace_cache(io, &settings.output_directory);
+        let werk_cache = read_workspace_cache(&*io, &settings.output_directory);
 
         let mut workspace_files =
             IndexMap::with_capacity_and_hasher(1024, ahash::RandomState::default());
@@ -180,7 +165,7 @@ impl<'a> Workspace<'a> {
 
         let manifest = ir::Manifest::default();
 
-        let mut workspace = Self {
+        let workspace = Self {
             manifest,
             project_root,
             output_directory: settings.output_directory.clone(),
@@ -203,152 +188,297 @@ impl<'a> Workspace<'a> {
             render,
             runner_state: crate::RunnerState::new(settings.jobs),
             artificial_delay: settings.artificial_delay,
-            werkfile_path: ast.origin.to_path_buf(),
-            werkfile_source: ast.source,
         };
-
-        // Manifest document is currently empty - populate it by evaluating the AST.
-        workspace.evaluate_globals_and_recipes(ast)?;
 
         Ok(workspace)
     }
 
-    /// Evaluate global variables, tasks, and recipe patterns. Also gathers
-    /// documentation for each global item.
-    #[allow(clippy::too_many_lines)]
-    fn evaluate_globals_and_recipes(
+    fn register_werkfile_source(
         &mut self,
-        ast: &'a werk_parser::Document<'a>,
-    ) -> Result<(), EvalError> {
-        let mut source_map = DiagnosticMainSourceMap::default();
-        let source_path = ast.origin.display().to_string();
-        let id = source_map.insert(source_path.clone(), ast.source.to_owned());
-        assert_eq!(id, DiagnosticFileId(0));
-        self.render.add_source_file(id, &source_path, ast.source);
+        path: &Absolute<werk_fs::Path>,
+        source: &str,
+        included_from: Option<DiagnosticSpan>,
+    ) -> Result<DiagnosticFileId, EvalError> {
+        let id = match self.manifest.source_map.insert_check_duplicate(
+            path.to_owned().into_inner().into(),
+            source.to_owned(),
+            included_from,
+        ) {
+            Ok(id) => id,
+            Err(previously_included_from) => {
+                return Err(EvalError::IncludeDuplicate(
+                    included_from.unwrap_or(DiagnosticFileId(0).span(
+                        werk_util::Span::from_offset_and_len(werk_util::Offset(0), 0),
+                    )),
+                    previously_included_from,
+                    path.to_owned(),
+                ));
+            }
+        };
 
-        for stmt in &ast.root.statements {
-            let doc_comment = ast
-                .get_whitespace(stmt.ws_pre)
-                .trim()
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
+        self.render.add_source_file(id, path.as_str(), source);
+        Ok(id)
+    }
 
+    /// Parse a werkfile source document and add it to the workspace, evaluating
+    /// all statements in global scope.
+    pub fn add_werkfile_source(
+        &mut self,
+        path: &Absolute<werk_fs::Path>,
+        source: &str,
+    ) -> Result<DiagnosticFileId, EvalError> {
+        let file = self.register_werkfile_source(path, source, None)?;
+        let ast = werk_parser::parse_werk(source).map_err(|err| EvalError::Parse(file, err))?;
+        self.eval_werkfile(file, ast, false)
+    }
+
+    /// Add a parsed werkfile document to the workspace, evaluating all
+    /// statements in the global scope. This is usually what you want for the
+    /// main `Werkfile`, because `default` statements must be parsed before
+    /// creating the workspace.
+    pub fn add_werkfile_parsed(
+        &mut self,
+        path: &Absolute<werk_fs::Path>,
+        source: &str,
+        ast: ast::Root,
+    ) -> Result<DiagnosticFileId, EvalError> {
+        let file = self.register_werkfile_source(path, source, None)?;
+        self.eval_werkfile(file, ast, false)
+    }
+
+    fn eval_werkfile(
+        &mut self,
+        file: DiagnosticFileId,
+        ast: ast::Root,
+        is_include: bool,
+    ) -> Result<DiagnosticFileId, EvalError> {
+        for stmt in ast.statements {
             match stmt.statement {
-                ast::RootStmt::Default(ast::DefaultStmt::Target(ref stmt)) => {
-                    let scope = RootScope::new(self);
-                    let value = eval::eval_string_expr(&scope, &stmt.value)?;
-                    self.default_target = Some(value.value.string);
+                ast::RootStmt::Include(ref stmt) => {
+                    self.eval_include(file, stmt)?;
                 }
-                ast::RootStmt::Default(_) => {
-                    // Ignore; these should be parsed by the front-end.
-                    continue;
+                ast::RootStmt::Default(ref stmt) => {
+                    self.eval_default(file, stmt, is_include)?;
                 }
                 ast::RootStmt::Config(ref config_stmt) => {
-                    let hash = compute_stable_semantic_hash(&config_stmt.value);
-                    if let Some(config_override) = self.defines.get(&config_stmt.ident.ident) {
-                        tracing::trace!(
-                            "Overriding config variable `{}` with `{}`",
-                            config_stmt.ident.ident,
-                            config_override
-                        );
-                        self.manifest.globals.set_config(
-                            config_stmt.ident.ident,
-                            Eval::using_vars(
-                                config_override.clone().into(),
-                                [
-                                    UsedVariable::Global(config_stmt.ident.ident, hash),
-                                    UsedVariable::Define(
-                                        config_stmt.ident.ident,
-                                        compute_stable_hash(config_override),
-                                    ),
-                                ],
-                            ),
-                            config_stmt.span,
-                            doc_comment,
-                        )?;
-                    } else {
-                        let scope = RootScope::new(self);
-                        let mut value = eval::eval_chain(&scope, &config_stmt.value)?;
-                        value
-                            .used
-                            .insert(UsedVariable::Global(config_stmt.ident.ident, hash));
-                        tracing::trace!("(global) config `{}` = {:?}", config_stmt.ident, value);
-                        self.manifest.globals.set_config(
-                            config_stmt.ident.ident,
-                            value,
-                            config_stmt.span,
-                            doc_comment,
-                        )?;
-                    }
+                    let doc_comment =
+                        werk_parser::extract_doc_comment(&self.manifest, file, stmt.ws_pre)
+                            .to_string();
+                    self.eval_config(file, doc_comment, config_stmt)?;
                 }
                 ast::RootStmt::Let(ref let_stmt) => {
-                    let hash = compute_stable_semantic_hash(&let_stmt.value);
-                    let scope = RootScope::new(self);
-                    let mut value = eval::eval_chain(&scope, &let_stmt.value)?;
-                    value
-                        .used
-                        .insert(UsedVariable::Global(let_stmt.ident.ident, hash));
-                    tracing::trace!("(global) let `{}` = {:?}", let_stmt.ident, value);
-                    self.manifest.globals.set(let_stmt.ident.ident, value);
+                    self.eval_let(file, let_stmt)?;
                 }
-                ast::RootStmt::Task(ref task_recipe) => {
-                    let hash = compute_stable_semantic_hash(task_recipe);
-                    self.manifest.task_recipes.insert(
-                        task_recipe.name.ident.as_str(),
-                        TaskRecipe {
-                            span: task_recipe.span,
-                            name: task_recipe.name.ident,
-                            doc_comment,
-                            ast: task_recipe,
-                            hash,
-                        },
-                    );
+                ast::RootStmt::Task(task_recipe) => {
+                    let doc_comment =
+                        werk_parser::extract_doc_comment(&self.manifest, file, stmt.ws_pre)
+                            .to_string();
+                    self.eval_task_recipe(file, doc_comment, task_recipe);
                 }
-                ast::RootStmt::Build(ref build_recipe) => {
-                    let hash = compute_stable_semantic_hash(build_recipe);
-                    let scope = RootScope::new(self);
-                    let mut pattern_builder =
-                        eval::eval_pattern_builder(&scope, &build_recipe.pattern)?;
-
-                    // TODO: Consider if it isn't better to do this while matching recipes.
-                    pattern_builder.ensure_absolute_path();
-
-                    self.manifest.build_recipes.push(BuildRecipe {
-                        span: build_recipe.span,
-                        pattern: pattern_builder.build().value,
-                        doc_comment,
-                        ast: build_recipe,
-                        hash,
-                    });
+                ast::RootStmt::Build(build_recipe) => {
+                    let doc_comment =
+                        werk_parser::extract_doc_comment(&self.manifest, file, stmt.ws_pre)
+                            .to_string();
+                    self.eval_build_recipe(file, doc_comment, build_recipe)?;
                 }
             }
         }
 
         // Warn about defines set on the command-line that have no effect.
         for key in self.defines.keys() {
-            if !self.manifest.globals.configs.contains_key(key) {
+            if !self.manifest.config_variables.contains_key(key) {
                 self.render
                     .warning(None, &Warning::UnusedDefine(key.as_str().to_owned()));
             }
         }
 
-        self.manifest.source_map = source_map;
+        Ok(file)
+    }
+
+    fn eval_include(
+        &mut self,
+        file: DiagnosticFileId,
+        stmt: &ast::IncludeStmt,
+    ) -> Result<(), EvalError> {
+        let value = eval::eval_chain(self, &stmt.param, file)?;
+        let mut files = vec![];
+        value.value.try_visit(|include_file| {
+            let path = werk_fs::PathBuf::new(include_file.string)
+                .and_then(|path| path.absolutize(werk_fs::Path::ROOT).map(Cow::into_owned))
+                .map_err(|err| EvalError::Path(file.span(stmt.span), err))?;
+            files.push(path.to_path_buf());
+            Ok::<_, EvalError>(())
+        })?;
+        for included_file in files {
+            let file_entry = self.get_project_file(&included_file).ok_or_else(|| {
+                EvalError::IncludeIoError(
+                    file.span(stmt.span),
+                    included_file.to_string(),
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "file not found").into(),
+                )
+            })?;
+
+            let source = self.io.read_file(&file_entry.path).map_err(|err| {
+                EvalError::IncludeIoError(
+                    file.span(stmt.span),
+                    included_file.to_string(),
+                    err.into(),
+                )
+            })?;
+
+            let source = String::from_utf8(source).map_err(|_| {
+                EvalError::NonUtf8Read(file.span(stmt.span), file_entry.path.clone().into_inner())
+            })?;
+
+            let id =
+                self.register_werkfile_source(&included_file, &source, Some(file.span(stmt.span)))?;
+            werk_parser::parse_werk(&source)
+                .map_err(|err| EvalError::Parse(id, err))
+                .and_then(|ast| self.eval_werkfile(id, ast, true))
+                .map_err(|err| match err {
+                    EvalError::IncludeDuplicate(..) => err,
+                    _ => EvalError::IncludeError(file.span(stmt.span), Box::new(err)),
+                })?;
+        }
+
+        Ok(())
+    }
+
+    fn eval_default(
+        &mut self,
+        file: DiagnosticFileId,
+        stmt: &ast::DefaultStmt,
+        is_include: bool,
+    ) -> Result<(), EvalError> {
+        use werk_util::Spanned as _;
+
+        if is_include {
+            return Err(EvalError::DefaultInInclude(file.span(stmt.span())));
+        }
+
+        // Note: Other types of `default` statements are handled upstream, while
+        // parsing `Defaults`, which happens prior to creating the workspace.
+        if let ast::DefaultStmt::Target(ref stmt) = stmt {
+            let value = eval::eval_string_expr(self, &stmt.value, file)?;
+            self.default_target = Some(value.value.string);
+        }
+
+        Ok(())
+    }
+
+    fn eval_config(
+        &mut self,
+        file: DiagnosticFileId,
+        doc_comment: String,
+        stmt: &ast::ConfigStmt,
+    ) -> Result<(), EvalError> {
+        let hash = compute_stable_semantic_hash(&stmt.value);
+        if let Some(config_override) = self.defines.get(&stmt.ident.ident) {
+            tracing::trace!(
+                "Overriding config variable `{}` with `{}`",
+                stmt.ident.ident,
+                config_override
+            );
+            let evaluated = Eval::<Value>::using_vars(
+                config_override.clone().into(),
+                [
+                    UsedVariable::Global(stmt.ident.ident, hash),
+                    UsedVariable::Define(stmt.ident.ident, compute_stable_hash(config_override)),
+                ],
+            );
+            self.manifest.set_config(
+                stmt.ident.ident,
+                evaluated.value.clone(),
+                file.span(stmt.span),
+                doc_comment,
+            )?;
+            self.manifest
+                .global_variables
+                .insert(stmt.ident.ident, evaluated);
+        } else {
+            let mut value = eval::eval_chain(self, &stmt.value, file)?;
+            value
+                .used
+                .insert(UsedVariable::Global(stmt.ident.ident, hash));
+            tracing::trace!("(global) config `{}` = {:?}", stmt.ident, value);
+            self.manifest.set_config(
+                stmt.ident.ident,
+                value.value.clone(),
+                file.span(stmt.span),
+                doc_comment,
+            )?;
+            self.manifest
+                .global_variables
+                .insert(stmt.ident.ident, value);
+        }
+
+        Ok(())
+    }
+
+    fn eval_let(&mut self, file: DiagnosticFileId, stmt: &ast::LetStmt) -> Result<(), EvalError> {
+        let hash = compute_stable_semantic_hash(&stmt.value);
+        let mut value = eval::eval_chain(self, &stmt.value, file)?;
+        value
+            .used
+            .insert(UsedVariable::Global(stmt.ident.ident, hash));
+        tracing::trace!("(global) let `{}` = {:?}", stmt.ident, value);
+        self.manifest
+            .global_variables
+            .insert(stmt.ident.ident, value);
+        Ok(())
+    }
+
+    fn eval_task_recipe(
+        &mut self,
+        file: DiagnosticFileId,
+        doc_comment: String,
+        task_recipe: ast::TaskRecipe,
+    ) {
+        let hash = compute_stable_semantic_hash(&task_recipe);
+        self.manifest.task_recipes.insert(
+            task_recipe.name.ident.as_str(),
+            TaskRecipe {
+                span: file.span(task_recipe.span),
+                name: task_recipe.name.ident,
+                doc_comment,
+                ast: task_recipe,
+                hash,
+            },
+        );
+    }
+
+    fn eval_build_recipe(
+        &mut self,
+        file: DiagnosticFileId,
+        doc_comment: String,
+        build_recipe: ast::BuildRecipe,
+    ) -> Result<(), EvalError> {
+        let hash = compute_stable_semantic_hash(&build_recipe);
+        let mut pattern_builder = eval::eval_pattern_builder(self, &build_recipe.pattern, file)?;
+
+        // TODO: Consider if it isn't better to do this while matching recipes.
+        pattern_builder.ensure_absolute_path();
+
+        self.manifest.build_recipes.push(BuildRecipe {
+            span: file.span(build_recipe.span),
+            pattern: pattern_builder.build().value,
+            doc_comment,
+            ast: build_recipe,
+            hash,
+        });
         Ok(())
     }
 
     #[inline]
     pub fn io(&self) -> &dyn Io {
-        self.io
+        &*self.io
     }
 
     /// Write outdatedness cache (`which` and `glob`)  to "<out-dir>/.werk-cache".
     #[expect(clippy::unused_async)] // Preserving `async` for future-proofing.
     pub async fn finalize(&self) -> std::io::Result<()> {
         let cache = self.werk_cache.lock();
-        write_workspace_cache(self.io, &self.output_directory, &cache)
+        write_workspace_cache(&*self.io, &self.output_directory, &cache)
     }
 
     pub fn workspace_files(
@@ -555,7 +685,7 @@ pub(crate) fn compute_stable_hash<T: std::hash::Hash + ?Sized>(value: &T) -> Has
     hasher.finish()
 }
 
-pub(crate) fn compute_stable_semantic_hash<T: werk_parser::SemanticHash + ?Sized>(
+pub(crate) fn compute_stable_semantic_hash<T: werk_util::SemanticHash + ?Sized>(
     value: &T,
 ) -> Hash128 {
     let mut hasher = rustc_stable_hash::StableSipHasher128::new();
@@ -658,7 +788,7 @@ fn write_workspace_cache(
     }
 }
 
-impl<'a> werk_util::DiagnosticSourceMap for &'a Workspace<'a> {
+impl werk_util::DiagnosticSourceMap for &Workspace {
     #[inline]
     fn get_source(
         &self,

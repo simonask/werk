@@ -1,5 +1,5 @@
 error[R0011]: ambiguous pattern match: /foofoo
- --> INPUT:3:7
+ --> /INPUT:3:7
   |
 3 | build "%foo" {
   |       ------ note: first pattern here

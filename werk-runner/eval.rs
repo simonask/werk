@@ -4,14 +4,11 @@ pub(crate) use string::*;
 pub use used::*;
 
 use werk_fs::Absolute;
-use werk_util::Symbol;
+use werk_util::{DiagnosticFileId, Spanned as _, Symbol};
 
 use std::sync::Arc;
 
-use werk_parser::{
-    ast::{self},
-    parser::Spanned as _,
-};
+use werk_parser::ast;
 
 use crate::{
     BuildRecipeScope, Env, EvalError, Lookup, LookupValue, MatchScope, Pattern, RunCommand, Scope,
@@ -128,28 +125,34 @@ impl<T> std::ops::DerefMut for Eval<T> {
     }
 }
 
-pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, EvalError> {
+pub fn eval(
+    scope: &dyn Scope,
+    expr: &ast::Expr,
+    file: DiagnosticFileId,
+) -> Result<Eval<Value>, EvalError> {
     match expr {
-        ast::Expr::SubExpr(expr) => eval_chain(scope, &expr.expr),
-        ast::Expr::StringExpr(expr) => Ok(eval_string_expr(scope, expr)?.map(Value::String)),
-        ast::Expr::Shell(expr) => Ok(eval_shell(scope, &expr.param)?.map(Value::String)),
-        ast::Expr::Read(expr) => Ok(eval_read(scope, &expr.param)?.map(Value::String)),
-        ast::Expr::Glob(expr) => Ok(eval_glob(scope, expr)?.map(Value::List)),
+        ast::Expr::SubExpr(expr) => eval_chain(scope, &expr.expr, file),
+        ast::Expr::StringExpr(expr) => Ok(eval_string_expr(scope, expr, file)?.map(Value::String)),
+        ast::Expr::Shell(expr) => Ok(eval_shell(scope, &expr.param, file)?.map(Value::String)),
+        ast::Expr::Read(expr) => Ok(eval_read(scope, &expr.param, file)?.map(Value::String)),
+        ast::Expr::Glob(expr) => Ok(eval_glob(scope, expr, file)?.map(Value::List)),
         ast::Expr::Which(expr) => {
             let Eval {
                 value: string,
                 mut used,
-            } = eval_string_expr(scope, &expr.param)?;
+            } = eval_string_expr(scope, &expr.param, file)?;
 
-            let (which, hash) = scope
-                .workspace()
-                .which(&string)
-                .map_err(|e| EvalError::CommandNotFound(expr.span, string.string.clone(), e))?;
+            let (which, hash) = scope.workspace().which(&string).map_err(|e| {
+                EvalError::CommandNotFound(file.span(expr.span), string.string.clone(), e)
+            })?;
             // Note: TryFrom sets the correct StringFlags.
             let which: StringValue = match which.into_owned().try_into() {
                 Ok(value) => value,
                 Err(path) => {
-                    return Err(EvalError::NonUtf8Which(expr.span, path.into_inner()));
+                    return Err(EvalError::NonUtf8Which(
+                        file.span(expr.span),
+                        path.into_inner(),
+                    ));
                 }
             };
 
@@ -166,7 +169,7 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             let Eval {
                 value: name,
                 mut used,
-            } = eval_string_expr(scope, &expr.param)?;
+            } = eval_string_expr(scope, &expr.param, file)?;
             let (env, hash) = scope.workspace().env(&name);
             used.insert(UsedVariable::Env(Symbol::new(&name), hash));
             Ok(Eval {
@@ -178,7 +181,7 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
             let mut items = Vec::with_capacity(list_expr.items.len());
             let mut used = Used::none();
             for expr in &list_expr.items {
-                let eval_item = eval_chain(scope, &expr.item)?;
+                let eval_item = eval_chain(scope, &expr.item, file)?;
                 used |= eval_item.used;
                 items.push(eval_item.value);
             }
@@ -189,19 +192,28 @@ pub fn eval(scope: &dyn Scope, expr: &ast::Expr<'_>) -> Result<Eval<Value>, Eval
         }
         ast::Expr::Ident(ident) => scope
             .get(Lookup::Ident(ident.ident))
-            .ok_or_else(|| EvalError::NoSuchIdentifier(ident.span, ident.ident.to_string()))
+            .ok_or_else(|| {
+                EvalError::NoSuchIdentifier(file.span(ident.span), ident.ident.to_string())
+            })
             .map(LookupValue::into_owned),
         ast::Expr::Error(expr) => {
-            let message = eval_string_expr(scope, &expr.param)?;
-            Err(EvalError::ErrorExpression(expr.span, message.value.string))
+            let message = eval_string_expr(scope, &expr.param, file)?;
+            Err(EvalError::ErrorExpression(
+                file.span(expr.span),
+                message.value.string,
+            ))
         }
     }
 }
 
-pub fn eval_chain(scope: &dyn Scope, expr: &ast::ExprChain<'_>) -> Result<Eval<Value>, EvalError> {
-    let mut value = eval(scope, &expr.expr)?;
+pub fn eval_chain(
+    scope: &dyn Scope,
+    expr: &ast::ExprChain,
+    file: DiagnosticFileId,
+) -> Result<Eval<Value>, EvalError> {
+    let mut value = eval(scope, &expr.expr, file)?;
     for entry in &expr.ops {
-        value = eval_op(scope, &entry.expr, value)?;
+        value = eval_op(scope, &entry.expr, value, file)?;
     }
     Ok(value)
 }
@@ -210,88 +222,73 @@ pub fn eval_op(
     scope: &dyn Scope,
     expr: &ast::ExprOp,
     param: Eval<Value>,
+    file: DiagnosticFileId,
 ) -> Result<Eval<Value>, EvalError> {
     match expr {
         ast::ExprOp::SubExpr(expr) => {
             let subscope = SubexprScope::new(scope, &param);
-            eval_chain(&subscope, &expr.expr)
+            eval_chain(&subscope, &expr.expr, file)
         }
         ast::ExprOp::StringExpr(expr) => {
             let subscope = SubexprScope::new(scope, &param);
-            eval_string_expr(&subscope, expr).map(|eval| eval.map(Value::String))
+            eval_string_expr(&subscope, expr, file).map(|eval| eval.map(Value::String))
         }
-        ast::ExprOp::Match(match_expr) => eval_match_expr(scope, match_expr, param),
-        ast::ExprOp::Map(expr) => eval_map(scope, expr, param),
+        ast::ExprOp::Match(match_expr) => eval_match_expr(scope, match_expr, param, file),
+        ast::ExprOp::Map(expr) => eval_map(scope, expr, param, file),
         ast::ExprOp::Flatten(_) => Ok(eval_flatten(scope, param)),
-        ast::ExprOp::Filter(expr) => eval_filter(scope, expr, param),
-        ast::ExprOp::FilterMatch(expr) => eval_filter_match(scope, expr, param),
-        ast::ExprOp::Discard(expr) => eval_discard(scope, expr, param),
-        ast::ExprOp::Join(expr) => eval_join(scope, expr, param),
-        ast::ExprOp::Split(expr) => eval_split(scope, expr, param),
+        ast::ExprOp::Filter(expr) => eval_filter(scope, expr, param, file),
+        ast::ExprOp::FilterMatch(expr) => eval_filter_match(scope, expr, param, file),
+        ast::ExprOp::Discard(expr) => eval_discard(scope, expr, param, file),
+        ast::ExprOp::Join(expr) => eval_join(scope, expr, param, file),
+        ast::ExprOp::Split(expr) => eval_split(scope, expr, param, file),
         ast::ExprOp::Dedup(_) => Ok(eval_dedup(param)),
         ast::ExprOp::Lines(_) => Ok(eval_split_lines(scope, param)),
         ast::ExprOp::Info(expr) => {
             let scope = SubexprScope::new(scope, &param);
-            let message = eval_string_expr(&scope, &expr.param)?;
+            let message = eval_string_expr(&scope, &expr.param, file)?;
             scope.render().message(scope.task_id(), &message.value);
             Ok(param)
         }
         ast::ExprOp::Warn(expr) => {
             let scope = SubexprScope::new(scope, &param);
-            let message = eval_string_expr(&scope, &expr.param)?;
+            let message = eval_string_expr(&scope, &expr.param, file)?;
             scope.render().warning(
                 scope.task_id(),
-                &Warning::WarningExpression(expr.span, message.value.string),
+                &Warning::WarningExpression(file.span(expr.span), message.value.string),
             );
             Ok(param)
         }
         ast::ExprOp::Error(error_expr) => {
-            let string = eval_string_expr(scope, &error_expr.param)?;
+            let string = eval_string_expr(scope, &error_expr.param, file)?;
             Err(EvalError::ErrorExpression(
-                error_expr.span,
+                file.span(error_expr.span),
                 string.value.string,
             ))
         }
-        ast::ExprOp::AssertEq(expr) => eval_assert_eq(scope, expr, param),
-        ast::ExprOp::AssertMatch(expr) => eval_assert_match(scope, expr, param),
+        ast::ExprOp::AssertEq(expr) => eval_assert_eq(scope, expr, param, file),
+        ast::ExprOp::AssertMatch(expr) => eval_assert_match(scope, expr, param, file),
     }
 }
 
 pub fn eval_match_expr(
     scope: &dyn Scope,
-    expr: &ast::MatchExpr<'_>,
+    expr: &ast::MatchExpr,
     param: Eval<Value>,
+    file: DiagnosticFileId,
 ) -> Result<Eval<Value>, EvalError> {
-    // Apply the match recursively to the input.
-    fn apply_match_recursively(
-        scope: &dyn Scope,
-        patterns: &[(Pattern, &ast::ExprChain<'_>)],
-        value: Value,
-        used: &mut Used,
-    ) -> Result<Value, EvalError> {
-        match value {
-            Value::String(s) => apply_match(scope, patterns, s.string, used),
-            Value::List(list) => {
-                if list.is_empty() {
-                    return Ok(Value::List(Vec::new()));
-                }
+    let mut used = param.used;
 
-                let mut new_list = Vec::with_capacity(list.len());
-                for item in list {
-                    new_list.push(apply_match_recursively(scope, patterns, item, used)?);
-                }
-                Ok(Value::List(new_list))
-            }
-        }
+    // Evaluate patterns.
+    let mut patterns = Vec::with_capacity(expr.param.len());
+    for stmt in &expr.param {
+        let pattern = eval_pattern(scope, &stmt.pattern, file)?;
+        used |= pattern.used;
+        patterns.push((pattern.value, &stmt.expr));
     }
 
-    fn apply_match(
-        scope: &dyn Scope,
-        patterns: &[(Pattern, &ast::ExprChain<'_>)],
-        input_string: String,
-        used: &mut Used,
-    ) -> Result<Value, EvalError> {
-        for (pattern, replacement_expr) in patterns {
+    // Map all all strings in the value through the match expression, recursively.
+    let value = param.value.try_map_strings(|input_string| {
+        for (pattern, replacement_expr) in &patterns {
             tracing::trace!("trying match '{:?}' against '{}'", pattern, input_string);
             let Some(pattern_match) = pattern.match_whole_string(&input_string) else {
                 continue;
@@ -299,64 +296,40 @@ pub fn eval_match_expr(
 
             // Don't need to forward used variables here, because
             // we are manually collecting used variables
-            let matched_string = Eval::inherent(Value::from(input_string));
+            let matched_string = Eval::inherent(Value::String(input_string));
             let scope = MatchScope::new(scope, &pattern_match, &matched_string);
-            let new_value = eval_chain(&scope, replacement_expr)?;
-            *used |= new_value.used;
+            let new_value = eval_chain(&scope, replacement_expr, file)?;
+            used |= new_value.used;
             return Ok(new_value.value);
         }
 
         // Unmodified.
-        Ok(Value::String(input_string.into()))
-    }
-
-    let mut used = param.used;
-
-    // Evaluate patterns.
-    let mut patterns = Vec::with_capacity(expr.param.len());
-    for stmt in &expr.param {
-        let pattern = eval_pattern(scope, &stmt.pattern)?;
-        used |= pattern.used;
-        patterns.push((pattern.value, &stmt.expr));
-    }
-
-    let value = apply_match_recursively(scope, &patterns, param.value, &mut used)?;
+        Ok::<_, EvalError>(Value::String(input_string))
+    })?;
 
     Ok(Eval { value, used })
 }
 
 pub fn eval_filter_match(
     scope: &dyn Scope,
-    expr: &ast::FilterMatchExpr<'_>,
+    expr: &ast::FilterMatchExpr,
     param: Eval<Value>,
+    file: DiagnosticFileId,
 ) -> Result<Eval<Value>, EvalError> {
-    // Apply the match recursively to the input.
-    fn apply_filter_match_recursively(
-        scope: &dyn Scope,
-        patterns: &[(Pattern, &ast::ExprChain<'_>)],
-        value: Value,
-        used: &mut Used,
-        result: &mut Vec<Value>,
-    ) -> Result<(), EvalError> {
-        match value {
-            Value::String(s) => apply_filter_match(scope, patterns, s.string, used, result),
-            Value::List(list) => {
-                for item in list {
-                    apply_filter_match_recursively(scope, patterns, item, used, result)?;
-                }
-                Ok(())
-            }
-        }
+    let mut used = param.used;
+
+    // Evaluate patterns.
+    let mut patterns = Vec::with_capacity(expr.param.len());
+    for stmt in &expr.param {
+        let pattern = eval_pattern(scope, &stmt.pattern, file)?;
+        used |= pattern.used;
+        patterns.push((pattern.value, &stmt.expr));
     }
 
-    fn apply_filter_match(
-        scope: &dyn Scope,
-        patterns: &[(Pattern, &ast::ExprChain<'_>)],
-        input_string: String,
-        used: &mut Used,
-        result: &mut Vec<Value>,
-    ) -> Result<(), EvalError> {
-        for (pattern, replacement_expr) in patterns {
+    // Apply the match filter recursively to the input.
+    let mut result = Vec::new();
+    param.value.try_visit(|input_string| {
+        for (pattern, replacement_expr) in &patterns {
             tracing::trace!("trying match '{:?}' against '{}'", pattern, input_string);
             let Some(pattern_match) = pattern.match_whole_string(&input_string) else {
                 continue;
@@ -364,30 +337,17 @@ pub fn eval_filter_match(
 
             // Don't need to forward used variables here, because
             // we are manually collecting used variables
-            let matched_string = Eval::inherent(Value::from(input_string));
+            let matched_string = Eval::inherent(Value::String(input_string));
             let scope = MatchScope::new(scope, &pattern_match, &matched_string);
-            let new_value = eval_chain(&scope, replacement_expr)?;
-            *used |= new_value.used;
+            let new_value = eval_chain(&scope, replacement_expr, file)?;
+            used |= new_value.used;
             result.push(new_value.value);
             break;
         }
 
         // No match.
         Ok(())
-    }
-
-    let mut used = param.used;
-
-    // Evaluate patterns.
-    let mut patterns = Vec::with_capacity(expr.param.len());
-    for stmt in &expr.param {
-        let pattern = eval_pattern(scope, &stmt.pattern)?;
-        used |= pattern.used;
-        patterns.push((pattern.value, &stmt.expr));
-    }
-
-    let mut result = Vec::new();
-    apply_filter_match_recursively(scope, &patterns, param.value, &mut used, &mut result)?;
+    })?;
 
     Ok(Eval {
         value: Value::List(result),
@@ -397,10 +357,11 @@ pub fn eval_filter_match(
 
 fn eval_join(
     scope: &dyn Scope,
-    expr: &ast::JoinExpr<'_>,
+    expr: &ast::JoinExpr,
     param: Eval<Value>,
+    file: DiagnosticFileId,
 ) -> Result<Eval<Value>, EvalError> {
-    let sep = eval_string_expr(scope, &expr.param)?;
+    let sep = eval_string_expr(scope, &expr.param, file)?;
     let used = param.used | sep.used;
     Ok(Eval {
         value: Value::String(flat_join(&param.value, &sep.value)),
@@ -410,36 +371,18 @@ fn eval_join(
 
 fn eval_map(
     scope: &dyn Scope,
-    expr: &ast::MapExpr<'_>,
+    expr: &ast::MapExpr,
     param: Eval<Value>,
+    file: DiagnosticFileId,
 ) -> Result<Eval<Value>, EvalError> {
-    fn apply_map_recursively(
-        scope: &dyn Scope,
-        value: Value,
-        map: &ast::Expr<'_>,
-        used: &mut Used,
-    ) -> Result<Value, EvalError> {
-        match value {
-            Value::List(vec) => {
-                let mut result = Vec::with_capacity(vec.len());
-                for item in vec {
-                    let new_value = apply_map_recursively(scope, item, map, used)?;
-                    result.push(new_value);
-                }
-                Ok(Value::List(result))
-            }
-            value @ Value::String(_) => {
-                let input = Eval::inherent(value);
-                let subscope = SubexprScope::new(scope, &input);
-                let new_value = eval(&subscope, map)?;
-                *used |= new_value.used;
-                Ok(new_value.value)
-            }
-        }
-    }
-
     let mut used = param.used;
-    let value = apply_map_recursively(scope, param.value, &expr.param, &mut used)?;
+    let value = param.value.try_map_strings(|string| {
+        let input = Eval::inherent(Value::String(string));
+        let subscope = SubexprScope::new(scope, &input);
+        let new_value = eval(&subscope, &expr.param, file)?;
+        used |= new_value.used;
+        Ok(new_value.value)
+    })?;
     Ok(Eval { value, used })
 }
 
@@ -468,26 +411,19 @@ fn eval_filter(
     scope: &dyn Scope,
     expr: &ast::FilterExpr,
     param: Eval<Value>,
+    file: DiagnosticFileId,
 ) -> Result<Eval<Value>, EvalError> {
-    fn eval_filter_recursive(pattern: &Pattern, value: Value, result: &mut Vec<Value>) {
-        match value {
-            Value::List(vec) => {
-                for item in vec {
-                    eval_filter_recursive(pattern, item, result);
-                }
-            }
-            Value::String(ref s) => {
-                if pattern.match_whole_string(s).is_some() {
-                    result.push(value);
-                }
-            }
-        }
-    }
-
-    let pattern = eval_pattern(scope, &expr.param)?;
+    let pattern = eval_pattern(scope, &expr.param, file)?;
     let used = param.used | pattern.used;
+    let pattern = pattern.value;
+
     let mut result = Vec::new();
-    eval_filter_recursive(&pattern.value, param.value, &mut result);
+    param.value.visit(|s| {
+        if pattern.match_whole_string(&s.string).is_some() {
+            result.push(Value::String(s));
+        }
+    });
+
     Ok(Eval {
         value: Value::List(result),
         used,
@@ -498,26 +434,17 @@ fn eval_discard(
     scope: &dyn Scope,
     expr: &ast::DiscardExpr,
     param: Eval<Value>,
+    file: DiagnosticFileId,
 ) -> Result<Eval<Value>, EvalError> {
-    fn eval_discard_recursive(pattern: &Pattern, value: Value, result: &mut Vec<Value>) {
-        match value {
-            Value::List(vec) => {
-                for item in vec {
-                    eval_discard_recursive(pattern, item, result);
-                }
-            }
-            Value::String(ref s) => {
-                if pattern.match_whole_string(s).is_none() {
-                    result.push(value);
-                }
-            }
-        }
-    }
-
-    let pattern = eval_pattern(scope, &expr.param)?;
+    let pattern = eval_pattern(scope, &expr.param, file)?;
     let used = param.used | pattern.used;
+    let pattern = pattern.value;
     let mut result = Vec::new();
-    eval_discard_recursive(&pattern.value, param.value, &mut result);
+    param.value.visit(|s| {
+        if pattern.match_whole_string(&s.string).is_none() {
+            result.push(Value::String(s));
+        }
+    });
     Ok(Eval {
         value: Value::List(result),
         used,
@@ -528,8 +455,9 @@ fn eval_split(
     scope: &dyn Scope,
     expr: &ast::SplitExpr,
     param: Eval<Value>,
+    file: DiagnosticFileId,
 ) -> Result<Eval<Value>, EvalError> {
-    let pattern_builder = eval_pattern_builder(scope, &expr.param)?;
+    let pattern_builder = eval_pattern_builder(scope, &expr.param, file)?;
     let pattern_regex = pattern_builder.build_partial_regex();
     let regex = pattern_regex.value.regex;
     let used = param.used | pattern_regex.used;
@@ -576,81 +504,86 @@ fn eval_split_lines(_scope: &dyn Scope, param: Eval<Value>) -> Eval<Value> {
 pub(crate) fn eval_pattern_builder<'a, P: Scope + ?Sized>(
     scope: &'a P,
     expr: &'a ast::PatternExpr,
+    file: DiagnosticFileId,
 ) -> Result<PatternBuilder<'a, P>, EvalError> {
-    let mut pattern_builder = PatternBuilder::new(scope, expr.span);
-    pattern_builder.eval(expr)?;
+    let mut pattern_builder = PatternBuilder::new(scope, file.span(expr.span));
+    pattern_builder.eval(file, expr)?;
     Ok(pattern_builder)
 }
 
 pub fn eval_pattern<P: Scope + ?Sized>(
     scope: &P,
     expr: &ast::PatternExpr,
+    file: DiagnosticFileId,
 ) -> Result<Eval<Pattern>, EvalError> {
-    Ok(eval_pattern_builder(scope, expr)?.build())
+    Ok(eval_pattern_builder(scope, expr, file)?.build())
 }
 
 pub fn eval_string_expr<P: Scope + ?Sized>(
     scope: &P,
-    expr: &ast::StringExpr<'_>,
+    expr: &ast::StringExpr,
+    file: DiagnosticFileId,
 ) -> Result<Eval<StringValue>, EvalError> {
     let mut builder = StringBuilder::new(scope);
-    builder.eval(expr)?;
+    builder.eval(file, expr)?;
     Ok(builder.build())
 }
 
 #[expect(clippy::too_many_lines)]
 pub(crate) fn eval_run_exprs<S: Scope>(
     scope: &S,
-    expr: &ast::RunExpr<'_>,
+    expr: &ast::RunExpr,
     commands: &mut Vec<RunCommand>,
+    file: DiagnosticFileId,
 ) -> Result<Used, EvalError> {
     fn eval_run_exprs_recursively<S: Scope>(
         scope: &S,
-        expr: &ast::RunExpr<'_>,
+        expr: &ast::RunExpr,
         commands: &mut Vec<RunCommand>,
         used: &mut Used,
+        file: DiagnosticFileId,
     ) -> Result<(), EvalError> {
         match expr {
             ast::RunExpr::Shell(expr) => {
-                let shell = eval_shell_command(scope, &expr.param)?;
+                let shell = eval_shell_command(scope, &expr.param, file)?;
                 *used |= shell.used;
                 commands.push(RunCommand::Shell(shell.value));
             }
             ast::RunExpr::Write(expr) => {
-                let destination = eval(scope, &expr.path)?;
+                let destination = eval(scope, &expr.path, file)?;
                 let Value::String(dest_path) = destination.value else {
-                    return Err(EvalError::UnexpectedList(expr.path.span()));
+                    return Err(EvalError::UnexpectedList(file.span(expr.path.span())));
                 };
                 let dest_path = werk_fs::Path::new(&dest_path)
                     .and_then(|path| scope.workspace().get_output_file_path(path))
-                    .map_err(|err| EvalError::Path(expr.span, err))?;
-                let data = eval(scope, &expr.value)?;
+                    .map_err(|err| EvalError::Path(file.span(expr.span), err))?;
+                let data = eval(scope, &expr.value, file)?;
                 let write_used = destination.used | data.used;
                 let Value::String(data) = data.value else {
-                    return Err(EvalError::UnexpectedList(expr.value.span()));
+                    return Err(EvalError::UnexpectedList(file.span(expr.value.span())));
                 };
 
                 *used |= write_used;
                 commands.push(RunCommand::Write(dest_path, data.string.into()));
             }
             ast::RunExpr::Copy(expr) => {
-                let from = eval_string_expr(scope, &expr.src)?;
-                let to = eval_string_expr(scope, &expr.dest)?;
+                let from = eval_string_expr(scope, &expr.src, file)?;
+                let to = eval_string_expr(scope, &expr.dest, file)?;
                 let from_path = werk_fs::PathBuf::new(from.value.string)
                     .and_then(|path| {
                         path.absolutize(werk_fs::Path::ROOT)
                             .map(std::borrow::Cow::into_owned)
                     })
-                    .map_err(|err| EvalError::Path(expr.src.span, err))?;
+                    .map_err(|err| EvalError::Path(file.span(expr.src.span), err))?;
                 let to_path = werk_fs::Path::new(&to)
                     .and_then(|path| scope.workspace().get_output_file_path(path))
-                    .map_err(|err| EvalError::Path(expr.dest.span, err))?;
+                    .map_err(|err| EvalError::Path(file.span(expr.dest.span), err))?;
                 let copy_used = from.used | to.used;
                 *used |= copy_used;
                 commands.push(RunCommand::Copy(from_path, to_path));
             }
             ast::RunExpr::Delete(expr) => {
-                let evaluated_paths = eval(scope, &expr.param)?;
+                let evaluated_paths = eval(scope, &expr.param, file)?;
                 let mut paths = Vec::new();
                 evaluated_paths.value.visit(|s| {
                     if s.flags.contains(StringFlags::CONTAINS_PATHS) {
@@ -658,48 +591,54 @@ pub(crate) fn eval_run_exprs<S: Scope>(
                         let path = match Absolute::new(path) {
                             Ok(path) => path,
                             Err(path) => {
-                                scope.warning(&Warning::IgnoringNonAbsolutePath(expr.span, path));
+                                scope.warning(&Warning::IgnoringNonAbsolutePath(
+                                    file.span(expr.span),
+                                    path,
+                                ));
                                 return;
                             }
                         };
                         paths.push(path);
                     } else {
-                        scope.warning(&Warning::IgnoringUnresolvedPath(expr.span, s.string));
+                        scope.warning(&Warning::IgnoringUnresolvedPath(
+                            file.span(expr.span),
+                            s.string,
+                        ));
                     }
                 });
                 *used |= evaluated_paths.used;
-                commands.push(RunCommand::Delete(expr.span, paths));
+                commands.push(RunCommand::Delete(file.span(expr.span), paths));
             }
             ast::RunExpr::Env(expr) => {
-                let key = eval_string_expr(scope, &expr.key)?;
-                let value = eval_string_expr(scope, &expr.value)?;
+                let key = eval_string_expr(scope, &expr.key, file)?;
+                let value = eval_string_expr(scope, &expr.value, file)?;
                 *used |= key.used;
                 *used |= value.used;
                 commands.push(RunCommand::SetEnv(key.value.string, value.value.string));
             }
             ast::RunExpr::EnvRemove(expr) => {
-                let key = eval_string_expr(scope, &expr.param)?;
+                let key = eval_string_expr(scope, &expr.param, file)?;
                 *used |= key.used;
                 commands.push(RunCommand::RemoveEnv(key.value.string));
             }
             ast::RunExpr::Info(expr) => {
-                let message = eval_string_expr(scope, &expr.param)?;
+                let message = eval_string_expr(scope, &expr.param, file)?;
                 *used |= message.used;
-                commands.push(RunCommand::Info(expr.span, message.value.string));
+                commands.push(RunCommand::Info(file.span(expr.span), message.value.string));
             }
             ast::RunExpr::Warn(expr) => {
-                let message = eval_string_expr(scope, &expr.param)?;
+                let message = eval_string_expr(scope, &expr.param, file)?;
                 *used |= message.used;
-                commands.push(RunCommand::Warn(expr.span, message.value.string));
+                commands.push(RunCommand::Warn(file.span(expr.span), message.value.string));
             }
             ast::RunExpr::List(exprs) => {
                 for expr in &exprs.items {
-                    eval_run_exprs_recursively(scope, &expr.item, commands, used)?;
+                    eval_run_exprs_recursively(scope, &expr.item, commands, used, file)?;
                 }
             }
             ast::RunExpr::Block(block) => {
                 for stmt in &block.statements {
-                    eval_run_exprs_recursively(scope, &stmt.statement, commands, used)?;
+                    eval_run_exprs_recursively(scope, &stmt.statement, commands, used, file)?;
                 }
             }
         }
@@ -708,15 +647,16 @@ pub(crate) fn eval_run_exprs<S: Scope>(
     }
 
     let mut used = Used::none();
-    eval_run_exprs_recursively(scope, expr, commands, &mut used)?;
+    eval_run_exprs_recursively(scope, expr, commands, &mut used, file)?;
     Ok(used)
 }
 
 pub fn eval_shell_command<P: Scope + ?Sized>(
     scope: &P,
     expr: &ast::StringExpr,
+    file: DiagnosticFileId,
 ) -> Result<Eval<ShellCommandLine>, EvalError> {
-    let mut builder = CommandLineBuilder::new(scope, expr.span);
+    let mut builder = CommandLineBuilder::new(scope, file.span(expr.span));
     builder.eval(expr)?;
     builder.build()
 }
@@ -735,9 +675,10 @@ enum ResolvePathMode {
 
 pub fn eval_shell<P: Scope + ?Sized>(
     scope: &P,
-    expr: &ast::StringExpr<'_>,
+    expr: &ast::StringExpr,
+    file: DiagnosticFileId,
 ) -> Result<Eval<StringValue>, EvalError> {
-    let command = eval_shell_command(scope, expr)?;
+    let command = eval_shell_command(scope, expr, file)?;
 
     // Unconditionally disable color output when executing shell command during eval.
     let mut env = Env::default();
@@ -751,7 +692,7 @@ pub fn eval_shell<P: Scope + ?Sized>(
         Err(e) => {
             // Spawning the command failed.
             return Err(EvalError::Shell(
-                expr.span,
+                file.span(expr.span),
                 Arc::new(ShellError {
                     command: command.value,
                     result: Arc::new(Err(e)),
@@ -763,7 +704,7 @@ pub fn eval_shell<P: Scope + ?Sized>(
     if !output.status.success() {
         // The command itself failed.
         return Err(EvalError::Shell(
-            expr.span,
+            file.span(expr.span),
             Arc::new(ShellError {
                 command: command.value,
                 result: Arc::new(Ok(output)),
@@ -780,17 +721,18 @@ pub fn eval_shell<P: Scope + ?Sized>(
 
 pub fn eval_read<P: Scope + ?Sized>(
     scope: &P,
-    expr: &ast::StringExpr<'_>,
+    expr: &ast::StringExpr,
+    file: DiagnosticFileId,
 ) -> Result<Eval<StringValue>, EvalError> {
-    let path = eval_string_expr(scope, expr)?;
+    let path = eval_string_expr(scope, expr, file)?;
 
-    let path_err = |err| EvalError::Path(expr.span, err);
+    let path_err = |err| EvalError::Path(file.span(expr.span), err);
 
     let path = werk_fs::Path::new(&path).map_err(path_err)?;
     let path = path.absolutize(werk_fs::Path::ROOT).map_err(path_err)?;
     let Some(fs_entry) = scope.workspace().get_project_file(&path) else {
         return Err(EvalError::Io(
-            expr.span,
+            file.span(expr.span),
             std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("file not found during `read`: {path}"),
@@ -802,11 +744,11 @@ pub fn eval_read<P: Scope + ?Sized>(
     let contents = scope
         .io()
         .read_file(&fs_entry.path)
-        .map_err(|err| EvalError::Io(expr.span, err.into()))?;
+        .map_err(|err| EvalError::Io(file.span(expr.span), err.into()))?;
 
     let Ok(string) = String::from_utf8(contents) else {
         return Err(EvalError::NonUtf8Read(
-            expr.span,
+            file.span(expr.span),
             fs_entry.path.clone().into_inner(),
         ));
     };
@@ -821,12 +763,13 @@ pub fn eval_read<P: Scope + ?Sized>(
 
 pub fn eval_glob(
     scope: &dyn Scope,
-    expr: &ast::GlobExpr<'_>,
+    expr: &ast::GlobExpr,
+    file: DiagnosticFileId,
 ) -> Result<Eval<Vec<Value>>, EvalError> {
     let Eval {
         value: mut glob_pattern_string,
         mut used,
-    } = eval_string_expr(scope, &expr.param)?;
+    } = eval_string_expr(scope, &expr.param, file)?;
 
     if !glob_pattern_string.starts_with('/') {
         glob_pattern_string.string.insert(0, '/');
@@ -834,7 +777,7 @@ pub fn eval_glob(
     let (matches, hash) = scope
         .workspace()
         .glob_workspace_files(&glob_pattern_string)
-        .map_err(|err| EvalError::Glob(expr.span, Arc::new(err)))?;
+        .map_err(|err| EvalError::Glob(file.span(expr.span), Arc::new(err)))?;
     used.insert(UsedVariable::Glob(Symbol::new(&glob_pattern_string), hash));
     let matches = matches.into_iter().map(|p| p.into_inner().into()).collect();
 
@@ -853,7 +796,8 @@ pub(crate) struct EvaluatedBuildRecipe {
 
 pub(crate) fn eval_build_recipe_statements(
     scope: &mut BuildRecipeScope<'_>,
-    body: &[ast::BodyStmt<ast::BuildRecipeStmt<'_>>],
+    body: &[ast::BodyStmt<ast::BuildRecipeStmt>],
+    file: DiagnosticFileId,
 ) -> Result<Eval<EvaluatedBuildRecipe>, EvalError> {
     let mut evaluated = EvaluatedBuildRecipe {
         explicit_dependencies: Vec::new(),
@@ -866,11 +810,11 @@ pub(crate) fn eval_build_recipe_statements(
     for stmt in body {
         match stmt.statement {
             ast::BuildRecipeStmt::Let(ref let_stmt) => {
-                let value = eval_chain(scope, &let_stmt.value)?;
+                let value = eval_chain(scope, &let_stmt.value, file)?;
                 scope.set(let_stmt.ident.ident, value);
             }
             ast::BuildRecipeStmt::From(ref expr) => {
-                let value = eval_chain(scope, &expr.param)?;
+                let value = eval_chain(scope, &expr.param, file)?;
                 used |= value.used;
                 let offset = evaluated.explicit_dependencies.len();
                 value
@@ -885,7 +829,7 @@ pub(crate) fn eval_build_recipe_statements(
                 );
             }
             ast::BuildRecipeStmt::Depfile(ref expr) => {
-                let value = eval_chain(scope, &expr.param)?;
+                let value = eval_chain(scope, &expr.param, file)?;
                 used |= &value.used;
                 match value.value {
                     Value::String(ref depfile) => {
@@ -893,36 +837,36 @@ pub(crate) fn eval_build_recipe_statements(
                         scope.set(Symbol::from("depfile"), value);
                     }
                     Value::List(_) => {
-                        return Err(EvalError::UnexpectedList(expr.span));
+                        return Err(EvalError::UnexpectedList(file.span(expr.span)));
                     }
                 }
             }
             ast::BuildRecipeStmt::Env(ref expr) => {
-                let key = eval_string_expr(scope, &expr.key)?;
-                let value = eval_string_expr(scope, &expr.value)?;
+                let key = eval_string_expr(scope, &expr.key, file)?;
+                let value = eval_string_expr(scope, &expr.value, file)?;
                 used |= key.used;
                 used |= value.used;
                 evaluated.env.env(key.value, value.value);
             }
             ast::BuildRecipeStmt::EnvRemove(ref expr) => {
-                let key = eval_string_expr(scope, &expr.param)?;
+                let key = eval_string_expr(scope, &expr.param, file)?;
                 used |= key.used;
                 evaluated.env.env_remove(key.value);
             }
             ast::BuildRecipeStmt::Run(ref expr) => {
-                used |= eval_run_exprs(scope, &expr.param, &mut evaluated.commands)?;
+                used |= eval_run_exprs(scope, &expr.param, &mut evaluated.commands, file)?;
             }
             ast::BuildRecipeStmt::Info(ref expr) => {
-                let message = eval_string_expr(scope, &expr.param)?;
+                let message = eval_string_expr(scope, &expr.param, file)?;
                 evaluated
                     .commands
-                    .push(RunCommand::Info(expr.span, message.value.string));
+                    .push(RunCommand::Info(file.span(expr.span), message.value.string));
             }
             ast::BuildRecipeStmt::Warn(ref expr) => {
-                let message = eval_string_expr(scope, &expr.param)?;
+                let message = eval_string_expr(scope, &expr.param, file)?;
                 evaluated
                     .commands
-                    .push(RunCommand::Warn(expr.span, message.value.string));
+                    .push(RunCommand::Warn(file.span(expr.span), message.value.string));
             }
             ast::BuildRecipeStmt::SetCapture(ref kw_expr) => {
                 evaluated
@@ -951,7 +895,8 @@ pub(crate) struct EvaluatedTaskRecipe {
 
 pub(crate) fn eval_task_recipe_statements(
     scope: &mut TaskRecipeScope<'_>,
-    body: &[ast::BodyStmt<ast::TaskRecipeStmt<'_>>],
+    body: &[ast::BodyStmt<ast::TaskRecipeStmt>],
+    file: DiagnosticFileId,
 ) -> Result<EvaluatedTaskRecipe, EvalError> {
     let mut evaluated = EvaluatedTaskRecipe {
         build: Vec::new(),
@@ -962,36 +907,36 @@ pub(crate) fn eval_task_recipe_statements(
     for stmt in body {
         match stmt.statement {
             ast::TaskRecipeStmt::Let(ref let_stmt) => {
-                let value = eval_chain(scope, &let_stmt.value)?;
+                let value = eval_chain(scope, &let_stmt.value, file)?;
                 scope.set(let_stmt.ident.ident, Eval::inherent(value.value));
             }
             ast::TaskRecipeStmt::Build(ref expr) => {
-                let value = eval_chain(scope, &expr.param)?;
+                let value = eval_chain(scope, &expr.param, file)?;
                 value.value.collect_strings_into(&mut evaluated.build);
             }
             ast::TaskRecipeStmt::Env(ref expr) => {
-                let key = eval_string_expr(scope, &expr.key)?;
-                let value = eval_string_expr(scope, &expr.value)?;
+                let key = eval_string_expr(scope, &expr.key, file)?;
+                let value = eval_string_expr(scope, &expr.value, file)?;
                 evaluated.env.env(key.value, value.value);
             }
             ast::TaskRecipeStmt::EnvRemove(ref expr) => {
-                let key = eval_string_expr(scope, &expr.param)?;
+                let key = eval_string_expr(scope, &expr.param, file)?;
                 evaluated.env.env_remove(key.value);
             }
             ast::TaskRecipeStmt::Run(ref expr) => {
-                eval_run_exprs(scope, &expr.param, &mut evaluated.commands)?;
+                eval_run_exprs(scope, &expr.param, &mut evaluated.commands, file)?;
             }
             ast::TaskRecipeStmt::Info(ref expr) => {
-                let message = eval_string_expr(scope, &expr.param)?;
+                let message = eval_string_expr(scope, &expr.param, file)?;
                 evaluated
                     .commands
-                    .push(RunCommand::Info(expr.span, message.value.string));
+                    .push(RunCommand::Info(file.span(expr.span), message.value.string));
             }
             ast::TaskRecipeStmt::Warn(ref expr) => {
-                let message = eval_string_expr(scope, &expr.param)?;
+                let message = eval_string_expr(scope, &expr.param, file)?;
                 evaluated
                     .commands
-                    .push(RunCommand::Warn(expr.span, message.value.string));
+                    .push(RunCommand::Warn(file.span(expr.span), message.value.string));
             }
             ast::TaskRecipeStmt::SetCapture(ref kw_expr) => evaluated
                 .commands
@@ -1007,15 +952,16 @@ pub(crate) fn eval_task_recipe_statements(
 
 fn eval_assert_eq(
     scope: &dyn Scope,
-    expr: &ast::AssertEqExpr<'_>,
+    expr: &ast::AssertEqExpr,
     param: Eval<Value>,
+    file: DiagnosticFileId,
 ) -> Result<Eval<Value>, EvalError> {
     let scope = SubexprScope::new(scope, &param);
-    let rhs = eval(&scope, &expr.param)?;
+    let rhs = eval(&scope, &expr.param, file)?;
     let used = param.used | rhs.used;
     if param.value != rhs.value {
         return Err(EvalError::AssertEqFailed(
-            expr.span,
+            file.span(expr.span),
             Box::new((param.value, rhs.value)),
         ));
     }
@@ -1027,8 +973,9 @@ fn eval_assert_eq(
 
 fn eval_assert_match(
     scope: &dyn Scope,
-    expr: &ast::AssertMatchExpr<'_>,
+    expr: &ast::AssertMatchExpr,
     param: Eval<Value>,
+    file: DiagnosticFileId,
 ) -> Result<Eval<Value>, EvalError> {
     fn get_mismatch<'a>(pattern: &Pattern, value: &'a Value) -> Option<&'a str> {
         match value {
@@ -1044,12 +991,12 @@ fn eval_assert_match(
     }
 
     let scope = SubexprScope::new(scope, &param);
-    let pattern = eval_pattern(&scope, &expr.param)?;
+    let pattern = eval_pattern(&scope, &expr.param, file)?;
     let used = param.used | pattern.used;
 
     if let Some(mismatch) = get_mismatch(&pattern.value, &param.value) {
         return Err(EvalError::AssertMatchFailed(
-            expr.span,
+            file.span(expr.span),
             Box::new((mismatch.to_owned(), pattern.value.string)),
         ));
     }

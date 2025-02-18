@@ -1,0 +1,14 @@
+error[P1001]: parse error
+ --> /included:1:1
+  |
+1 | let a=
+  | -     ^ expected expression
+  | |
+  | info: while parsing `let` statement
+  |
+ ::: /INPUT:1:1
+  |
+1 | include "included"
+  | ------------------ note: included here
+  |
+  = help: expressions must start with a value, or an `env`, `glob`, `which`, or `shell` operation

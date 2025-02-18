@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use crate::SemanticHash;
+use crate::{DiagnosticFileId, SemanticHash};
 
 #[derive(Clone, Copy, Default)]
 pub struct Span {
@@ -10,6 +10,7 @@ pub struct Span {
 
 impl Span {
     #[must_use]
+    #[inline]
     pub const fn ignore() -> Self {
         Self {
             start: Offset::ignore(),
@@ -18,6 +19,7 @@ impl Span {
     }
 
     #[must_use]
+    #[inline]
     #[allow(clippy::cast_possible_truncation)]
     pub fn from_offset_and_len(offset: Offset, len: usize) -> Self {
         if offset.is_ignored() {
@@ -31,11 +33,13 @@ impl Span {
     }
 
     #[must_use]
+    #[inline]
     pub const fn is_ignored(&self) -> bool {
         self.start.is_ignored()
     }
 
     #[must_use]
+    #[inline]
     pub const fn is_offset(&self) -> bool {
         !self.is_ignored() && self.start.0 == self.end.0
     }
@@ -61,8 +65,15 @@ impl Span {
     }
 
     #[must_use]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.start == self.end
+    }
+
+    #[must_use]
+    #[inline]
+    pub fn with_file(self, file: DiagnosticFileId) -> DiagnosticSpan {
+        DiagnosticSpan { file, span: self }
     }
 }
 
@@ -97,6 +108,14 @@ impl From<Offset> for Span {
 
 #[derive(Clone, Copy)]
 pub struct Offset(pub u32);
+
+impl Offset {
+    #[inline]
+    #[must_use]
+    pub fn to_span(self) -> Span {
+        self.into()
+    }
+}
 
 impl Default for Offset {
     #[inline]
@@ -203,6 +222,28 @@ impl From<Span> for std::ops::Range<usize> {
             0..0
         } else {
             value.start.0 as usize..value.end.0 as usize
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DiagnosticSpan {
+    pub file: DiagnosticFileId,
+    pub span: Span,
+}
+
+impl DiagnosticSpan {
+    #[inline]
+    #[must_use]
+    pub fn annotation(
+        self,
+        level: annotate_snippets::Level,
+        message: impl std::fmt::Display,
+    ) -> crate::DiagnosticAnnotation {
+        crate::DiagnosticAnnotation {
+            span: self,
+            level,
+            message: message.to_string(),
         }
     }
 }

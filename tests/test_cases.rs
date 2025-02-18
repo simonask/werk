@@ -15,19 +15,20 @@ fn fix_newlines(s: &str) -> String {
 
 async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
     let source = std::fs::read_to_string(file).unwrap();
-    let test = Test::new(&source).map_err(|err| anyhow::Error::msg(err.to_string()))?;
+    let mut test = Test::new(&source).map_err(|err| anyhow::Error::msg(err.to_string()))?;
 
     let workspace = test
-        .create_workspace(&[])
+        .create_workspace()
         .map_err(|err| anyhow::Error::msg(err.to_string()))?;
 
     // Invoke the runner if there is a default target.
     if let Some(ref default_target) = workspace.default_target {
-        let runner = Runner::new(&workspace);
+        let runner = Runner::new(workspace);
         runner
             .build_or_run(default_target)
             .await
             .map_err(|err| anyhow::Error::msg(err.to_string()))?;
+        std::mem::drop(runner);
         test.run_pragma_tests()?;
     }
 
@@ -108,3 +109,8 @@ error_case!(ambiguous_build_recipe);
 error_case!(ambiguous_path_resolution);
 error_case!(capture_group_out_of_bounds);
 error_case!(duplicate_config);
+error_case!(include_missing);
+error_case!(include_with_error);
+error_case!(include_self);
+error_case!(include_twice);
+error_case!(include_with_default);

@@ -21,7 +21,7 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
 
     _ = tracing_subscriber::fmt::try_init();
 
-    let test = match Test::new(WERK) {
+    let mut test = match Test::new(WERK) {
         Ok(test) => test,
         Err(err) => {
             eprintln!("{err}");
@@ -29,53 +29,59 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
         }
     };
     test.set_workspace_file(&["foo"], "foo").unwrap();
-    let workspace = match test.create_workspace(&[]) {
+
+    let foo_workspace = test.workspace_path_str(["foo"]);
+    let foo_output = test.output_path_str(["foo"]);
+    let bar_workspace = test.workspace_path_str(["bar"]);
+    let bar_output = test.output_path_str(["bar"]);
+
+    let workspace = match test.create_workspace() {
         Ok(workspace) => workspace,
         Err(err) => {
             eprintln!("{err}");
             panic!("could not create workspace")
         }
     };
-    let globals = &workspace.manifest.globals;
+    let globals = &workspace.manifest.global_variables;
     assert_eq!(
-        globals.get(Symbol::new("exists-resolved")).unwrap().value,
-        Value::from(test.workspace_path_str(["foo"]))
+        globals.get(&Symbol::new("exists-resolved")).unwrap().value,
+        Value::from(foo_workspace.clone())
     );
     assert_eq!(
         globals
-            .get(Symbol::new("exists-explicit-out-dir"))
+            .get(&Symbol::new("exists-explicit-out-dir"))
             .unwrap()
             .value,
-        Value::from(test.output_path_str(["foo"]))
+        Value::from(foo_output)
     );
     assert_eq!(
         globals
-            .get(Symbol::new("exists-explicit-workspace"))
+            .get(&Symbol::new("exists-explicit-workspace"))
             .unwrap()
             .value,
-        Value::from(test.workspace_path_str(["foo"]))
+        Value::from(foo_workspace.clone())
     );
 
     assert_eq!(
         globals
-            .get(Symbol::new("exists-not-resolved"))
+            .get(&Symbol::new("exists-not-resolved"))
             .unwrap()
             .value,
-        Value::from(test.output_path_str(["bar"]))
+        Value::from(bar_output.clone())
     );
     assert_eq!(
         globals
-            .get(Symbol::new("exists-not-explicit-out-dir"))
+            .get(&Symbol::new("exists-not-explicit-out-dir"))
             .unwrap()
             .value,
-        Value::from(test.output_path_str(["bar"]))
+        Value::from(bar_output.clone())
     );
     assert_eq!(
         globals
-            .get(Symbol::new("exists-not-explicit-workspace"))
+            .get(&Symbol::new("exists-not-explicit-workspace"))
             .unwrap()
             .value,
-        Value::from(test.workspace_path_str(["bar"]))
+        Value::from(bar_workspace)
     );
 }
 
@@ -92,9 +98,9 @@ build "explicit" {
     }
 }
     "#;
-    let test = Test::new(WERK).unwrap();
-    let workspace = test.create_workspace(&[]).unwrap();
-    let runner = Runner::new(&workspace);
+    let mut test = Test::new(WERK).unwrap();
+    let workspace = test.create_workspace().unwrap();
+    let runner = Runner::new(workspace);
     match runner.build_or_run("explicit").await {
         Ok(_) => panic!("expected circular dependency error"),
         Err(Annotated {
@@ -130,11 +136,11 @@ task build {
 
     _ = tracing_subscriber::fmt::try_init();
 
-    let test = Test::new(WERK).unwrap();
+    let mut test = Test::new(WERK).unwrap();
     test.set_workspace_dir(&["bar"]).unwrap();
     assert!(test.io.contains_dir(test.workspace_path(["bar"])));
-    let workspace = test.create_workspace(&[]).unwrap();
-    let runner = Runner::new(&workspace);
+    let workspace = test.create_workspace().unwrap();
+    let runner = Runner::new(workspace);
     match runner.build_or_run("build").await {
         Ok(_) => panic!("expected error"),
         Err(Annotated {

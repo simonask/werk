@@ -56,11 +56,3 @@ path = "test_cases.rs"
 [[test]]
 name = "test_eval"
 path = "test_eval.rs"
-
-[[bench]]
-name = "bench_eval"
-harness = false
-
-# [[bench]]
-# name = "bench_iai"
-# harness = false

@@ -1,23 +1,12 @@
 use ahash::HashMap;
-use werk_parser::parser::Span;
-use werk_util::{Symbol, SymbolRegistryLock};
+use werk_util::{DiagnosticSpan, Symbol, SymbolRegistryLock};
 
 use crate::{
     eval::{Eval, Used},
-    ir, EvalError, Io, PatternMatchData, Render, TaskId, Value, Warning, Workspace,
+    ir, Io, PatternMatchData, Render, TaskId, Value, Warning, Workspace,
 };
 
 pub type LocalVariables = indexmap::IndexMap<Symbol, Eval<Value>>;
-
-#[derive(Default)]
-pub struct GlobalVariables {
-    /// `config` variables and their values at the point when they were
-    /// evaluated.
-    pub configs: indexmap::IndexMap<Symbol, ConfigVar>,
-    /// All variables (both `let` and `config`) with their values at the current
-    /// point in their scope.
-    pub variables: ahash::HashMap<Symbol, Eval<Value>>,
-}
 
 pub struct ConfigVar {
     /// Snapshot of the value when the `config` statement was evaluated
@@ -26,63 +15,17 @@ pub struct ConfigVar {
     /// Doc comment
     pub comment: String,
     /// The span of the `config` statement.
-    pub span: Span,
-}
-
-impl GlobalVariables {
-    #[inline]
-    pub fn set(&mut self, name: Symbol, value: Eval<Value>) {
-        self.variables.insert(name, value);
-    }
-
-    #[inline]
-    #[must_use]
-    pub fn get(&self, name: Symbol) -> Option<&Eval<Value>> {
-        self.variables.get(&name)
-    }
-
-    /// Set the value of an evaluated `config` statement.
-    ///
-    /// This fails if a previous config statement has already defined a value
-    /// here, and captures the value at this point to prevent shadowing `let`
-    /// statements from polluting the output of `--list`.
-    pub fn set_config(
-        &mut self,
-        name: Symbol,
-        value: Eval<Value>,
-        span: Span,
-        comment: String,
-    ) -> Result<(), EvalError> {
-        if let Some(previous_value) = self.configs.insert(
-            name,
-            ConfigVar {
-                value: value.value.clone(),
-                span,
-                comment,
-            },
-        ) {
-            return Err(EvalError::DuplicateConfigStatement(
-                span,
-                previous_value.span,
-            ));
-        }
-        self.variables.insert(name, value);
-        Ok(())
-    }
-}
-
-pub struct RootScope<'a> {
-    pub workspace: &'a Workspace<'a>,
+    pub span: DiagnosticSpan,
 }
 
 pub struct TaskRecipeScope<'a> {
-    parent: &'a RootScope<'a>,
+    workspace: &'a Workspace,
     vars: LocalVariables,
     task_id: TaskId,
 }
 
 pub struct BuildRecipeScope<'a> {
-    parent: &'a RootScope<'a>,
+    workspace: &'a Workspace,
     vars: LocalVariables,
     task_id: TaskId,
     recipe_match: &'a ir::BuildRecipeMatch<'a>,
@@ -200,19 +143,12 @@ pub trait Scope: Send + Sync {
     }
 }
 
-impl<'a> RootScope<'a> {
-    #[inline]
-    pub fn new(workspace: &'a Workspace) -> Self {
-        Self { workspace }
-    }
-}
-
 impl<'a> TaskRecipeScope<'a> {
     #[inline]
     #[must_use]
-    pub fn new(root: &'a RootScope<'a>, task_id: TaskId) -> Self {
+    pub fn new(workspace: &'a Workspace, task_id: TaskId) -> Self {
         Self {
-            parent: root,
+            workspace,
             vars: LocalVariables::new(),
             task_id,
         }
@@ -220,6 +156,7 @@ impl<'a> TaskRecipeScope<'a> {
 
     pub fn set(&mut self, name: Symbol, value: Eval<Value>) {
         if default_global_constants().contains_key(&name) {
+            // TODO: Convert to real warning.
             tracing::warn!("Shadowing built-in constant `{}`", name);
         }
         self.vars.insert(name, value);
@@ -230,12 +167,12 @@ impl<'a> BuildRecipeScope<'a> {
     #[inline]
     #[must_use]
     pub fn new(
-        root: &'a RootScope<'a>,
+        workspace: &'a Workspace,
         task_id: TaskId,
         recipe_match: &'a ir::BuildRecipeMatch<'a>,
     ) -> Self {
         Self {
-            parent: root,
+            workspace,
             vars: LocalVariables::new(),
             task_id,
             recipe_match,
@@ -481,40 +418,44 @@ impl SymCache {
     }
 }
 
-impl Scope for RootScope<'_> {
-    #[inline]
+impl Scope for Workspace {
     fn get(&self, name: Lookup) -> Option<LookupValue<'_>> {
         let Lookup::Ident(name) = name else {
             return None;
         };
 
-        let Some(global) = self.workspace.manifest.globals.get(name) else {
-            // Global build-time constants.
-            if let Some(global_constant) = default_global_constants()
-                .get(&name)
-                .map(Eval::inherent)
-                .map(LookupValue::ValueRef)
-            {
-                return Some(global_constant);
-            }
+        if let Some(var) = self
+            .manifest
+            .global_variables
+            .get(&name)
+            .map(LookupValue::EvalRef)
+        {
+            return Some(var);
+        }
 
-            // Runtime constants.
-            let cache = SymCache::get();
-            if name == cache.symbol_color {
-                return Some(LookupValue::Owned(Eval::inherent(Value::from(
-                    if self.workspace.force_color { "1" } else { "0" }.to_owned(),
-                ))));
-            }
+        // Global build-time constants.
+        if let Some(global_constant) = default_global_constants()
+            .get(&name)
+            .map(Eval::inherent)
+            .map(LookupValue::ValueRef)
+        {
+            return Some(global_constant);
+        }
 
-            return None;
-        };
+        // Runtime constants.
+        let cache = SymCache::get();
+        if name == cache.symbol_color {
+            return Some(LookupValue::Owned(Eval::inherent(Value::from(
+                if self.force_color { "1" } else { "0" }.to_owned(),
+            ))));
+        }
 
-        Some(LookupValue::Ref(&global.value, &global.used))
+        None
     }
 
     #[inline]
     fn workspace(&self) -> &Workspace {
-        self.workspace
+        self
     }
 
     #[inline]
@@ -524,7 +465,7 @@ impl Scope for RootScope<'_> {
 
     #[inline]
     fn render(&self) -> &dyn Render {
-        self.workspace.render
+        &*self.render
     }
 }
 
@@ -536,7 +477,7 @@ impl Scope for TaskRecipeScope<'_> {
         };
 
         let Some(local) = self.vars.get(&name) else {
-            return self.parent.get(lookup);
+            return self.workspace.get(lookup);
         };
 
         Some(LookupValue::Ref(&local.value, &local.used))
@@ -544,7 +485,7 @@ impl Scope for TaskRecipeScope<'_> {
 
     #[inline]
     fn workspace(&self) -> &Workspace {
-        self.parent.workspace
+        self.workspace
     }
 
     #[inline]
@@ -554,7 +495,7 @@ impl Scope for TaskRecipeScope<'_> {
 
     #[inline]
     fn render(&self) -> &dyn Render {
-        self.parent.workspace.render
+        &*self.workspace.render
     }
 }
 
@@ -582,7 +523,7 @@ impl Scope for BuildRecipeScope<'_> {
                 }
 
                 let Some(local) = self.vars.get(&name) else {
-                    return self.parent.get(lookup);
+                    return self.workspace.get(lookup);
                 };
                 Some(LookupValue::EvalRef(local))
             }
@@ -591,7 +532,7 @@ impl Scope for BuildRecipeScope<'_> {
 
     #[inline]
     fn workspace(&self) -> &Workspace {
-        self.parent.workspace
+        self.workspace
     }
 
     #[inline]
@@ -601,7 +542,7 @@ impl Scope for BuildRecipeScope<'_> {
 
     #[inline]
     fn render(&self) -> &dyn Render {
-        self.parent.workspace.render
+        &*self.workspace.render
     }
 }
 

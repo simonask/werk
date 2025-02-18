@@ -1,5 +1,5 @@
 error[E0009]: capture group with index 2 is out of bounds in the current scope
- --> INPUT:2:21
+ --> /INPUT:2:21
   |
 2 |     "(a|b)(c|d)" => "{2}"
   |                     ^^^^^ capture group with index 2 is out of bounds in the current scope
