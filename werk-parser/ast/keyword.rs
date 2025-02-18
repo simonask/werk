@@ -126,14 +126,22 @@ def_keyword!(Depfile, "depfile");
 def_keyword!(False, "false");
 def_keyword!(True, "true");
 def_keyword!(To, "to");
+
+// String operations
+def_keyword!(Split, "split");
+def_keyword!(Lines, "lines");
+
+// Array operations
 def_keyword!(Map, "map");
 def_keyword!(Flatten, "flatten");
 def_keyword!(Filter, "filter");
 def_keyword!(FilterMatch, "filter-match");
 def_keyword!(Discard, "discard");
-def_keyword!(Split, "split");
 def_keyword!(Dedup, "dedup");
-def_keyword!(Lines, "lines");
+def_keyword!(Len, "len");
+def_keyword!(First, "first");
+def_keyword!(Last, "last");
+def_keyword!(Tail, "tail");
 
 // `default` keys (CLI flag defaults)
 def_keyword!(Target, "target");

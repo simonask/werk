@@ -8,7 +8,7 @@ use crate::{
 };
 use werk_util::{Offset, Symbol};
 use winnow::{
-    ascii::{digit1, multispace1, space0},
+    ascii::{dec_int, digit1, multispace1},
     combinator::{
         alt, cut_err, delimited, empty, opt, peek, preceded, repeat, separated, separated_pair,
         terminated,
@@ -352,39 +352,43 @@ fn path_interpolation(input: &mut Input) -> PResult<ast::Interpolation> {
 }
 
 fn interpolation_inner<const TERMINATE: char>(input: &mut Input) -> PResult<ast::Interpolation> {
-    alt((
-        // Interpolation with stem
-        interpolation_inner_with_stem::<TERMINATE>,
-        // Implied value with options: {join:options}
-        interpolation_options.map(|options| ast::Interpolation {
-            stem: ast::InterpolationStem::Implied,
-            options: options.map(Box::new),
-        }),
-        // Just the implied value with no options `{}`.
-        preceded(space0, peek(TERMINATE)).map(|_| ast::Interpolation {
-            stem: ast::InterpolationStem::Implied,
-            options: None,
-        }),
-    ))
-    .parse_next(input)
+    let stem = opt(interpolation_stem)
+        .parse_next(input)?
+        .unwrap_or(ast::InterpolationStem::Implied);
+    let index = opt(interpolation_index).parse_next(input)?;
+    let join = opt(interpolation_join).parse_next(input)?;
+    let ops = opt(interpolation_ops).parse_next(input)?;
+
+    cut_err(peek(TERMINATE))
+        .or_fail(Failure::ExpectedChar(TERMINATE))
+        .parse_next(input)?;
+
+    Ok(ast::Interpolation {
+        stem,
+        index,
+        options: match (ops, join) {
+            (Some(ops), None) if ops.is_empty() => None,
+            (Some(ops), join) => Some(Box::new(ast::InterpolationOptions { ops, join })),
+            (None, Some(join)) => Some(Box::new(ast::InterpolationOptions {
+                ops: vec![],
+                join: Some(join),
+            })),
+            (None, None) => None,
+        },
+    })
 }
 
-fn interpolation_inner_with_stem<const TERMINATE: char>(
-    input: &mut Input,
-) -> PResult<ast::Interpolation> {
-    (
-        interpolation_stem.expect(&"interpolation stem"),
-        alt((
-            // {stem*}, {stem:...}, or {stem*:...}
-            interpolation_options.map(|options| options.map(Box::new)),
-            // No options
-            preceded(space0, peek(TERMINATE))
-                .value(None)
-                .expect(&"interpolation options or end of interpolation"),
-        )),
+fn interpolation_index(input: &mut Input) -> PResult<ast::InterpolationIndex> {
+    delimited(
+        '[',
+        cut_err(alt((
+            dec_int.map(ast::InterpolationIndex::Const),
+            ident.map(ast::InterpolationIndex::Ident),
+            fatal(Failure::Expected(&"identifier or integer constant")),
+        ))),
+        cut_err(']').or_fail(Failure::ExpectedChar(']')),
     )
-        .map(|(stem, options)| ast::Interpolation { stem, options })
-        .parse_next(input)
+    .parse_next(input)
 }
 
 fn interpolation_stem(input: &mut Input) -> PResult<ast::InterpolationStem> {
@@ -397,26 +401,6 @@ fn interpolation_stem(input: &mut Input) -> PResult<ast::InterpolationStem> {
     ))
     .expect(&"one of %, a capture group number, or an identifier")
     .parse_next(input)
-}
-
-fn interpolation_options(input: &mut Input) -> PResult<Option<ast::InterpolationOptions>> {
-    let join = opt(interpolation_join).parse_next(input)?;
-    let ops = if join.is_some() {
-        opt(interpolation_ops).parse_next(input)?
-    } else {
-        // If there is no join operator, `interpolation_options` should only
-        // succeed if there are other options.
-        Some(interpolation_ops.parse_next(input)?)
-    };
-    Ok(match (join, ops) {
-        (None, None) => None,
-        (Some(join), None) => Some(ast::InterpolationOptions {
-            join: Some(join),
-            ops: Vec::new(),
-        }),
-        (None, Some(ops)) if ops.is_empty() => None,
-        (join, Some(ops)) => Some(ast::InterpolationOptions { ops, join }),
-    })
 }
 
 fn interpolation_join(input: &mut Input) -> PResult<String> {
@@ -568,11 +552,13 @@ mod tests {
                 ast::StringFragment::Literal(" ".into()),
                 ast::StringFragment::Interpolation(ast::Interpolation {
                     stem: ast::InterpolationStem::Ident("name".into()),
+                    index: None,
                     options: None,
                 }),
                 ast::StringFragment::Literal(" ".into()),
                 ast::StringFragment::Interpolation(ast::Interpolation {
                     stem: ast::InterpolationStem::CaptureGroup(1),
+                    index: None,
                     options: Some(Box::new(ast::InterpolationOptions {
                         ops: vec![
                             ast::InterpolationOp::ReplaceExtension {
@@ -650,6 +636,7 @@ mod tests {
             string_interpolation.parse(Input::new(input)).unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Ident("name".into()),
+                index: None,
                 options: None
             }
         );
@@ -665,6 +652,7 @@ mod tests {
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
+                index: None,
                 options: None
             }
         );
@@ -676,6 +664,7 @@ mod tests {
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
+                index: None,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![ast::InterpolationOp::ReplaceExtension {
                         from: ".ext1".into(),
@@ -693,6 +682,7 @@ mod tests {
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
+                index: None,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![ast::InterpolationOp::RegexReplace(
                         ast::RegexInterpolationOp {
@@ -710,6 +700,7 @@ mod tests {
             string_interpolation.parse(Input::new(both)).unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
+                index: None,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![
                         ast::InterpolationOp::ReplaceExtension {
@@ -736,6 +727,7 @@ mod tests {
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Ident("name".into()),
+                index: None,
                 options: None
             }
         );
@@ -747,6 +739,7 @@ mod tests {
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Ident("name".into()),
+                index: None,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![ast::InterpolationOp::ReplaceExtension {
                         from: ".ext1".into(),
@@ -764,6 +757,7 @@ mod tests {
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Ident("name".into()),
+                index: None,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![ast::InterpolationOp::RegexReplace(
                         ast::RegexInterpolationOp {
@@ -781,6 +775,7 @@ mod tests {
             string_interpolation.parse(Input::new(both)).unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Ident("name".into()),
+                index: None,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![
                         ast::InterpolationOp::ReplaceExtension {
@@ -807,6 +802,7 @@ mod tests {
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
+                index: None,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
                     join: Some(String::from(" ")),
@@ -821,6 +817,7 @@ mod tests {
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
+                index: None,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
                     join: Some(String::from(" ")),
@@ -835,6 +832,7 @@ mod tests {
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Implied,
+                index: None,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
                     join: Some(String::from(",")),
@@ -852,6 +850,7 @@ mod tests {
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Ident("name".into()),
+                index: None,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
                     join: Some(String::from(" ")),
@@ -866,6 +865,7 @@ mod tests {
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Ident("name".into()),
+                index: None,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
                     join: Some(String::from(" ")),
@@ -880,6 +880,7 @@ mod tests {
                 .unwrap(),
             ast::Interpolation {
                 stem: ast::InterpolationStem::Ident("name".into()),
+                index: None,
                 options: Some(Box::new(ast::InterpolationOptions {
                     ops: vec![],
                     join: Some(String::from(",")),

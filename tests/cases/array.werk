@@ -1,0 +1,22 @@
+let array = ["a", "b", "c"]
+let a = array[0] | assert-eq "a"
+let b = array[1] | assert-eq "b"
+let c = array[2] | assert-eq "c"
+
+let a = "x{array[0]}" | assert-eq "xa"
+let b = "x{array[1]}" | assert-eq "xb"
+let c = "x{array[2]}" | assert-eq "xc"
+
+let c = "x{array[-1]}" | assert-eq "xc"
+
+let len = array | len | assert-eq "3"
+let first = array | first | assert-eq "a"
+let last = array | last | assert-eq "c"
+let tail = array | tail | assert-eq ["b", "c"]
+
+# Stringly typed index
+let index = "0"
+let a = array[index] | assert-eq "a"
+
+let negative_index = "-1"
+let c = array[negative_index] | assert-eq "c"

@@ -515,7 +515,7 @@ where
 
 impl Parse for ast::Expr {
     fn parse(input: &mut Input) -> PResult<Self> {
-        alt((
+        let expr = alt((
             parse.map(ast::Expr::StringExpr),
             parse.map(ast::Expr::List),
             parse.map(ast::Expr::Shell),
@@ -529,6 +529,64 @@ impl Parse for ast::Expr {
             fatal(Failure::Expected(&"expression"))
                 .help("expressions must start with a value, or an `env`, `glob`, `which`, or `shell` operation")
         ))
+        .parse_next(input)?;
+
+        // Check if there is a `[...]` array lookup suffix.
+        if let Some(IndexSuffix {
+            ws_1,
+            token_open,
+            ws_2,
+            index,
+            ws_3,
+            token_close,
+        }) = opt(parse::<IndexSuffix>).parse_next(input)?
+        {
+            Ok(ast::Expr::Index(ast::IndexExpr {
+                span: expr.span().merge(token_close.span()),
+                target: Box::new(expr),
+                ws_1,
+                token_open,
+                ws_2,
+                index,
+                ws_3,
+                token_close,
+            }))
+        } else {
+            Ok(expr)
+        }
+    }
+}
+
+struct IndexSuffix {
+    pub ws_1: ast::Whitespace,
+    pub token_open: token::BracketOpen,
+    pub ws_2: ast::Whitespace,
+    pub index: ast::IndexValue,
+    pub ws_3: ast::Whitespace,
+    pub token_close: token::BracketClose,
+}
+
+impl Parse for IndexSuffix {
+    fn parse(input: &mut Input) -> PResult<Self> {
+        seq! {IndexSuffix {
+            ws_1: whitespace,
+            token_open: parse,
+            ws_2: whitespace,
+            index: cut_err(parse),
+            ws_3: whitespace,
+            token_close: cut_err(parse)
+        }}
+        .parse_next(input)
+    }
+}
+
+impl Parse for ast::IndexValue {
+    fn parse(input: &mut Input) -> PResult<Self> {
+        alt((
+            parse.map(ast::IndexValue::Constant),
+            cut_err(parse).map(|expr| ast::IndexValue::Expr(Box::new(expr))),
+        ))
+        .help("array indexing operator must be an integer constant or an expression")
         .parse_next(input)
     }
 }
@@ -586,23 +644,28 @@ impl Parse for ast::SubExpr {
 /// Expression after a `|` in an expression chain.
 fn expression_chain_op(input: &mut Input) -> PResult<ast::ExprOp> {
     alt((
-        parse.map(ast::ExprOp::SubExpr),
-        parse.map(ast::ExprOp::StringExpr),
-        parse.map(ast::ExprOp::Match),
-        parse.map(ast::ExprOp::Map),
-        parse.map(ast::ExprOp::Flatten),
-        parse.map(ast::ExprOp::Filter),
-        parse.map(ast::ExprOp::FilterMatch),
-        parse.map(ast::ExprOp::Discard),
-        parse.map(ast::ExprOp::Join),
-        parse.map(ast::ExprOp::Split),
-        parse.map(ast::ExprOp::Dedup),
-        parse.map(ast::ExprOp::Lines),
-        parse.map(ast::ExprOp::Info),
-        parse.map(ast::ExprOp::Warn),
-        parse.map(ast::ExprOp::Error),
-        parse.map(ast::ExprOp::AssertEq),
-        parse.map(ast::ExprOp::AssertMatch),
+        alt((
+            parse.map(ast::ExprOp::SubExpr),
+            parse.map(ast::ExprOp::StringExpr),
+            parse.map(ast::ExprOp::Match),
+            parse.map(ast::ExprOp::Map),
+            parse.map(ast::ExprOp::Flatten),
+            parse.map(ast::ExprOp::Filter),
+            parse.map(ast::ExprOp::FilterMatch),
+            parse.map(ast::ExprOp::Discard),
+            parse.map(ast::ExprOp::Join),
+            parse.map(ast::ExprOp::Split),
+            parse.map(ast::ExprOp::Dedup))),
+        alt((parse.map(ast::ExprOp::Lines),
+            parse.map(ast::ExprOp::Len),
+            parse.map(ast::ExprOp::First),
+            parse.map(ast::ExprOp::Last),
+            parse.map(ast::ExprOp::Tail),
+            parse.map(ast::ExprOp::Info),
+            parse.map(ast::ExprOp::Warn),
+            parse.map(ast::ExprOp::Error),
+            parse.map(ast::ExprOp::AssertEq),
+            parse.map(ast::ExprOp::AssertMatch))),
         fatal(Failure::Expected(&"a chaining expression"))
             .help("one of `join`, `flatten`, `map`, `match`, `env`, `glob`, `which`, `shell`, a string, or a sub-expression in parentheses")
     ))

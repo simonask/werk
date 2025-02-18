@@ -104,6 +104,7 @@ success_case!(env);
 success_case!(string_interp);
 success_case!(dedup);
 success_case!(nested_patterns);
+success_case!(array);
 
 error_case!(ambiguous_build_recipe);
 error_case!(ambiguous_path_resolution);
@@ -114,3 +115,4 @@ error_case!(include_with_error);
 error_case!(include_self);
 error_case!(include_twice);
 error_case!(include_with_default);
+error_case!(index_out_of_bounds);
