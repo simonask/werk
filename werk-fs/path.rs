@@ -206,7 +206,9 @@ impl Path {
         }
 
         let (parent, _tail) = self.path.rsplit_once(Self::SEPARATOR)?;
-        debug_assert!(!parent.is_empty());
+        if parent.is_empty() {
+            return None;
+        }
         Some(Self::new_unchecked(parent))
     }
 

@@ -790,6 +790,8 @@ fn recursive_into_dirname(value: &mut Value) {
         } else if let Ok(path) = werk_fs::Path::new(s) {
             if let Some(parent) = path.parent() {
                 s.string = parent.to_string();
+            } else {
+                s.string = werk_fs::Path::ROOT.to_string();
             }
         }
     });

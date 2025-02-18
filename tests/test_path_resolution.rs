@@ -152,3 +152,25 @@ task build {
         Err(err) => panic!("unexpected error: {err}"),
     }
 }
+
+#[apply(smol_macros::test)]
+async fn test_empty_out_dir() {
+    static WERK: &str = r#"
+build "bar" {
+    info "<out:dir>"
+}
+    "#;
+
+    _ = tracing_subscriber::fmt::try_init();
+
+    let mut test = Test::new(WERK).unwrap();
+    let expected_message = test.output_path_str(None::<&std::ffi::OsStr>);
+    let workspace = test.create_workspace().unwrap();
+    let runner = Runner::new(workspace);
+    runner.build_or_run("bar").await.unwrap();
+    std::mem::drop(runner);
+    assert!(test.render.did_see(&MockRenderEvent::Message(
+        Some(TaskId::build(Absolute::try_from("/bar").unwrap())),
+        expected_message,
+    )));
+}
