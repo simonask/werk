@@ -1,0 +1,27 @@
+let werk-vscode-version = shell "jq --raw-output .version werk-vscode/package.json" 
+
+build "werk-vscode/node_modules" {
+    from ["werk-vscode/package.json", "werk-vscode/package-lock.json"]
+    run ["npm --prefix werk-vscode install", "touch <out>"]
+}
+build "/werk-vscode/werk-{werk-vscode-version}.vsix" {
+    from ["werk-vscode/node_modules", glob "werk-vscode/**/*"]
+    run "npm --prefix werk-vscode run package -- --out ../target/werk-vscode"
+}
+build "/book/book" {
+    run "mdbook build book --dest-dir book/book"
+}
+
+task vscode-install-extension {
+    let vsix = "/werk-vscode/werk-{werk-vscode-version}.vsix"
+    build vsix
+    run "code --install-extension <vsix>"
+}
+
+task cli-install {
+    run "cargo install --path werk-cli"
+}
+
+task mdbook-serve {
+    run "mdbook serve book"
+}
