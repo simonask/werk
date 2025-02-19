@@ -670,6 +670,33 @@ pub(crate) fn eval_run_exprs<S: Scope>(
                 *used |= evaluated_paths.used;
                 commands.push(RunCommand::Delete(file.span(expr.span), paths));
             }
+            ast::RunExpr::Touch(expr) => {
+                let evaluated_paths = eval(scope, &expr.param, file)?;
+                let mut paths = Vec::new();
+                evaluated_paths.value.visit(|s| {
+                    if s.flags.contains(StringFlags::CONTAINS_PATHS) {
+                        let path = std::path::PathBuf::from(s.string);
+                        let path = match Absolute::new(path) {
+                            Ok(path) => path,
+                            Err(path) => {
+                                scope.warning(&Warning::IgnoringNonAbsolutePath(
+                                    file.span(expr.span),
+                                    path,
+                                ));
+                                return;
+                            }
+                        };
+                        paths.push(path);
+                    } else {
+                        scope.warning(&Warning::IgnoringUnresolvedPath(
+                            file.span(expr.span),
+                            s.string,
+                        ));
+                    }
+                });
+                *used |= evaluated_paths.used;
+                commands.push(RunCommand::Touch(file.span(expr.span), paths));
+            }
             ast::RunExpr::Env(expr) => {
                 let key = eval_string_expr(scope, &expr.key, file)?;
                 let value = eval_string_expr(scope, &expr.value, file)?;

@@ -690,6 +690,7 @@ impl Parse for ast::RunExpr {
             parse.map(ast::RunExpr::Write),
             parse.map(ast::RunExpr::Copy),
             parse.map(ast::RunExpr::Delete),
+            parse.map(ast::RunExpr::Touch),
             parse.map(ast::RunExpr::EnvRemove),
             parse.map(ast::RunExpr::Env),
             parse.map(ast::RunExpr::Block),

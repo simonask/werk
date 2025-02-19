@@ -733,6 +733,9 @@ impl<'a> Inner<'a> {
                 RunCommand::Delete(span, paths) => {
                     self.execute_recipe_delete_command(task_id, &paths, silent, span)?;
                 }
+                RunCommand::Touch(span, paths) => {
+                    self.execute_recipe_touch_command(task_id, &paths, silent, span)?;
+                }
                 RunCommand::Info(_span, message) => {
                     self.workspace.render.message(Some(task_id), &message);
                 }
@@ -842,6 +845,27 @@ impl<'a> Inner<'a> {
                         _ => return Err(err.into()),
                     },
                 }
+            } else if !silent {
+                self.workspace.render.warning(
+                    Some(task_id),
+                    &Warning::IgnoringPathOutsideOutputDirectory(span, path.clone()),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn execute_recipe_touch_command(
+        &self,
+        task_id: TaskId,
+        paths: &[Absolute<std::path::PathBuf>],
+        silent: bool,
+        span: DiagnosticSpan,
+    ) -> Result<(), Error> {
+        for path in paths {
+            if self.workspace.is_in_output_directory(path) {
+                self.workspace.io.touch(path)?;
             } else if !silent {
                 self.workspace.render.warning(
                     Some(task_id),
@@ -970,6 +994,7 @@ pub(crate) enum RunCommand {
     Warn(DiagnosticSpan, String),
     // Path is always in the output directory. They don't need to exist.
     Delete(DiagnosticSpan, Vec<Absolute<std::path::PathBuf>>),
+    Touch(DiagnosticSpan, Vec<Absolute<std::path::PathBuf>>),
     SetCapture(bool),
     SetEnv(String, String),
     RemoveEnv(String),
@@ -993,6 +1018,21 @@ impl std::fmt::Display for RunCommand {
             }
             RunCommand::Delete(_, paths) => {
                 write!(f, "delete ")?;
+                if paths.len() == 1 {
+                    write!(f, "{}", paths[0].display())
+                } else {
+                    write!(f, "[")?;
+                    for (i, p) in paths.iter().enumerate() {
+                        if i != 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", p.display())?;
+                    }
+                    write!(f, "]")
+                }
+            }
+            RunCommand::Touch(_, paths) => {
+                write!(f, "touch ")?;
                 if paths.len() == 1 {
                     write!(f, "{}", paths[0].display())
                 } else {
