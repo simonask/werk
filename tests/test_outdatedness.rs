@@ -553,3 +553,24 @@ build "binary" {
         }
     }
 }
+
+#[apply(smol_macros::test)]
+async fn test_touch() {
+    _ = tracing_subscriber::fmt::try_init();
+
+    static WERK_DEPFILE: &str = r#"
+build "binary" {
+    run { touch "<out>" }
+}"#;
+
+    let mut test = Test::new(WERK_DEPFILE).unwrap();
+    let mtime = test.io.tick();
+    let workspace = test.create_workspace().unwrap();
+    let runner = werk_runner::Runner::new(workspace);
+    runner
+        .build_file(werk_fs::Path::new("binary").unwrap())
+        .await
+        .unwrap();
+    std::mem::drop(runner);
+    test.did_touch(test.output_path(["binary"]), mtime);
+}

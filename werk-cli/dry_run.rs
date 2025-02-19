@@ -135,6 +135,11 @@ impl werk_runner::Io for DryRun {
         Ok(())
     }
 
+    fn touch(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
+        tracing::info!("[DRY-RUN] Would touch file '{}'", path.display());
+        Ok(())
+    }
+
     fn create_parent_dirs(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
         tracing::info!(
             "[DRY-RUN] Would create parent directories for '{}'",

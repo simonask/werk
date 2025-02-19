@@ -69,6 +69,9 @@ pub trait Io: Send + Sync + 'static {
     /// Delete a file from the filesystem. Must do nothing in dry-run.
     fn delete_file(&self, path: &Absolute<Path>) -> Result<(), std::io::Error>;
 
+    /// Create a file, or update an existing file's mtime. (Equivalent to UNIX `touch`.)
+    fn touch(&self, path: &Absolute<Path>) -> Result<(), std::io::Error>;
+
     /// Create the parent directories of `path`, recursively.
     fn create_parent_dirs(&self, path: &Absolute<Path>) -> Result<(), std::io::Error>;
 
@@ -325,6 +328,17 @@ impl Io for RealSystem {
 
     fn delete_file(&self, path: &Absolute<Path>) -> Result<(), std::io::Error> {
         std::fs::remove_file(path)
+    }
+
+    fn touch(&self, path: &Absolute<Path>) -> Result<(), std::io::Error> {
+        let file = std::fs::OpenOptions::new()
+            // Ensure that we can write to the file.
+            .append(true)
+            // Create the file if it does not exist.
+            .create(true)
+            .open(path)?;
+        let now = std::time::SystemTime::now();
+        file.set_modified(now)
     }
 
     fn create_parent_dirs(&self, path: &Absolute<Path>) -> Result<(), std::io::Error> {

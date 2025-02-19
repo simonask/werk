@@ -115,17 +115,20 @@ def_keyword!(Info, "info");
 def_keyword!(Warn, "warn");
 def_keyword!(Error, "error");
 def_keyword!(Match, "match");
-def_keyword!(Write, "write");
 def_keyword!(Read, "read");
-def_keyword!(Run, "run");
-def_keyword!(Copy, "copy");
-def_keyword!(Delete, "delete");
 def_keyword!(FatArrow, "=>");
 def_keyword!(From, "from");
 def_keyword!(Depfile, "depfile");
 def_keyword!(False, "false");
 def_keyword!(True, "true");
+
+// Run commands
+def_keyword!(Run, "run");
 def_keyword!(To, "to");
+def_keyword!(Copy, "copy");
+def_keyword!(Write, "write");
+def_keyword!(Delete, "delete");
+def_keyword!(Touch, "touch");
 
 // String operations
 def_keyword!(Split, "split");

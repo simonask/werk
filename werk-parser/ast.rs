@@ -526,6 +526,7 @@ pub type DepfileStmt = KwExpr<keyword::Depfile, ExprChain>;
 pub type RunStmt = KwExpr<keyword::Run, RunExpr>;
 pub type ErrorStmt = KwExpr<keyword::Error, StringExpr>;
 pub type DeleteExpr = KwExpr<keyword::Delete, Expr>;
+pub type TouchExpr = KwExpr<keyword::Touch, Expr>;
 pub type EnvRemoveStmt = KwExpr<keyword::RemoveEnv, StringExpr>;
 
 /// Things that can appear in the `command` part of recipes.
@@ -540,6 +541,8 @@ pub enum RunExpr {
     Copy(CopyExpr),
     /// Delete a file.
     Delete(DeleteExpr),
+    /// Touch a file.
+    Touch(TouchExpr),
     /// Set an environment variable.
     Env(EnvStmt),
     /// Remove an environment variable.
@@ -561,6 +564,7 @@ impl Spanned for RunExpr {
             RunExpr::Write(expr) => expr.span,
             RunExpr::Copy(expr) => expr.span,
             RunExpr::Delete(expr) => expr.span,
+            RunExpr::Touch(expr) => expr.span,
             RunExpr::Env(expr) => expr.span,
             RunExpr::EnvRemove(expr) => expr.span,
             RunExpr::Info(expr) => expr.span,
@@ -579,6 +583,7 @@ impl SemanticHash for RunExpr {
             RunExpr::Write(expr) => expr.semantic_hash(state),
             RunExpr::Copy(expr) => expr.semantic_hash(state),
             RunExpr::Delete(expr) => expr.semantic_hash(state),
+            RunExpr::Touch(expr) => expr.semantic_hash(state),
             RunExpr::Env(expr) => expr.semantic_hash(state),
             RunExpr::EnvRemove(expr) => expr.semantic_hash(state),
             // Messages don't contribute to outdatedness.

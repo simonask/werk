@@ -530,6 +530,19 @@ impl<'a> Test<'a> {
             .any(|op| matches!(op, MockIoOp::CopyFile(op_src, op_dst) if *op_src == src && *op_dst == dst))
     }
 
+    pub fn did_touch(
+        &self,
+        path: impl AsRef<Absolute<std::path::Path>>,
+        mtime: SystemTime,
+    ) -> bool {
+        let path = path.as_ref().to_path_buf();
+        self.io
+            .oplog
+            .lock()
+            .iter()
+            .any(|op| matches!(op, MockIoOp::TouchFile(p, t) if *p == path && *t == mtime))
+    }
+
     pub fn did_create_parent_dirs(&self, path: &std::path::Path) -> bool {
         self.io
             .oplog
@@ -674,6 +687,7 @@ pub enum MockIoOp {
     WriteFile(Absolute<std::path::PathBuf>),
     CopyFile(Absolute<std::path::PathBuf>, Absolute<std::path::PathBuf>),
     DeleteFile(Absolute<std::path::PathBuf>),
+    TouchFile(Absolute<std::path::PathBuf>, SystemTime),
     CreateParentDirs(Absolute<std::path::PathBuf>),
     ReadEnv(String),
 }
@@ -810,6 +824,62 @@ pub fn remove_fs(fs: &mut MockDir, path: &std::path::Path) -> std::io::Result<()
                     std::io::ErrorKind::NotFound,
                     "parent directory not found (remove)",
                 )),
+            }
+        }
+    }
+}
+
+pub fn touch_fs(fs: &mut MockDir, path: &std::path::Path, now: SystemTime) -> std::io::Result<()> {
+    let mut iter = path.components();
+
+    let (Some(here), rest) = (iter.next(), iter.as_path()) else {
+        panic!("empty path");
+    };
+
+    match here {
+        std::path::Component::Prefix(_)
+        | std::path::Component::RootDir
+        | std::path::Component::CurDir => touch_fs(fs, rest, now),
+        std::path::Component::ParentDir => panic!("parent component"),
+        std::path::Component::Normal(name) => {
+            if name.is_empty() {
+                return touch_fs(fs, rest, now);
+            }
+
+            match fs.entry(name.to_owned()) {
+                hash_map::Entry::Occupied(occupied_entry) => {
+                    if rest.as_os_str().is_empty() {
+                        match occupied_entry.into_mut() {
+                            MockDirEntry::Dir(..) => Err(std::io::Error::new(
+                                std::io::ErrorKind::IsADirectory,
+                                "touch directory",
+                            )),
+                            MockDirEntry::File(metadata, _) => {
+                                metadata.mtime = now;
+                                Ok(())
+                            }
+                        }
+                    } else {
+                        match occupied_entry.into_mut() {
+                            MockDirEntry::File(..) => Err(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                "touch file below file",
+                            )),
+                            MockDirEntry::Dir(subdir) => touch_fs(subdir, rest, now),
+                        }
+                    }
+                }
+                hash_map::Entry::Vacant(entry) => {
+                    entry.insert(MockDirEntry::File(
+                        Metadata {
+                            mtime: now,
+                            is_file: true,
+                            is_symlink: false,
+                        },
+                        Vec::new(),
+                    ));
+                    Ok(())
+                }
             }
         }
     }
@@ -972,8 +1042,9 @@ impl MockIo {
         make_mtime(self.now.load(std::sync::atomic::Ordering::SeqCst))
     }
 
-    pub fn tick(&self) {
-        self.now.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    pub fn tick(&self) -> SystemTime {
+        let now = self.now.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        make_mtime(now + 1)
     }
 
     pub fn contains_file(&self, path: impl AsRef<Absolute<std::path::Path>>) -> bool {
@@ -1223,6 +1294,12 @@ impl werk_runner::Io for MockIo {
 
         let mut fs = self.filesystem.lock();
         remove_fs(&mut fs, &path)
+    }
+
+    fn touch(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
+        let mut fs = self.filesystem.lock();
+        let now = self.now();
+        touch_fs(&mut fs, path, now)
     }
 
     fn create_parent_dirs(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
