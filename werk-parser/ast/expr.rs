@@ -1,7 +1,7 @@
 use std::hash::Hash as _;
 
 use super::{
-    keyword, token, Body, BodyStmt, ConfigInt, Ident, PatternExpr, StringExpr, Trailing, Whitespace,
+    Body, BodyStmt, ConfigInt, Ident, PatternExpr, StringExpr, Trailing, Whitespace, keyword, token,
 };
 use werk_util::{SemanticHash, Span, Spanned};
 

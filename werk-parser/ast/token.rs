@@ -3,8 +3,8 @@ use winnow::Parser as _;
 use werk_util::{Offset, Span, Spanned};
 
 use crate::{
-    parser::{Input, PResult, Parse, Parser as _},
     Failure,
+    parser::{Input, PResult, Parse, Parser as _},
 };
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -33,7 +33,7 @@ impl<const CHAR: char> Spanned for Token<CHAR> {
     fn span(&self) -> Span {
         Span {
             start: self.0,
-            end: Offset(self.0 .0 + 1),
+            end: Offset(self.0.0 + 1),
         }
     }
 }
