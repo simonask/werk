@@ -38,7 +38,7 @@ impl SmallSet {
                 SmallSet::One(lhs) => {
                     *self = SmallSet::Set(BTreeSet::from_iter([*lhs, *rhs]));
                 }
-                SmallSet::Set(ref mut lhs) => {
+                SmallSet::Set(lhs) => {
                     lhs.insert(*rhs);
                 }
             },
@@ -65,7 +65,7 @@ impl SmallSet {
                 SmallSet::One(lhs) => {
                     *self = SmallSet::Set(BTreeSet::from_iter([*lhs, rhs]));
                 }
-                SmallSet::Set(ref mut lhs) => {
+                SmallSet::Set(lhs) => {
                     lhs.insert(rhs);
                 }
             },
@@ -91,7 +91,7 @@ impl SmallSet {
             SmallSet::One(one) => {
                 *self = SmallSet::Set(BTreeSet::from_iter([*one, var]));
             }
-            SmallSet::Set(ref mut set) => {
+            SmallSet::Set(set) => {
                 set.insert(var);
             }
         }
@@ -210,7 +210,7 @@ impl IntoIterator for SmallSet {
 
 impl Extend<UsedVariable> for SmallSet {
     fn extend<T: IntoIterator<Item = UsedVariable>>(&mut self, iter: T) {
-        if let SmallSet::Set(ref mut set) = self {
+        if let SmallSet::Set(set) = self {
             set.extend(iter);
         } else {
             for var in iter {

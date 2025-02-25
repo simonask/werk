@@ -272,7 +272,7 @@ impl Io for RealSystem {
         impl Drop for Visitor<'_> {
             fn drop(&mut self) {
                 let mut results = self.1.lock();
-                let Ok(ref mut entries) = &mut *results else {
+                let Ok(entries) = &mut *results else {
                     // Already errored.
                     return;
                 };

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use werk_fs::Absolute;
 use werk_util::{AnnotateLevelExt, DiagnosticFileId, DiagnosticSpan, Level};
 
-use crate::{depfile::DepfileError, OwnedDependencyChain, ShellCommandLine, TaskId, Value};
+use crate::{OwnedDependencyChain, ShellCommandLine, TaskId, Value, depfile::DepfileError};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
@@ -36,9 +36,13 @@ pub enum Error {
     /// `TrackRunner` interface.
     #[error("command failed: {0}")]
     CommandFailed(std::process::ExitStatus),
-    #[error("cannot convert abstract paths to native OS paths yet; output directory has not been set in the [global] scope")]
+    #[error(
+        "cannot convert abstract paths to native OS paths yet; output directory has not been set in the [global] scope"
+    )]
     OutputDirectoryNotAvailable,
-    #[error("depfile was not found: '{0}'; perhaps the rule to generate it writes to the wrong location?")]
+    #[error(
+        "depfile was not found: '{0}'; perhaps the rule to generate it writes to the wrong location?"
+    )]
     DepfileNotFound(werk_fs::PathBuf),
     #[error(transparent)]
     DepfileError(#[from] DepfileError),
@@ -177,7 +181,7 @@ impl werk_util::AsDiagnostic for Error {
 
         // Additional context and help
         match self {
-            Error::AmbiguousPattern(ref err) => diag.annotations([
+            Error::AmbiguousPattern(err) => diag.annotations([
                 err.pattern1.annotation(Level::Note, "first pattern here"),
                 err.pattern2.annotation(Level::Note, "second pattern here"),
             ]),
@@ -213,8 +217,8 @@ impl PartialEq for ShellError {
     fn eq(&self, other: &Self) -> bool {
         self.command == other.command
             && match (&*self.result, &*other.result) {
-                (Ok(ref l), Ok(ref r)) => l == r,
-                (Err(ref l), Err(ref r)) => l.kind() == r.kind(),
+                (Ok(l), Ok(r)) => l == r,
+                (Err(l), Err(r)) => l.kind() == r.kind(),
                 _ => false,
             }
     }
@@ -226,12 +230,12 @@ impl std::fmt::Display for ShellError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "command failed: {}", self.command.program.display())?;
         match &*self.result {
-            Ok(ref output) => {
+            Ok(output) => {
                 if !output.stderr.is_empty() {
                     write!(f, "\nstderr:\n{}", String::from_utf8_lossy(&output.stderr))?;
                 }
             }
-            Err(ref err) => writeln!(f, "\nerror: {err}")?,
+            Err(err) => writeln!(f, "\nerror: {err}")?,
         }
 
         Ok(())
@@ -256,7 +260,9 @@ pub enum EvalError {
     DuplicatePattern(DiagnosticSpan, DiagnosticSpan),
     #[error("duplicate config statement")]
     DuplicateConfigStatement(DiagnosticSpan, DiagnosticSpan),
-    #[error("no implied interpolation value in this context; provide an identifier or a capture group index")]
+    #[error(
+        "no implied interpolation value in this context; provide an identifier or a capture group index"
+    )]
     NoImpliedValue(DiagnosticSpan),
     #[error("capture group with index {1} is out of bounds in the current scope")]
     NoSuchCaptureGroup(DiagnosticSpan, u32),
@@ -268,7 +274,9 @@ pub enum EvalError {
     PatternStemInterpolationInPattern(DiagnosticSpan),
     #[error("path resolution `<...>` interpolations cannot be used in patterns")]
     ResolvePathInPattern(DiagnosticSpan),
-    #[error("path resolution `<...>` of a string that already contains resolved paths, but is not a resolved path")]
+    #[error(
+        "path resolution `<...>` of a string that already contains resolved paths, but is not a resolved path"
+    )]
     DoubleResolvePath(DiagnosticSpan),
     #[error("join interpolations `{{...*}}` cannot be used in patterns")]
     JoinInPattern(DiagnosticSpan),

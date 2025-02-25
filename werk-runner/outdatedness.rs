@@ -7,9 +7,10 @@ use werk_fs::{Absolute, SymPath};
 use werk_util::Symbol;
 
 use crate::{
+    TaskId, Workspace,
     cache::TargetOutdatednessCache,
     eval::{Used, UsedVariable},
-    ir, TaskId, Workspace,
+    ir,
 };
 
 /// A reason why a variable or recipe is "outdated".
