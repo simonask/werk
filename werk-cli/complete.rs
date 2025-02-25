@@ -6,10 +6,10 @@ use werk_fs::Normalize;
 use werk_runner::Workspace;
 use werk_util::DiagnosticFileId;
 
-use crate::dry_run::DryRun;
-use crate::render::null::NullRender;
-use crate::render::ColorOutputKind;
 use crate::Args;
+use crate::dry_run::DryRun;
+use crate::render::ColorOutputKind;
+use crate::render::null::NullRender;
 use crate::{find_werkfile, get_workspace_dir, get_workspace_settings};
 
 fn with_werk<T: Default>(f: impl FnOnce(Workspace) -> Result<T, anyhow::Error> + 'static) -> T {
