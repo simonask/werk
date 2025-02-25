@@ -1,5 +1,5 @@
 pub use annotate_snippets::Level;
-use indexmap::{map::Entry, IndexMap};
+use indexmap::{IndexMap, map::Entry};
 
 use crate::DiagnosticSpan;
 

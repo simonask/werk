@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 
-use hashbrown::{hash_map::EntryRef, HashMap};
+use hashbrown::{HashMap, hash_map::EntryRef};
 use parking_lot::{Mutex, MutexGuard};
 
 #[derive(Clone, Copy, Eq)]
