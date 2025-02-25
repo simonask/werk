@@ -8,8 +8,8 @@ use std::{
 };
 
 use crate::{
-    traits::{self, Normalize},
     Absolute,
+    traits::{self, Normalize},
 };
 
 pub trait AsPath {

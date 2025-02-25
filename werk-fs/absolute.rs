@@ -1,8 +1,8 @@
 use std::{borrow::Borrow, ops::Deref};
 
 use crate::{
-    traits::{IntoBoxedUnsized, Join, Normalize, Parent, Push},
     AsPath, TooManyParents,
+    traits::{IntoBoxedUnsized, Join, Normalize, Parent, Push},
 };
 
 /// Toll-free wrapper marking that a path is normalized.

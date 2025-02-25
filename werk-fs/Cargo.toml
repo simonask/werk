@@ -2,7 +2,7 @@
 name = "werk-fs"
 version.workspace = true
 rust-version.workspace = true
-edition.workspace = true
+edition = "2024"
 license.workspace = true
 
 [lib]
