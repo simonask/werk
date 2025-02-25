@@ -2,7 +2,7 @@
 name = "werk-runner"
 version.workspace = true
 rust-version.workspace = true
-edition = "2024"
+edition.workspace = true
 license.workspace = true
 
 [lib]

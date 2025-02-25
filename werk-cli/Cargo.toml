@@ -3,7 +3,7 @@ name = "werk-cli"
 build = "build.rs"
 version.workspace = true
 rust-version.workspace = true
-edition = "2024"
+edition.workspace = true
 license.workspace = true
 
 [[bin]]

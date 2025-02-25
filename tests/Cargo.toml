@@ -2,7 +2,7 @@
 name = "tests"
 publish = false
 version.workspace = true
-edition = "2024"
+edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
