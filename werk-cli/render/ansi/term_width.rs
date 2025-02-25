@@ -58,15 +58,15 @@ mod imp {
 #[cfg(windows)]
 mod imp {
     use windows_sys::{
-        core::PCSTR,
         Win32::{
             Foundation::{CloseHandle, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE},
             Storage::FileSystem::{CreateFileA, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING},
             System::Console::{
-                GetConsoleScreenBufferInfo, GetStdHandle, CONSOLE_SCREEN_BUFFER_INFO,
+                CONSOLE_SCREEN_BUFFER_INFO, GetConsoleScreenBufferInfo, GetStdHandle,
                 STD_ERROR_HANDLE,
             },
         },
+        core::PCSTR,
     };
 
     use super::TtyWidth;

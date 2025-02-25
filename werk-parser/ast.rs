@@ -1,6 +1,6 @@
 use std::hash::Hash as _;
 
-use werk_util::{hash_is_semantic, SemanticHash, Span, Spanned};
+use werk_util::{SemanticHash, Span, Spanned, hash_is_semantic};
 
 mod expr;
 pub mod keyword;

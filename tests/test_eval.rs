@@ -1,6 +1,6 @@
 use tests::mock_io::*;
-use werk_parser::parser::{parse, Input};
-use werk_runner::{eval, Error, EvalError, ShellCommandLine};
+use werk_parser::parser::{Input, parse};
+use werk_runner::{Error, EvalError, ShellCommandLine, eval};
 use werk_util::DiagnosticFileId;
 use winnow::Parser as _;
 

@@ -1,13 +1,14 @@
 use std::{fmt::Write, sync::Arc};
 
 use crate::{
+    Error, Failure, ModalErr,
     ast::{self, token},
     fatal,
     parser::{Input, Parser as _},
-    Error, Failure, ModalErr,
 };
 use werk_util::{Offset, Symbol};
 use winnow::{
+    Parser,
     ascii::{dec_int, digit1, multispace1},
     combinator::{
         alt, cut_err, delimited, empty, opt, peek, preceded, repeat, separated, separated_pair,
@@ -15,10 +16,9 @@ use winnow::{
     },
     stream::Location,
     token::{any, one_of, take_till, take_while},
-    Parser,
 };
 
-use super::{parse, PResult, Parse, Spanned};
+use super::{PResult, Parse, Spanned, parse};
 
 impl Parse for ast::StringExpr {
     fn parse(input: &mut Input) -> PResult<Self> {
@@ -259,7 +259,7 @@ enum StringFragment<'a> {
 fn push_string_fragment(expr: &mut ast::StringExpr, frag: StringFragment) {
     match frag {
         StringFragment::Literal(lit) => {
-            if let Some(ast::StringFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
+            if let Some(ast::StringFragment::Literal(last)) = expr.fragments.last_mut() {
                 last.push_str(lit);
             } else {
                 expr.fragments
@@ -267,7 +267,7 @@ fn push_string_fragment(expr: &mut ast::StringExpr, frag: StringFragment) {
             }
         }
         StringFragment::EscapedChar(ch) => {
-            if let Some(ast::StringFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
+            if let Some(ast::StringFragment::Literal(last)) = expr.fragments.last_mut() {
                 last.push(ch);
             } else {
                 expr.fragments
@@ -287,7 +287,7 @@ fn push_string_fragment(expr: &mut ast::StringExpr, frag: StringFragment) {
 fn push_pattern_fragment(expr: &mut ast::PatternExpr, frag: StringFragment) {
     match frag {
         StringFragment::Literal(lit) => {
-            if let Some(ast::PatternFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
+            if let Some(ast::PatternFragment::Literal(last)) = expr.fragments.last_mut() {
                 last.push_str(lit);
             } else {
                 expr.fragments
@@ -295,7 +295,7 @@ fn push_pattern_fragment(expr: &mut ast::PatternExpr, frag: StringFragment) {
             }
         }
         StringFragment::EscapedChar(ch) => {
-            if let Some(ast::PatternFragment::Literal(ref mut last)) = expr.fragments.last_mut() {
+            if let Some(ast::PatternFragment::Literal(last)) = expr.fragments.last_mut() {
                 last.push(ch);
             } else {
                 expr.fragments
@@ -495,7 +495,7 @@ fn file_extension<'a>(input: &mut Input<'a>) -> PResult<&'a str> {
 #[cfg(test)]
 mod tests {
     use crate::parser::parse;
-    use werk_util::{span, Span};
+    use werk_util::{Span, span};
 
     use super::*;
 

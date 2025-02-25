@@ -1,8 +1,8 @@
 use winnow::Parser as _;
 
 use crate::{
-    parser::{Input, PResult, Parse, Parser as _},
     Failure,
+    parser::{Input, PResult, Parse, Parser as _},
 };
 use werk_util::{Offset, Span, Spanned};
 
@@ -55,7 +55,7 @@ macro_rules! def_keyword {
             fn span(&self) -> Span {
                 Span {
                     start: self.0,
-                    end: Offset(self.0 .0 + $s.len() as u32),
+                    end: Offset(self.0.0 + $s.len() as u32),
                 }
             }
         }

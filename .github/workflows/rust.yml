@@ -20,6 +20,7 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
     - name: Build
       run: cargo build
     - name: Run tests
@@ -29,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
     - name: cargo clippy
       run: cargo clippy --all-features -- -D warnings
   fmt:
@@ -36,5 +38,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
     - name: cargo fmt --check
       run: cargo fmt -- --check --color=always

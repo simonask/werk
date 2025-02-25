@@ -7,10 +7,10 @@ use werk_parser::ast;
 use werk_util::{DiagnosticFileId, DiagnosticSpan, Symbol};
 
 use crate::{
+    DirEntry, Error, EvalError, Io, Render, Value, Warning,
     cache::{Hash128, TargetOutdatednessCache, WerkCache},
     eval::{self, Eval, UsedVariable},
     ir::{self, BuildRecipe, TaskRecipe},
-    DirEntry, Error, EvalError, Io, Render, Value, Warning,
 };
 
 #[derive(Clone)]
@@ -151,7 +151,7 @@ impl Workspace {
                     return Err(Error::InvalidTargetPath(
                         entry.path.display().to_string(),
                         err,
-                    ))
+                    ));
                 }
                 Err(_) => continue,
             };
@@ -358,7 +358,7 @@ impl Workspace {
 
         // Note: Other types of `default` statements are handled upstream, while
         // parsing `Defaults`, which happens prior to creating the workspace.
-        if let ast::DefaultStmt::Target(ref stmt) = stmt {
+        if let ast::DefaultStmt::Target(stmt) = stmt {
             let value = eval::eval_string_expr(self, &stmt.value, file)?;
             self.default_target = Some(value.value.string);
         }

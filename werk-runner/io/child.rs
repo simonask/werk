@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::{
-    io::BufReader, ready, AsyncBufRead, AsyncRead, AsyncWrite, FutureExt as _, Stream, StreamExt,
+    AsyncBufRead, AsyncRead, AsyncWrite, FutureExt as _, Stream, StreamExt, io::BufReader, ready,
 };
 
 pub trait Child: Send + Sync + Unpin {

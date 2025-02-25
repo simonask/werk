@@ -1,18 +1,18 @@
 use std::{future::Future, sync::Arc, time::SystemTime};
 
-use futures::{channel::oneshot, StreamExt};
-use indexmap::{map::Entry, IndexMap};
+use futures::{StreamExt, channel::oneshot};
+use indexmap::{IndexMap, map::Entry};
 use parking_lot::Mutex;
 use werk_fs::{Absolute, Normalize as _, Path, SymPath};
 use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, Symbol};
 
 use crate::{
-    depfile::Depfile,
-    eval::{self, Eval},
-    ir::{self},
     AmbiguousPatternError, BuildRecipeScope, ChildCaptureOutput, ChildLinesStream, Env, Error,
     Outdatedness, OutdatednessTracker, Reason, Scope as _, ShellCommandLine, TaskRecipeScope,
     Value, Warning, Workspace, WorkspaceSettings,
+    depfile::Depfile,
+    eval::{self, Eval},
+    ir,
 };
 
 /// Workspace-wide runner state.
@@ -356,8 +356,8 @@ impl<'a> Inner<'a> {
         fn schedule<'a>(this: &RunnerState, spec: TaskSpec<'a>) -> Scheduling<'a> {
             match this.tasks.lock().entry(spec.to_task_id()) {
                 Entry::Occupied(mut entry) => match entry.get_mut() {
-                    TaskStatus::Built(ref result) => Scheduling::Done(result.clone()),
-                    TaskStatus::Pending(ref mut waiters) => {
+                    TaskStatus::Built(result) => Scheduling::Done(result.clone()),
+                    TaskStatus::Pending(waiters) => {
                         let (send, recv) = oneshot::channel();
                         waiters.push(send);
                         Scheduling::Pending(recv)

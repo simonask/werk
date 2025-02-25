@@ -1,17 +1,17 @@
 use core::panic;
 use std::{
-    collections::{hash_map, HashMap},
+    collections::{HashMap, hash_map},
     ffi::{OsStr, OsString},
     pin::Pin,
-    sync::{atomic::AtomicU64, Arc, OnceLock},
+    sync::{Arc, OnceLock, atomic::AtomicU64},
     time::SystemTime,
 };
 
 use parking_lot::Mutex;
 use werk_fs::Absolute;
 use werk_runner::{
-    globset, BuildStatus, DirEntry, Env, Error, EvalError, GlobSettings, Io, Metadata,
-    Outdatedness, ShellCommandLine, TaskId, Warning, WhichError, Workspace, WorkspaceSettings,
+    BuildStatus, DirEntry, Env, Error, EvalError, GlobSettings, Io, Metadata, Outdatedness,
+    ShellCommandLine, TaskId, Warning, WhichError, Workspace, WorkspaceSettings, globset,
 };
 use werk_util::{
     Annotated, AsDiagnostic as _, DiagnosticFileId, DiagnosticSource, DiagnosticSourceMap, Offset,
@@ -244,7 +244,7 @@ impl<'a> Test<'a> {
             Ok(ast) => ast,
             Err(err) => {
                 return Err(Error::Eval(EvalError::Parse(DiagnosticFileId(0), err))
-                    .into_diagnostic_error(&*self as _))
+                    .into_diagnostic_error(&*self as _));
             }
         };
         self.reload_test_pragmas(&ast);
@@ -271,7 +271,7 @@ impl<'a> Test<'a> {
         ) {
             Ok(_) => (),
             Err(err) => {
-                return Err(Error::Eval(err).into_diagnostic_error(&workspace.manifest as _))
+                return Err(Error::Eval(err).into_diagnostic_error(&workspace.manifest as _));
             }
         }
 
@@ -366,7 +366,9 @@ impl<'a> Test<'a> {
             if actual != expected {
                 return Err(werk_runner::EvalError::AssertCustomFailed(
                     DiagnosticFileId(0).span(*span),
-                    format!("contents of output file `{filename}` do not match\nexpected: {expected:?}\n  actual: {actual:?}"),
+                    format!(
+                        "contents of output file `{filename}` do not match\nexpected: {expected:?}\n  actual: {actual:?}"
+                    ),
                 ));
             }
         }
@@ -759,7 +761,7 @@ pub fn insert_fs(
                 hash_map::Entry::Occupied(occupied_entry) => {
                     if rest.as_os_str().is_empty() {
                         match occupied_entry.into_mut() {
-                            MockDirEntry::File(ref mut m, ref mut v) => {
+                            MockDirEntry::File(m, v) => {
                                 *m = metadata;
                                 *v = vec;
                                 Ok(())
@@ -929,7 +931,7 @@ pub fn read_fs<'a>(
         std::io::ErrorKind::NotFound,
         "file not found",
     ))?;
-    if let MockDirEntry::File(ref metadata, ref data) = entry {
+    if let MockDirEntry::File(metadata, data) = entry {
         Ok((
             DirEntry {
                 path: path.to_path_buf(),

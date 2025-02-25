@@ -465,7 +465,7 @@ impl Value {
             visitor: &mut V,
         ) -> Result<(), E> {
             match this {
-                Value::List(ref mut values) => {
+                Value::List(values) => {
                     for value in values {
                         try_map_strings(value, visitor)?;
                     }

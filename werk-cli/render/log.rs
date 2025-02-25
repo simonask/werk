@@ -40,7 +40,7 @@ impl werk_runner::Render for LogWatcher {
         result: &Result<werk_runner::BuildStatus, werk_runner::Error>,
     ) {
         match result {
-            Ok(ref status) => {
+            Ok(status) => {
                 if let werk_runner::BuildStatus::Complete(task_id, _) = status {
                     tracing::info!(task_id = %task_id, "Success");
                 }

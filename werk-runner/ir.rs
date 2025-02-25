@@ -4,8 +4,8 @@ use werk_parser::ast;
 use werk_util::{DiagnosticFileId, DiagnosticMainSourceMap, DiagnosticSpan, Symbol};
 
 use crate::{
-    cache::Hash128, AmbiguousPatternError, ConfigVar, EvalError, LocalVariables, Pattern,
-    PatternMatchData, Value,
+    AmbiguousPatternError, ConfigVar, EvalError, LocalVariables, Pattern, PatternMatchData, Value,
+    cache::Hash128,
 };
 
 type Result<T, E = EvalError> = std::result::Result<T, E>;

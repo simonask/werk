@@ -2,17 +2,18 @@ use std::marker::PhantomData;
 
 use werk_util::{AsDiagnostic as _, DiagnosticFileId, DiagnosticSourceMap, Offset, Span, Spanned};
 use winnow::{
+    Parser as _,
     ascii::{line_ending, till_line_ending},
     combinator::{alt, cut_err, delimited, empty, eof, opt, peek, preceded, repeat, seq},
     error::AddContext as _,
     stream::{Location, Stream as _},
     token::{any, none_of, one_of, take_while},
-    Parser as _,
 };
 
 use crate::{
+    ErrContext, Error, Failure, ModalErr,
     ast::{self, keyword, token, ws_ignore},
-    fatal, ErrContext, Error, Failure, ModalErr,
+    fatal,
 };
 
 mod string;
@@ -1018,7 +1019,7 @@ impl SetFailure for ModalErr {
     #[inline]
     fn set_failure(&mut self, failure: Failure) {
         match self {
-            ModalErr::Backtrack(_, ref mut fail) => *fail = failure,
+            ModalErr::Backtrack(_, fail) => *fail = failure,
             ModalErr::Error(err) => err.fail = failure,
         }
     }
@@ -1102,7 +1103,7 @@ mod tests {
             keyword::{self, Keyword as _},
             trailing_ignore, ws, ws_ignore,
         },
-        parser::{parse, Offset, ParsedWhitespace},
+        parser::{Offset, ParsedWhitespace, parse},
     };
     use werk_util::span;
     use winnow::Parser as _;

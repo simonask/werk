@@ -33,8 +33,8 @@ impl PartialEq for Pattern {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         match (&self.matcher, &other.matcher) {
-            (PatternMatcher::Literal(ref lhs), PatternMatcher::Literal(ref rhs)) => *lhs == *rhs,
-            (PatternMatcher::Regex(ref lhs), PatternMatcher::Regex(ref rhs)) => {
+            (PatternMatcher::Literal(lhs), PatternMatcher::Literal(rhs)) => *lhs == *rhs,
+            (PatternMatcher::Regex(lhs), PatternMatcher::Regex(rhs)) => {
                 lhs.regex.as_str() == rhs.regex.as_str()
             }
             _ => false,

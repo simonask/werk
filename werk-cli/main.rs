@@ -161,7 +161,9 @@ pub enum Error {
     NoWerkfile,
     #[error("Invalid define (must take the form `key=value`): {0}")]
     InvalidDefineArg(String),
-    #[error("No target specified. Pass a target name on the command-line, or set the `config.default` variable. Use `--list` to get a list of available targets.")]
+    #[error(
+        "No target specified. Pass a target name on the command-line, or set the `config.default` variable. Use `--list` to get a list of available targets."
+    )]
     NoTarget,
     #[error(transparent)]
     Io(#[from] std::io::Error),

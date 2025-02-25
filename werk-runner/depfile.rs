@@ -1,13 +1,13 @@
 use std::{path::PathBuf, sync::Arc};
 
 use winnow::{
+    Parser as _,
     ascii::{line_ending, multispace0, space0, space1},
     combinator::{
         alt, cut_err, delimited, eof, opt, peek, preceded, repeat, separated_pair, terminated,
     },
     error::{StrContext, StrContextValue},
     token::{none_of, take_till},
-    Parser as _,
 };
 
 type PResult<T> = winnow::ModalResult<T>;

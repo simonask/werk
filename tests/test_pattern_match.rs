@@ -1,5 +1,5 @@
 use tests::mock_io::*;
-use werk_parser::parser::{pattern_expr_inside_quotes, Input};
+use werk_parser::parser::{Input, pattern_expr_inside_quotes};
 use werk_runner::{Pattern, PatternMatchData, Workspace};
 use werk_util::DiagnosticFileId;
 

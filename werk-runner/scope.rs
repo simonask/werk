@@ -2,8 +2,9 @@ use ahash::HashMap;
 use werk_util::{DiagnosticSpan, Symbol, SymbolRegistryLock};
 
 use crate::{
+    Io, PatternMatchData, Render, TaskId, Value, Warning, Workspace,
     eval::{Eval, Used},
-    ir, Io, PatternMatchData, Render, TaskId, Value, Warning, Workspace,
+    ir,
 };
 
 pub type LocalVariables = indexmap::IndexMap<Symbol, Eval<Value>>;
@@ -310,20 +311,12 @@ pub const fn current_arch_family() -> &'static str {
 
 #[must_use]
 pub const fn exe_suffix() -> &'static str {
-    if cfg!(windows) {
-        ".exe"
-    } else {
-        ""
-    }
+    if cfg!(windows) { ".exe" } else { "" }
 }
 
 #[must_use]
 pub const fn dylib_prefix() -> &'static str {
-    if cfg!(windows) {
-        ""
-    } else {
-        "lib"
-    }
+    if cfg!(windows) { "" } else { "lib" }
 }
 
 #[must_use]
@@ -339,20 +332,12 @@ pub const fn dylib_suffix() -> &'static str {
 
 #[must_use]
 pub const fn staticlib_prefix() -> &'static str {
-    if cfg!(windows) {
-        ""
-    } else {
-        "lib"
-    }
+    if cfg!(windows) { "" } else { "lib" }
 }
 
 #[must_use]
 pub const fn staticlib_suffix() -> &'static str {
-    if cfg!(windows) {
-        ".lib"
-    } else {
-        ".a"
-    }
+    if cfg!(windows) { ".lib" } else { ".a" }
 }
 
 pub fn default_global_constants() -> &'static HashMap<Symbol, Value> {
