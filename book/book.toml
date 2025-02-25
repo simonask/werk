@@ -9,7 +9,7 @@ title = "Werk Book"
 create-missing = false
 
 [rust]
-edition = "2021"
+edition = "2024"
 
 [output.html]
 site-url = "/werk/"
