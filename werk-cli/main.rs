@@ -187,7 +187,11 @@ fn main() -> Result<(), Error> {
             .init(),
     }
 
-    smol::block_on(try_main(args))
+    if let Err(e) = smol::block_on(try_main(args)) {
+        eprintln!("Error: {}", e);
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 async fn try_main(args: Args) -> Result<(), Error> {
