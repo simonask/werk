@@ -202,7 +202,7 @@ where
                 // No semicolon, so the whitespace between the statements is the
                 // comment for the next item.
                 last_decor = whitespace_before_semicolon;
-            };
+            }
 
             accum.push(ast::BodyStmt {
                 ws_pre: preceding_whitespace.into_whitespace(),

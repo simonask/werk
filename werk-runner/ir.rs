@@ -203,7 +203,7 @@ impl Defaults {
             };
 
             match stmt {
-                ast::DefaultStmt::Target(_) => continue, // Evaluated on workspace creation.
+                ast::DefaultStmt::Target(_) => {} // Evaluated on workspace creation.
                 ast::DefaultStmt::OutDir(entry) => {
                     defaults.output_directory = Some(entry.value.1.clone());
                 }
