@@ -190,7 +190,7 @@ pub struct Defaults {
     pub explain: Option<bool>,
     pub verbose: Option<bool>,
     pub watch_delay: Option<i32>,
-    pub jobs: Option<i32>,
+    pub jobs: Option<usize>,
     pub edition: Edition,
 }
 
@@ -216,7 +216,7 @@ impl Defaults {
                 ast::DefaultStmt::Explain(entry) => defaults.explain = Some(entry.value.1),
                 ast::DefaultStmt::Verbose(entry) => defaults.verbose = Some(entry.value.1),
                 ast::DefaultStmt::WatchDelay(entry) => defaults.watch_delay = Some(entry.value.1),
-                ast::DefaultStmt::Jobs(entry) => defaults.jobs = Some(entry.value.1),
+                ast::DefaultStmt::Jobs(entry) => defaults.jobs = entry.value.1.try_into().ok(),
                 ast::DefaultStmt::Edition(entry) => {
                     if entry.value.1 == "v1" {
                         defaults.edition = Edition::V1;
