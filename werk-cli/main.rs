@@ -674,7 +674,7 @@ pub fn get_workspace_dir<'a>(
 }
 
 pub fn get_workspace_settings(
-    config: &werk_runner::ir::Defaults,
+    defaults: &werk_runner::ir::Defaults,
     args: &Args,
     workspace_dir: &Absolute<std::path::Path>,
     color_stdout: ColorOutputKind,
@@ -682,11 +682,11 @@ pub fn get_workspace_settings(
     let out_dir = find_output_directory(
         workspace_dir,
         args.output_dir.as_deref(),
-        config.output_directory.as_deref(),
+        defaults.output_directory.as_deref(),
     )?;
 
     let mut settings = WorkspaceSettings::new(workspace_dir.to_owned());
-    settings.jobs = args.jobs.unwrap_or_else(num_cpus::get);
+    settings.jobs = args.jobs.or(defaults.jobs).unwrap_or_else(num_cpus::get);
     settings.output_directory = out_dir;
     for def in &args.define {
         let Some((key, value)) = def.split_once('=') else {
