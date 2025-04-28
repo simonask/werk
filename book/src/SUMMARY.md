@@ -14,6 +14,7 @@
   - [Paths](./paths.md)
   - [.werk-cache](./werk_cache.md)
 - [Task recipes](./task_recipes.md)
+  - [Long-running tasks](./long_running_tasks.md)
 - [Build recipes](./build_recipes.md)
   - [When is a target outdated?](./outdatedness.md)
   - [Depfile support](./depfile_support.md)

@@ -48,6 +48,29 @@ arbitrary [expressions](./expressions.md), only strings. However, string
 interpolation can be used within `run` statements to build command-line
 invocations from other bits.
 
+## The `spawn` statement
+
+In task recipes, the `spawn` statement is used to start a long-running process in
+the background. Other statements do not wait for the process to finish before executing.
+
+`spawn` statements may also occur within `run` blocks, meaning that the task can
+rely on normal `run` commands having finished before the process is spawned.
+
+Examples:
+
+```werk
+task my-task {
+    # Execute a long-running process in the background
+    spawn "my-server"
+
+    run {
+        # Execute a normal command before spawning the server
+        run "hello"
+        spawn "my-server"
+    }
+}
+```
+
 ## String interpolation in `run` statements
 
 Commands executed in recipes, or as part of the `shell` expression, have

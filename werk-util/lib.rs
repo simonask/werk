@@ -1,3 +1,4 @@
+pub mod cancel;
 mod diagnostic;
 mod os_str;
 mod semantic_hash;

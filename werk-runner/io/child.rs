@@ -21,6 +21,8 @@ pub trait Child: Send + Sync + Unpin {
     fn status(
         &mut self,
     ) -> Pin<Box<dyn Future<Output = Result<std::process::ExitStatus, std::io::Error>> + Send>>;
+
+    fn kill(&mut self) -> std::io::Result<()>;
 }
 
 impl Child for smol::process::Child {
@@ -51,6 +53,10 @@ impl Child for smol::process::Child {
     ) -> Pin<Box<dyn Future<Output = Result<std::process::ExitStatus, std::io::Error>> + Send>>
     {
         Box::pin(self.status())
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        self.kill()
     }
 }
 
@@ -108,6 +114,12 @@ impl ChildLinesStream {
             stderr,
             status,
         }
+    }
+
+    pub async fn wait(mut self) -> io::Result<std::process::ExitStatus> {
+        self.stdout.take();
+        self.stderr.take();
+        self.status.await
     }
 }
 

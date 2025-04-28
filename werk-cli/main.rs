@@ -7,12 +7,12 @@ use std::{borrow::Cow, path::Path, sync::Arc};
 use ahash::HashSet;
 use clap::{CommandFactory, Parser};
 use clap_complete::ArgValueCandidates;
-use futures::future::Either;
+use futures::future::{self, Either};
 use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
 use render::{AutoStream, ColorOutputKind};
 use werk_fs::{Absolute, Normalize as _, PathError};
-use werk_runner::{Runner, Warning, Workspace, WorkspaceSettings};
+use werk_runner::{BuildStatus, Runner, Warning, Workspace, WorkspaceSettings};
 use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticSource, DiagnosticSourceMap};
 
 shadow_rs::shadow!(build);
@@ -263,30 +263,6 @@ async fn try_main(args: Args) -> Result<(), Error> {
         return Ok(());
     }
 
-    let target = args
-        .target
-        .clone()
-        .or_else(|| workspace.default_target.clone());
-    let Some(target) = target else {
-        return Err(Error::NoTarget);
-    };
-
-    let runner = Runner::new(&workspace);
-    let result = runner.build_or_run(&target).await;
-
-    let write_cache = match result {
-        Ok(_) => true,
-        Err(ref err) => err.error.should_still_write_werk_cache(),
-    };
-
-    if write_cache {
-        if let Err(err) = workspace.finalize().await {
-            eprintln!("Error writing `.werk-cache`: {err}")
-        }
-    }
-
-    std::mem::drop(runner);
-
     if args.watch {
         autowatch_loop(
             std::time::Duration::from_millis(args.watch_delay),
@@ -299,14 +275,45 @@ async fn try_main(args: Args) -> Result<(), Error> {
         .await?;
         Ok(())
     } else {
-        result.map(|_| ()).map_err(print_error)
+        let target = args
+            .target
+            .clone()
+            .or_else(|| workspace.default_target.clone());
+        let Some(target) = target else {
+            workspace
+                .render
+                .runner_message("No configured default target");
+            return Err(Error::NoTarget);
+        };
+
+        let (ctrlc_sender, ctrlc_receiver) = smol::channel::bounded(1);
+        _ = ctrlc::set_handler(move || {
+            _ = ctrlc_sender.try_send(());
+        });
+        let ctrlc_recv = ctrlc_receiver.recv();
+        smol::pin!(ctrlc_recv);
+
+        let (runner, result) = run(&workspace, &target).await;
+        result?;
+        let wait = runner.wait_for_long_running_tasks();
+        smol::pin!(wait);
+
+        match future::select(wait, ctrlc_recv).await {
+            Either::Left(_) => Ok(()),
+            Either::Right(_) => {
+                // Stop children, giving child processes a chance to finish
+                // cleanly (and giving us a chance to read their stdout/stderr).
+                runner.stop(std::time::Duration::from_millis(100)).await;
+                Ok(())
+            }
+        }
     }
 }
 
 async fn autowatch_loop(
     timeout: std::time::Duration,
     // The initial workspace built by main(). Must be finalize()d.
-    workspace: Workspace,
+    mut workspace: Workspace,
     werkfile: Absolute<std::path::PathBuf>,
     // Target to keep building
     target_from_args: Option<String>,
@@ -332,11 +339,30 @@ async fn autowatch_loop(
         }
     }));
     let workspace_dir = workspace.project_root().to_path_buf();
-    std::mem::drop(workspace);
 
     let mut settings = settings.clone();
 
+    let mut target = target_from_args
+        .clone()
+        .or_else(|| workspace.default_target.clone());
+
     loop {
+        if target.is_none() {
+            render.runner_message("No configured default target");
+            watch_set = watch_manifest.clone();
+        }
+
+        // Start the notifier.
+        let notifier = make_notifier_for_files(&watch_set, notification_sender.clone(), timeout)?;
+        let notification_recv = notification_receiver.recv();
+
+        // Build or rebuild the target!
+        let runner_and_result = if let Some(target) = target.as_ref() {
+            Some(run(&workspace, target).await)
+        } else {
+            None
+        };
+
         if watch_set == watch_manifest {
             render.runner_message("Watching manifest for changes, press Ctrl-C to stop");
         } else {
@@ -346,14 +372,11 @@ async fn autowatch_loop(
             ));
         }
 
-        // Start the notifier.
-        let notifier = make_notifier_for_files(&watch_set, notification_sender.clone(), timeout)?;
-        let notification_recv = notification_receiver.recv();
         let ctrlc_recv = ctrlc_receiver.recv();
         smol::pin!(notification_recv);
         smol::pin!(ctrlc_recv);
 
-        match futures::future::select(notification_recv, ctrlc_recv).await {
+        match future::select(notification_recv, ctrlc_recv).await {
             Either::Left((result, _)) => result.expect("notifier channel error"),
             Either::Right((result, _)) => {
                 if result.is_ok() {
@@ -362,6 +385,15 @@ async fn autowatch_loop(
                 }
             }
         }
+
+        // If there are any long-running tasks, give them a chance to finish.
+        // Note that `run()` automatically does this if the target could not be
+        // built.
+        if let Some((ref runner, Ok(_))) = runner_and_result {
+            runner.stop(std::time::Duration::from_millis(100)).await;
+        }
+
+        std::mem::drop(runner_and_result);
 
         // Stop the notifier again immediately. TODO: Consider if it makes sense to reuse it.
         notifier.stop();
@@ -430,7 +462,7 @@ async fn autowatch_loop(
             settings.output_directory = out_dir;
         }
 
-        let mut workspace =
+        workspace =
             match Workspace::new(io.clone(), render.clone(), workspace_dir.clone(), &settings) {
                 Ok(workspace) => workspace,
                 Err(err) => {
@@ -453,14 +485,9 @@ async fn autowatch_loop(
             }
         }
 
-        let target = target_from_args
+        target = target_from_args
             .clone()
             .or_else(|| workspace.default_target.clone());
-        let Some(target) = target else {
-            render.runner_message("No configured default target");
-            watch_set = watch_manifest.clone();
-            continue;
-        };
 
         // Update the watchset.
         watch_set.clear();
@@ -472,25 +499,31 @@ async fn autowatch_loop(
                 None
             }
         }));
+    }
+}
 
-        // Finally, rebuild the target!
-        let runner = Runner::new(&workspace);
-        let write_cache = match runner.build_or_run(&target).await {
-            Ok(_) => true,
-            Err(err) => {
-                let write_cache = err.error.should_still_write_werk_cache();
-                print_error(err);
-                write_cache
-            }
-        };
+async fn run<'w>(
+    workspace: &'w Workspace,
+    target: &str,
+) -> (Runner<'w>, Result<BuildStatus, Error>) {
+    let runner = Runner::new(workspace);
+    let result = runner.build_or_run(target).await;
 
-        if write_cache {
-            if let Err(err) = workspace.finalize().await {
-                eprintln!("Error writing `.werk-cache`: {err}");
-                return Err(err.into());
-            }
+    let write_cache = match result {
+        Ok(_) => true,
+        Err(ref err) => {
+            runner.stop(std::time::Duration::from_secs(1)).await;
+            err.error.should_still_write_werk_cache()
+        }
+    };
+
+    if write_cache {
+        if let Err(err) = workspace.finalize().await {
+            eprintln!("Error writing `.werk-cache`: {err}")
         }
     }
+
+    (runner, result.map_err(print_error))
 }
 
 fn make_notifier_for_files(

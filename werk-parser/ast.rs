@@ -417,6 +417,7 @@ pub enum TaskRecipeStmt {
     Let(LetStmt),
     Build(BuildStmt),
     Run(RunStmt),
+    Spawn(SpawnExpr),
     Info(InfoExpr),
     Warn(WarnExpr),
     SetCapture(KwExpr<keyword::SetCapture, ConfigBool>),
@@ -432,6 +433,7 @@ impl SemanticHash for TaskRecipeStmt {
             TaskRecipeStmt::Let(stmt) => stmt.semantic_hash(state),
             TaskRecipeStmt::Build(stmt) => stmt.semantic_hash(state),
             TaskRecipeStmt::Run(stmt) => stmt.semantic_hash(state),
+            TaskRecipeStmt::Spawn(stmt) => stmt.semantic_hash(state),
             TaskRecipeStmt::Env(stmt) => stmt.semantic_hash(state),
             TaskRecipeStmt::EnvRemove(stmt) => stmt.semantic_hash(state),
             // Information statements do not contribute to outdatedness.
@@ -524,6 +526,7 @@ pub type FromStmt = KwExpr<keyword::From, ExprChain>;
 pub type BuildStmt = KwExpr<keyword::Build, ExprChain>;
 pub type DepfileStmt = KwExpr<keyword::Depfile, ExprChain>;
 pub type RunStmt = KwExpr<keyword::Run, RunExpr>;
+pub type SpawnExpr = KwExpr<keyword::Spawn, StringExpr>;
 pub type ErrorStmt = KwExpr<keyword::Error, StringExpr>;
 pub type DeleteExpr = KwExpr<keyword::Delete, Expr>;
 pub type TouchExpr = KwExpr<keyword::Touch, Expr>;
@@ -535,6 +538,8 @@ pub type EnvRemoveStmt = KwExpr<keyword::RemoveEnv, StringExpr>;
 pub enum RunExpr {
     /// Run shell command.
     Shell(ShellExpr),
+    /// Spawn a shell command without waiting for it to finish.
+    Spawn(SpawnExpr),
     /// Write the result of the expression to the path. The string is an OS path.
     Write(WriteExpr),
     /// Copy one file to another.
@@ -561,6 +566,7 @@ impl Spanned for RunExpr {
     fn span(&self) -> Span {
         match self {
             RunExpr::Shell(expr) => expr.span,
+            RunExpr::Spawn(expr) => expr.span,
             RunExpr::Write(expr) => expr.span,
             RunExpr::Copy(expr) => expr.span,
             RunExpr::Delete(expr) => expr.span,
@@ -580,6 +586,7 @@ impl SemanticHash for RunExpr {
         std::mem::discriminant(self).hash(state);
         match self {
             RunExpr::Shell(expr) => expr.semantic_hash(state),
+            RunExpr::Spawn(expr) => expr.semantic_hash(state),
             RunExpr::Write(expr) => expr.semantic_hash(state),
             RunExpr::Copy(expr) => expr.semantic_hash(state),
             RunExpr::Delete(expr) => expr.semantic_hash(state),

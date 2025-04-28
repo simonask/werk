@@ -23,6 +23,8 @@ pub enum Warning {
     UnusedDefine(String),
     #[error("output directory changed; was `{0}`, is now `{1}`")]
     OutputDirectoryChanged(Absolute<std::path::PathBuf>, Absolute<std::path::PathBuf>),
+    #[error("one or more child processes did not stop when asked, and may be left as zombies")]
+    ZombieChild,
 }
 
 impl werk_util::AsDiagnostic for Warning {
@@ -87,7 +89,8 @@ impl werk_util::AsDiagnostic for Warning {
                 .footer(format_args!("no `config` statement exists with the name `{key}`"))
                 .footer("maybe a `let` statement should be changed to a `config` statement?"),
             Warning::OutputDirectoryChanged(..) => level
-                .diagnostic("W1001")
+                .diagnostic("W1001"),
+            Warning::ZombieChild => level.diagnostic("W1002"),
         }.title(self) // Use Display impl from thiserror
     }
 }

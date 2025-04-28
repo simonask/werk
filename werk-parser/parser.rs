@@ -335,7 +335,8 @@ impl Parse for ast::TaskRecipeStmt {
         alt((
             parse.map(ast::TaskRecipeStmt::Let),
             parse.map(ast::TaskRecipeStmt::Build),
-            parse.map(ast::TaskRecipeStmt::Run),
+            parse_run_stmt::<true>.map(ast::TaskRecipeStmt::Run),
+            parse.map(ast::TaskRecipeStmt::Spawn),
             parse.map(ast::TaskRecipeStmt::EnvRemove),
             parse.map(ast::TaskRecipeStmt::Env),
             parse.map(ast::TaskRecipeStmt::Info),
@@ -343,7 +344,7 @@ impl Parse for ast::TaskRecipeStmt {
             parse.map(ast::TaskRecipeStmt::SetCapture),
             parse.map(ast::TaskRecipeStmt::SetNoCapture),
             fatal(Failure::Expected(&"task recipe statement")).help(
-                "could be one of `let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
+                "could be one of `let`, `from`, `build`, `depfile`, `run`, `spawn`, `info`, or `warn` statement",
             ),
         ))
         .parse_next(input)
@@ -376,7 +377,7 @@ impl Parse for ast::BuildRecipeStmt {
             parse.map(ast::BuildRecipeStmt::From),
             parse.map(ast::BuildRecipeStmt::Let),
             parse.map(ast::BuildRecipeStmt::Depfile),
-            parse.map(ast::BuildRecipeStmt::Run),
+            parse_run_stmt::<false>.map(ast::BuildRecipeStmt::Run),
             parse.map(ast::BuildRecipeStmt::EnvRemove),
             parse.map(ast::BuildRecipeStmt::Env),
             parse.map(ast::BuildRecipeStmt::Info),
@@ -490,27 +491,38 @@ fn env_stmt(input: &mut Input) -> PResult<ast::EnvStmt> {
     Ok(stmt)
 }
 
+/// `<keyword> <param>`
+///
+/// If the keyword is successfully parsed, parse the param with `cut_err(...)`,
+/// so no backtracking.
+fn kw_expr<'a, K, Param>(
+    mut inner: impl Parser<'a, Param> + Copy,
+) -> impl Parser<'a, ast::KwExpr<K, Param>>
+where
+    K: keyword::Keyword + Parse,
+{
+    move |input: &mut Input<'a>| {
+        let (mut expr, span) = seq! { ast::KwExpr {
+            span: default,
+            token: parse,
+            ws_1: whitespace_nonempty,
+            param: cut_err(inner.by_ref()),
+        }}
+        .with_token_span()
+        .while_parsing(K::TOKEN)
+        .parse_next(input)?;
+        expr.span = span;
+        Ok(expr)
+    }
+}
+
 impl<T, Param> Parse for ast::KwExpr<T, Param>
 where
     T: keyword::Keyword + Parse,
     Param: Parse,
 {
-    /// `<keyword> <param>`
-    ///
-    /// If the keyword is successfully parsed, parse the param with `cut_err(...)`,
-    /// so no backtracking.
     fn parse(input: &mut Input) -> PResult<Self> {
-        let (mut expr, span) = seq! { ast::KwExpr {
-            span: default,
-            token: parse,
-            ws_1: whitespace_nonempty,
-            param: cut_err(parse),
-        }}
-        .with_token_span()
-        .while_parsing(T::TOKEN)
-        .parse_next(input)?;
-        expr.span = span;
-        Ok(expr)
+        kw_expr(parse).parse_next(input)
     }
 }
 
@@ -673,33 +685,69 @@ fn expression_chain_op(input: &mut Input) -> PResult<ast::ExprOp> {
     .parse_next(input)
 }
 
-impl Parse for ast::RunExpr {
-    fn parse(input: &mut Input) -> PResult<Self> {
-        alt((
-            parse.map(|string: ast::StringExpr| {
-                ast::RunExpr::Shell(ast::ShellExpr {
-                    span: string.span,
-                    token: keyword::Keyword::with_span(string.span),
-                    ws_1: ws_ignore(),
-                    param: string,
-                })
-            }),
-            parse.map(ast::RunExpr::List),
-            parse.map(ast::RunExpr::Shell),
-            parse.map(ast::RunExpr::Info),
-            parse.map(ast::RunExpr::Warn),
-            parse.map(ast::RunExpr::Write),
-            parse.map(ast::RunExpr::Copy),
-            parse.map(ast::RunExpr::Delete),
-            parse.map(ast::RunExpr::Touch),
-            parse.map(ast::RunExpr::EnvRemove),
-            parse.map(ast::RunExpr::Env),
-            parse.map(ast::RunExpr::Block),
-            fatal(Failure::Expected(&"a run expression"))
-                .help("one of `shell`, `info`, `warn`, `write`, `copy`, `delete`, `env`, `env-remove`, a string literal, a list, or a block")
+fn parse_run_stmt<const ALLOW_SPAWN: bool>(input: &mut Input<'_>) -> PResult<ast::RunStmt> {
+    kw_expr(parse_run_expr::<ALLOW_SPAWN>).parse_next(input)
+}
+
+fn parse_run_expr<const ALLOW_SPAWN: bool>(input: &mut Input<'_>) -> PResult<ast::RunExpr> {
+    alt((
+        parse.map(|string: ast::StringExpr| {
+            ast::RunExpr::Shell(ast::ShellExpr {
+                span: string.span,
+                token: keyword::Keyword::with_span(string.span),
+                ws_1: ws_ignore(),
+                param: string,
+            })
+        }),
+        parse_run_expr_list::<ALLOW_SPAWN>.map(ast::RunExpr::List),
+        parse.map(ast::RunExpr::Shell),
+        parse_spawn_expr::<ALLOW_SPAWN>.map(ast::RunExpr::Spawn),
+        parse.map(ast::RunExpr::Info),
+        parse.map(ast::RunExpr::Warn),
+        parse.map(ast::RunExpr::Write),
+        parse.map(ast::RunExpr::Copy),
+        parse.map(ast::RunExpr::Delete),
+        parse.map(ast::RunExpr::Touch),
+        parse.map(ast::RunExpr::EnvRemove),
+        parse.map(ast::RunExpr::Env),
+        parse_run_expr_block::<ALLOW_SPAWN>.map(ast::RunExpr::Block),
+        fatal(Failure::Expected(&"a run expression"))
+            .help(if ALLOW_SPAWN {
+                "one of `shell`, `spawn`, `info`, `warn`, `write`, `copy`, `delete`, `env`, `env-remove`, a string literal, a list, or a block"
+            } else { "one of `shell`, `info`, `warn`, `write`, `copy`, `delete`, `env`, `env-remove`, a string literal, a list, or a block"} )
+    )).parse_next(input)
+}
+
+fn parse_spawn_expr<const ALLOW_SPAWN: bool>(input: &mut Input) -> PResult<ast::SpawnExpr> {
+    let expr = parse.parse_next(input)?;
+    if ALLOW_SPAWN {
+        Ok(expr)
+    } else {
+        Err(ModalErr::Error(
+            Error::new(expr.span.start, Failure::Unexpected(&"spawn statement"))
+                .with_hint("`spawn` is only allowed in `task` recipes"),
         ))
-        .parse_next(input)
     }
+}
+
+fn parse_run_expr_list<const ALLOW_SPAWN: bool>(
+    input: &mut Input<'_>,
+) -> PResult<ast::ListExpr<ast::RunExpr>> {
+    parse_list_expr(parse_run_expr::<ALLOW_SPAWN>).parse_next(input)
+}
+
+fn parse_run_expr_block<const ALLOW_SPAWN: bool>(
+    input: &mut Input<'_>,
+) -> PResult<ast::Body<ast::RunExpr>> {
+    let (token_open, statements, decor_trailing, token_close) =
+        statements_delimited(parse, parse_run_expr::<ALLOW_SPAWN>, parse).parse_next(input)?;
+
+    Ok(ast::Body {
+        token_open,
+        statements,
+        ws_trailing: decor_trailing,
+        token_close,
+    })
 }
 
 impl Parse for ast::WriteExpr {
@@ -809,8 +857,10 @@ impl Parse for ast::MatchBody {
     }
 }
 
-impl<T: Parse> Parse for ast::ListExpr<T> {
-    fn parse(input: &mut Input) -> PResult<Self> {
+fn parse_list_expr<'a, Inner: Parser<'a, T>, T>(
+    mut inner: Inner,
+) -> impl Parser<'a, ast::ListExpr<T>> {
+    move |input: &mut Input<'a>| {
         let token_open = parse::<token::BracketOpen>.parse_next(input)?;
         let mut accum = Vec::new();
 
@@ -837,7 +887,7 @@ impl<T: Parse> Parse for ast::ListExpr<T> {
                 )));
             }
 
-            let item = parse.parse_next(input)?;
+            let item = inner.parse_next(input)?;
             end_of_last_item = input.checkpoint();
 
             let whitespace_before_comma = whitespace.parse_next(input)?;
@@ -874,6 +924,12 @@ impl<T: Parse> Parse for ast::ListExpr<T> {
                 trailing,
             });
         }
+    }
+}
+
+impl<T: Parse> Parse for ast::ListExpr<T> {
+    fn parse(input: &mut Input) -> PResult<Self> {
+        parse_list_expr(parse).parse_next(input)
     }
 }
 
