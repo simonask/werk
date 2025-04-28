@@ -610,6 +610,11 @@ pub(crate) fn eval_run_exprs<S: Scope>(
                 *used |= shell.used;
                 commands.push(RunCommand::Shell(shell.value));
             }
+            ast::RunExpr::Spawn(expr) => {
+                let shell = eval_shell_command(scope, &expr.param, file)?;
+                *used |= shell.used;
+                commands.push(RunCommand::Spawn(shell.value));
+            }
             ast::RunExpr::Write(expr) => {
                 let destination = eval(scope, &expr.path, file)?;
                 let Value::String(dest_path) = destination.value else {
@@ -1013,6 +1018,10 @@ pub(crate) fn eval_task_recipe_statements(
             }
             ast::TaskRecipeStmt::Run(ref expr) => {
                 eval_run_exprs(scope, &expr.param, &mut evaluated.commands, file)?;
+            }
+            ast::TaskRecipeStmt::Spawn(ref expr) => {
+                let command = eval_shell_command(scope, &expr.param, file)?;
+                evaluated.commands.push(RunCommand::Spawn(command.value));
             }
             ast::TaskRecipeStmt::Info(ref expr) => {
                 let message = eval_string_expr(scope, &expr.param, file)?;

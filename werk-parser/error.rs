@@ -60,6 +60,13 @@ impl Error {
     pub fn with_file_ref(&self, file: DiagnosticFileId) -> ErrorInFile<&Self> {
         ErrorInFile { error: self, file }
     }
+
+    #[inline]
+    #[must_use]
+    pub fn with_hint(mut self, hint: &'static str) -> Self {
+        self.push(self.offset, ErrContext::Hint(hint));
+        self
+    }
 }
 
 impl AsRef<Error> for Error {
@@ -134,6 +141,12 @@ impl<E: AsRef<Error>> werk_util::AsDiagnostic for ErrorInFile<E> {
                 .annotations(context.chain(Some(
                     span.annotation(level, format_args!("expected {expected}")),
                 ))),
+            Failure::Unexpected(unexpected) => level
+                .diagnostic("P2001")
+                .title("parse error")
+                .annotations(context.chain(Some(
+                    span.annotation(level, format_args!("unexpected {unexpected}")),
+                ))),
             Failure::ExpectedKeyword(expected) => level
                 .diagnostic("P1002")
                 .title("parse error")
@@ -190,6 +203,8 @@ pub enum Failure {
     /// "expected ..."
     #[error("expected {0}")]
     Expected(&'static &'static str),
+    #[error("unexpected {0}")]
+    Unexpected(&'static &'static str),
     #[error("expected keyword `{0}`")]
     ExpectedKeyword(&'static &'static str),
     #[error("invalid escape sequence: {0:?}")]
@@ -205,9 +220,17 @@ pub enum Failure {
 }
 
 impl winnow::error::FromExternalError<Input<'_>, std::num::ParseIntError> for ModalErr {
+    #[inline]
     fn from_external_error(input: &Input<'_>, e: std::num::ParseIntError) -> Self {
         let offset = Offset(input.current_token_start() as u32);
         ModalErr::Backtrack(offset, Failure::ParseInt(e))
+    }
+}
+
+impl winnow::error::FromExternalError<Input<'_>, ModalErr> for ModalErr {
+    #[inline]
+    fn from_external_error(_input: &Input<'_>, e: ModalErr) -> Self {
+        e
     }
 }
 

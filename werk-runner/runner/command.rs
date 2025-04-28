@@ -6,6 +6,7 @@ use crate::ShellCommandLine;
 #[derive(Debug, Clone, PartialEq)]
 pub enum RunCommand {
     Shell(ShellCommandLine),
+    Spawn(ShellCommandLine),
     Write(Absolute<std::path::PathBuf>, Vec<u8>),
     // We don't know yet if the source file is in the workspace or output
     // directory, so we will resolve the path when running it.
@@ -24,6 +25,7 @@ impl std::fmt::Display for RunCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RunCommand::Shell(shell_command_line) => shell_command_line.fmt(f),
+            RunCommand::Spawn(shell_command_line) => write!(f, "spawn {shell_command_line}"),
             RunCommand::Write(path_buf, vec) => {
                 write!(f, "write {} ({} bytes)", path_buf.display(), vec.len())
             }

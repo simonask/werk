@@ -1,0 +1,12 @@
+[
+    {
+        "Task": {
+            "name": "server",
+            "body": [
+                {
+                    "Spawn": "my-server"
+                }
+            ]
+        }
+    }
+]

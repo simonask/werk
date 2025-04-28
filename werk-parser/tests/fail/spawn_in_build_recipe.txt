@@ -1,0 +1,9 @@
+error[P1001]: parse error
+ --> INPUT:1:1
+  |
+1 | build "foo" {
+  | - info: while parsing build recipe
+2 |     spawn "bar"
+  |     ^ expected build recipe statement
+  |
+  = help: could be one of `let`, `from`, `build`, `depfile`, `run`, or `echo` statement

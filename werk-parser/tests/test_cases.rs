@@ -116,6 +116,8 @@ error_case!(match_unterminated);
 error_case!(match_no_arrow);
 error_case!(default_unknown_key);
 error_case!(default_invalid_value);
+error_case!(spawn_in_build_recipe);
+error_case!(spawn_in_build_recipe_run_block);
 
 success_case!(c);
 success_case!(config);
@@ -126,3 +128,4 @@ success_case!(let_match_inline);
 success_case!(let_map);
 success_case!(let_list);
 success_case!(expr_parens);
+success_case!(spawn);

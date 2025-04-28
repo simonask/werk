@@ -652,6 +652,18 @@ impl<'a> Inner<'a> {
                     )
                     .await?;
                 }
+                RunCommand::Spawn(command_line) => {
+                    self.execute_recipe_spawn_command(
+                        task_id,
+                        &command_line,
+                        &env,
+                        silent,
+                        step,
+                        num_steps,
+                        forward_stdout,
+                        cancel,
+                    )?;
+                }
                 RunCommand::Write(path_buf, vec) => {
                     self.workspace.io.write_file(&path_buf, &vec)?;
                 }
@@ -765,6 +777,71 @@ impl<'a> Inner<'a> {
         if !status.success() {
             return Err(Error::CommandFailed(status));
         }
+        Ok(())
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn execute_recipe_spawn_command(
+        &self,
+        task_id: TaskId,
+        command_line: &ShellCommandLine,
+        env: &Env,
+        capture: bool,
+        step: usize,
+        num_steps: usize,
+        forward_stdout: bool,
+        cancel: &cancel::Receiver,
+    ) -> Result<(), Error> {
+        self.workspace
+            .render
+            .will_execute(task_id, command_line, step, num_steps);
+        let mut child = self.workspace.io.run_recipe_command(
+            command_line,
+            self.workspace.project_root(),
+            env,
+            forward_stdout,
+        )?;
+
+        let render = self.workspace.render.clone();
+        let command_line = command_line.clone();
+        let cancel = cancel.clone();
+
+        self.executor
+            .spawn(async move {
+                let mut reader = ChildLinesStream::new(&mut *child, true);
+                let result = loop {
+                    let next = reader.next();
+                    match future::select(&cancel, next).await {
+                        future::Either::Left((_canceled, _)) => {
+                            _ = child.kill();
+                            _ = reader.wait().await;
+                            return;
+                        }
+                        future::Either::Right((Some(Err(err)), _)) => break Err(err),
+                        future::Either::Right((Some(Ok(output)), _)) => match output {
+                            ChildCaptureOutput::Stdout(line) => {
+                                render.on_child_process_stdout_line(task_id, &command_line, &line);
+                            }
+                            ChildCaptureOutput::Stderr(line) => {
+                                render.on_child_process_stderr_line(
+                                    task_id,
+                                    &command_line,
+                                    &line,
+                                    capture,
+                                );
+                            }
+                            ChildCaptureOutput::Exit(status) => break Ok(status),
+                        },
+                        future::Either::Right((None, _)) => {
+                            panic!("child process stream ended without an exit status")
+                        }
+                    }
+                };
+
+                render.did_execute(task_id, &command_line, &result, step, num_steps);
+            })
+            .detach();
+
         Ok(())
     }
 

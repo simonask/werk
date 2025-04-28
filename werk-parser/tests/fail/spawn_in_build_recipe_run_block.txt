@@ -1,0 +1,11 @@
+error[P2001]: parse error
+ --> INPUT:2:5
+  |
+1 | build "foo" {
+  | - info: while parsing build recipe
+2 |     run {
+  |     - info: while parsing run
+3 |         spawn "bar"
+  |         ^ unexpected spawn statement
+  |
+  = help: `spawn` is only allowed in `task` recipes

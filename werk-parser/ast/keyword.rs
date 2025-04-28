@@ -124,6 +124,7 @@ def_keyword!(True, "true");
 
 // Run commands
 def_keyword!(Run, "run");
+def_keyword!(Spawn, "spawn");
 def_keyword!(To, "to");
 def_keyword!(Copy, "copy");
 def_keyword!(Write, "write");
