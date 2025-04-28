@@ -1,10 +1,10 @@
 use std::{future::Future, sync::Arc, time::SystemTime};
 
-use futures::{StreamExt, channel::oneshot};
+use futures::{StreamExt, channel::oneshot, future};
 use indexmap::{IndexMap, map::Entry};
 use parking_lot::Mutex;
 use werk_fs::{Absolute, Normalize as _, Path, SymPath};
-use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, Symbol};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, Symbol, cancel};
 
 use crate::{
     AmbiguousPatternError, BuildRecipeScope, ChildCaptureOutput, ChildLinesStream, Env, Error,
@@ -44,7 +44,10 @@ pub struct Runner<'a> {
 
 struct Inner<'a> {
     workspace: &'a Workspace,
+    /// Executor for running tasks. All tasks here *must* subscribe to the
+    /// cancellation signal, or deadlocks can occur.
     executor: smol::Executor<'a>,
+    cancel: cancel::Sender,
 }
 
 #[derive(Clone)]
@@ -99,6 +102,7 @@ impl<'a> Runner<'a> {
             inner: Arc::new(Inner {
                 workspace,
                 executor: smol::Executor::new(),
+                cancel: cancel::Sender::new(),
             }),
         }
     }
@@ -159,6 +163,31 @@ impl<'a> Runner<'a> {
             .run(async move { inner.run_task(spec, DepChain::Empty).await })
             .await
             .map_err(|err| err.into_diagnostic_error(self.inner.workspace))
+    }
+
+    /// Stop long-running child processes and wait for them to finish.
+    pub async fn stop(&self, timeout: std::time::Duration) {
+        self.inner.cancel.cancel();
+        let timer = smol::Timer::after(timeout);
+
+        let wait = self.wait_for_long_running_tasks();
+        smol::pin!(wait);
+
+        match future::select(wait, timer).await {
+            future::Either::Left(_) => (),
+            future::Either::Right(_) => {
+                self.inner
+                    .workspace
+                    .render
+                    .warning(None, &Warning::ZombieChild);
+            }
+        }
+    }
+
+    pub async fn wait_for_long_running_tasks(&self) {
+        while !self.inner.executor.is_empty() {
+            self.inner.executor.tick().await;
+        }
     }
 }
 
@@ -293,9 +322,10 @@ impl<'a> Inner<'a> {
                 receiver.await.map_err(|_| Error::Cancelled(task_id))?
             }
             Scheduling::BuildNow(task_spec) => {
+                let cancel = self.cancel.receiver();
                 let result = self
                     .clone()
-                    .rebuild_spec(task_id, task_spec, dep_chain)
+                    .rebuild_spec(task_id, task_spec, &cancel, dep_chain)
                     .await;
                 finish_built(&self.workspace.runner_state, task_id, &result);
                 result
@@ -342,6 +372,7 @@ impl<'a> Inner<'a> {
         self: &Arc<Self>,
         task_id: TaskId,
         recipe_match: ir::BuildRecipeMatch<'_>,
+        cancel: &cancel::Receiver,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
         let mut scope = BuildRecipeScope::new(self.workspace, task_id, &recipe_match);
@@ -486,9 +517,16 @@ impl<'a> Inner<'a> {
         let result = if outdated.is_outdated() {
             tracing::debug!("Rebuilding");
             tracing::trace!("Reasons: {:?}", outdated);
-            self.execute_recipe_commands(task_id, evaluated.commands, evaluated.env, true, false)
-                .await
-                .map(|()| BuildStatus::Complete(task_id, outdated))
+            self.execute_recipe_commands(
+                task_id,
+                cancel,
+                evaluated.commands,
+                evaluated.env,
+                true,
+                false,
+            )
+            .await
+            .map(|()| BuildStatus::Complete(task_id, outdated))
         } else {
             tracing::debug!("Up to date");
             Ok(BuildStatus::Complete(task_id, outdated))
@@ -522,6 +560,7 @@ impl<'a> Inner<'a> {
         self: &Arc<Self>,
         task_id: TaskId,
         recipe: &ir::TaskRecipe,
+        cancel: &cancel::Receiver,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
         let mut scope = TaskRecipeScope::new(self.workspace, task_id);
@@ -549,7 +588,14 @@ impl<'a> Inner<'a> {
             .will_build(task_id, evaluated.commands.len(), &outdated);
 
         let result = self
-            .execute_recipe_commands(task_id, evaluated.commands, evaluated.env, false, true)
+            .execute_recipe_commands(
+                task_id,
+                cancel,
+                evaluated.commands,
+                evaluated.env,
+                false,
+                true,
+            )
             .await
             .map(|()| BuildStatus::Complete(task_id, outdated));
 
@@ -560,6 +606,7 @@ impl<'a> Inner<'a> {
     async fn execute_recipe_commands(
         &self,
         task_id: TaskId,
+        cancel: &cancel::Receiver,
         run_commands: Vec<RunCommand>,
         mut env: Env,
         silent_by_default: bool,
@@ -601,6 +648,7 @@ impl<'a> Inner<'a> {
                         step,
                         num_steps,
                         forward_stdout,
+                        cancel,
                     )
                     .await?;
                 }
@@ -645,7 +693,7 @@ impl<'a> Inner<'a> {
             }
 
             if let Some(delay) = self.workspace.artificial_delay {
-                smol::Timer::after(delay).await;
+                future::select(cancel, smol::Timer::after(delay)).await;
             }
         }
 
@@ -662,6 +710,7 @@ impl<'a> Inner<'a> {
         step: usize,
         num_steps: usize,
         forward_stdout: bool,
+        cancel: &cancel::Receiver,
     ) -> Result<(), Error> {
         self.workspace
             .render
@@ -677,9 +726,15 @@ impl<'a> Inner<'a> {
         // interested in the output.
         let mut reader = ChildLinesStream::new(&mut *child, true);
         let result = loop {
-            match reader.next().await {
-                Some(Err(err)) => break Err(err),
-                Some(Ok(output)) => match output {
+            let next = reader.next();
+            match future::select(cancel, next).await {
+                future::Either::Left((_canceled, _)) => {
+                    _ = child.kill();
+                    _ = reader.wait().await;
+                    return Err(Error::Cancelled(task_id));
+                }
+                future::Either::Right((Some(Err(err)), _)) => break Err(err),
+                future::Either::Right((Some(Ok(output)), _)) => match output {
                     ChildCaptureOutput::Stdout(line) => {
                         self.workspace.render.on_child_process_stdout_line(
                             task_id,
@@ -697,7 +752,9 @@ impl<'a> Inner<'a> {
                     }
                     ChildCaptureOutput::Exit(status) => break Ok(status),
                 },
-                None => panic!("child process stream ended without an exit status"),
+                future::Either::Right((None, _)) => {
+                    panic!("child process stream ended without an exit status")
+                }
             }
         };
 
@@ -851,6 +908,7 @@ impl<'a> Inner<'a> {
         self: &Arc<Self>,
         task_id: TaskId,
         spec: TaskSpec<'a>,
+        cancel: &cancel::Receiver,
         dep_chain: DepChain<'_>,
     ) -> Result<BuildStatus, Error> {
         let dep_chain_entry = dep_chain.push(task_id);
@@ -858,11 +916,11 @@ impl<'a> Inner<'a> {
         match spec {
             TaskSpec::Recipe(recipe) => match recipe {
                 ir::RecipeMatch::Task(recipe) => {
-                    self.execute_task_recipe(task_id, recipe, dep_chain_entry)
+                    self.execute_task_recipe(task_id, recipe, cancel, dep_chain_entry)
                         .await
                 }
                 ir::RecipeMatch::Build(recipe_match) => {
-                    self.execute_build_recipe(task_id, recipe_match, dep_chain_entry)
+                    self.execute_build_recipe(task_id, recipe_match, cancel, dep_chain_entry)
                         .await
                 }
             },

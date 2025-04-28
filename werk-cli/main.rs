@@ -7,12 +7,12 @@ use std::{borrow::Cow, path::Path, sync::Arc};
 use ahash::HashSet;
 use clap::{CommandFactory, Parser};
 use clap_complete::ArgValueCandidates;
-use futures::future::Either;
+use futures::future::{self, Either};
 use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
 use render::{AutoStream, ColorOutputKind};
 use werk_fs::{Absolute, Normalize as _, PathError};
-use werk_runner::{Runner, Warning, Workspace, WorkspaceSettings};
+use werk_runner::{BuildStatus, Runner, Warning, Workspace, WorkspaceSettings};
 use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticSource, DiagnosticSourceMap};
 
 shadow_rs::shadow!(build);
@@ -286,7 +286,25 @@ async fn try_main(args: Args) -> Result<(), Error> {
             return Err(Error::NoTarget);
         };
 
-        run(&workspace, &target).await.map(|_| ())
+        let (ctrlc_sender, ctrlc_receiver) = smol::channel::bounded(1);
+        _ = ctrlc::set_handler(move || {
+            _ = ctrlc_sender.try_send(());
+        });
+        let ctrlc_recv = ctrlc_receiver.recv();
+        smol::pin!(ctrlc_recv);
+
+        let (runner, result) = run(&workspace, &target).await;
+        result?;
+        let wait = runner.wait_for_long_running_tasks();
+        smol::pin!(wait);
+
+        match future::select(wait, ctrlc_recv).await {
+            Either::Left(_) => Ok(()),
+            Either::Right(_) => {
+                runner.stop(std::time::Duration::from_secs(1)).await;
+                Ok(())
+            }
+        }
     }
 }
 
@@ -337,10 +355,10 @@ async fn autowatch_loop(
         let notification_recv = notification_receiver.recv();
 
         // Build or rebuild the target!
-        let runner = if let Some(target) = target.as_ref() {
-            run(&workspace, target).await.map(Some)
+        let runner_and_result = if let Some(target) = target.as_ref() {
+            Some(run(&workspace, target).await)
         } else {
-            Ok(None)
+            None
         };
 
         if watch_set == watch_manifest {
@@ -356,7 +374,7 @@ async fn autowatch_loop(
         smol::pin!(notification_recv);
         smol::pin!(ctrlc_recv);
 
-        match futures::future::select(notification_recv, ctrlc_recv).await {
+        match future::select(notification_recv, ctrlc_recv).await {
             Either::Left((result, _)) => result.expect("notifier channel error"),
             Either::Right((result, _)) => {
                 if result.is_ok() {
@@ -366,7 +384,14 @@ async fn autowatch_loop(
             }
         }
 
-        std::mem::drop(runner);
+        // If there are any long-running tasks, give them a chance to finish.
+        // Note that `run()` automatically does this if the target could not be
+        // built.
+        if let Some((ref runner, Ok(_))) = runner_and_result {
+            runner.stop(std::time::Duration::from_millis(500)).await;
+        }
+
+        std::mem::drop(runner_and_result);
 
         // Stop the notifier again immediately. TODO: Consider if it makes sense to reuse it.
         notifier.stop();
@@ -475,13 +500,19 @@ async fn autowatch_loop(
     }
 }
 
-async fn run<'w>(workspace: &'w Workspace, target: &str) -> Result<Runner<'w>, Error> {
+async fn run<'w>(
+    workspace: &'w Workspace,
+    target: &str,
+) -> (Runner<'w>, Result<BuildStatus, Error>) {
     let runner = Runner::new(workspace);
     let result = runner.build_or_run(target).await;
 
     let write_cache = match result {
         Ok(_) => true,
-        Err(ref err) => err.error.should_still_write_werk_cache(),
+        Err(ref err) => {
+            runner.stop(std::time::Duration::from_secs(1)).await;
+            err.error.should_still_write_werk_cache()
+        }
     };
 
     if write_cache {
@@ -490,7 +521,7 @@ async fn run<'w>(workspace: &'w Workspace, target: &str) -> Result<Runner<'w>, E
         }
     }
 
-    result.map(|_| runner).map_err(print_error)
+    (runner, result.map_err(print_error))
 }
 
 fn make_notifier_for_files(

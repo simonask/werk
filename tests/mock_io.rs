@@ -1100,6 +1100,10 @@ impl werk_runner::Child for MockChild {
     > {
         self.status.take().unwrap()
     }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 impl werk_runner::Io for MockIo {

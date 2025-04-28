@@ -54,6 +54,10 @@ impl Child for DryRunChild {
     {
         Box::pin(std::future::ready(Ok(std::process::ExitStatus::default())))
     }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 impl werk_runner::Io for DryRun {
