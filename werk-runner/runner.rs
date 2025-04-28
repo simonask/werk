@@ -813,6 +813,10 @@ impl<'a> Inner<'a> {
                     let next = reader.next();
                     match future::select(&cancel, next).await {
                         future::Either::Left((_canceled, _)) => {
+                            render.message(
+                                Some(task_id),
+                                &format!("Terminating spawned: {command_line}",),
+                            );
                             _ = child.kill();
                             _ = reader.wait().await;
                             return;

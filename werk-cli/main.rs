@@ -301,7 +301,9 @@ async fn try_main(args: Args) -> Result<(), Error> {
         match future::select(wait, ctrlc_recv).await {
             Either::Left(_) => Ok(()),
             Either::Right(_) => {
-                runner.stop(std::time::Duration::from_secs(1)).await;
+                // Stop children, giving child processes a chance to finish
+                // cleanly (and giving us a chance to read their stdout/stderr).
+                runner.stop(std::time::Duration::from_millis(100)).await;
                 Ok(())
             }
         }
@@ -388,7 +390,7 @@ async fn autowatch_loop(
         // Note that `run()` automatically does this if the target could not be
         // built.
         if let Some((ref runner, Ok(_))) = runner_and_result {
-            runner.stop(std::time::Duration::from_millis(500)).await;
+            runner.stop(std::time::Duration::from_millis(100)).await;
         }
 
         std::mem::drop(runner_and_result);
