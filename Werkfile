@@ -1,0 +1,13 @@
+config mdbook-flags = "--open"
+
+# Serve the documentation using mdbook and open it in the default browser.
+task mdbook {
+    let book-dir = "book"
+    spawn "mdbook serve {mdbook-flags*} <book-dir:workspace> -d <book-dir:out-dir>"
+}
+
+# Install werk-cli using a current installation of Werk.
+task install {
+    let cli = "werk-cli"
+    run "cargo install --locked --path <cli>"
+}
