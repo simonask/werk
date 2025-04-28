@@ -43,11 +43,13 @@
 
 - **Concurrency:** Build recipes and tasks run in parallel when possible.
 
-- (TODO) **Autoclean:** Werk is aware of which files it has generated, and can
-  automatically clean them up from the output directory.
+- **Autowatch:** Werk can be run in `--watch` mode, which waits for file changes
+  and automatically rebuilds when any change is detected.
 
-- (TODO) **Autowatch:** Werk can be run in `--watch` mode, which waits for file
-  changes and automatically rebuilds when any change is detected.
+- **Long-running tasks:** Werk natively supports long-running processes, such as
+  a development webserver running locally, using the `spawn` statement. This
+  also works in combination with the `--watch` feature, such that any spawned
+  processes are automatically restarted when a rebuild is triggered.
 
 # Limitations
 
