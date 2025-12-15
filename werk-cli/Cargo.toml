@@ -44,7 +44,7 @@ clap_complete = { version = "4.5.44", features = ["unstable-dynamic"] }
 
 [target.'cfg(windows)'.dependencies]
 # Needed to get terminal width.
-windows-sys = { version = "0.60.0", features = [
+windows-sys = { version = "0.61.2", features = [
     "Win32_System_Console",
     "Win32_Foundation",
     "Win32_Security",
