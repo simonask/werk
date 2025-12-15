@@ -23,7 +23,7 @@ line-span = "0.1.5"
 num_cpus = "1.16.0"
 owo-colors = "4.1.0"
 parking_lot.workspace = true
-shadow-rs = "1.1.1"
+shadow-rs = "1.4.0"
 smol.workspace = true
 thiserror.workspace = true
 toml_edit.workspace = true
@@ -54,4 +54,4 @@ windows-sys = { version = "0.61.2", features = [
 
 
 [build-dependencies]
-shadow-rs = "0.38.0"
+shadow-rs = "1.4.0"
