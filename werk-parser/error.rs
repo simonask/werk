@@ -165,7 +165,7 @@ pub enum Failure {
 
 impl Failure {
     #[inline]
-    #[must_use] 
+    #[must_use]
     pub fn id(&self) -> &'static str {
         match self {
             Failure::Unknown => "P9999",

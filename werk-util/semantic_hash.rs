@@ -52,5 +52,4 @@ macro_rules! hash_is_semantic {
     };
 }
 
-
 hash_is_semantic!(str);

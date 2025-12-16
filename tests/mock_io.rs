@@ -866,9 +866,9 @@ pub fn touch_fs(fs: &mut MockDir, path: &std::path::Path, now: SystemTime) -> st
                         }
                     } else {
                         match occupied_entry.into_mut() {
-                            MockDirEntry::File(..) => Err(std::io::Error::other(
-                                "touch file below file",
-                            )),
+                            MockDirEntry::File(..) => {
+                                Err(std::io::Error::other("touch file below file"))
+                            }
                             MockDirEntry::Dir(subdir) => touch_fs(subdir, rest, now),
                         }
                     }
