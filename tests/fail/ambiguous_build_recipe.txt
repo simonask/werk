@@ -1,11 +1,12 @@
 error[R0011]: ambiguous pattern match: /foofoo
+  |
+note: first pattern here
  --> /INPUT:3:7
   |
 3 | build "%foo" {
-  |       ------ note: first pattern here
-4 |     info "<out>"
-5 | }
-6 |
-7 | build "foo%" {
-  |       ------ note: second pattern here
+  |       ------
+note: second pattern here
+ --> /INPUT:7:7
   |
+7 | build "foo%" {
+  |       ------

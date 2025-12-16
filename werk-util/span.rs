@@ -237,7 +237,7 @@ impl DiagnosticSpan {
     #[must_use]
     pub fn annotation(
         self,
-        level: annotate_snippets::Level,
+        level: annotate_snippets::Level<'static>,
         message: impl std::fmt::Display,
     ) -> crate::DiagnosticAnnotation {
         crate::DiagnosticAnnotation {

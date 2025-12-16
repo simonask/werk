@@ -353,7 +353,6 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 
     fn warning(&mut self, _task_id: Option<TaskId>, warning: &Warning) {
         // TODO: Dedup warnings based on span and ID.
-        let diagnostic = warning.as_diagnostic();
         // TODO: Get the term width.
         let renderer = annotate_snippets::Renderer::styled();
 
@@ -362,7 +361,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
                 out,
                 "{} {}",
                 "[warn]".bright_yellow(),
-                diagnostic.display(&state.source_map, &renderer)
+                renderer.render(&warning.as_diagnostic(&state.source_map))
             )
         });
     }

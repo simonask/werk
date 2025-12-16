@@ -3,42 +3,6 @@ use indexmap::{IndexMap, map::Entry};
 
 use crate::DiagnosticSpan;
 
-pub trait AnnotateLevelExt {
-    fn diagnostic(self, id: &'static str) -> Diagnostic;
-    fn annotation(
-        self,
-        span: impl Into<DiagnosticSpan>,
-        message: impl std::fmt::Display,
-    ) -> DiagnosticAnnotation;
-}
-
-impl AnnotateLevelExt for Level {
-    #[inline]
-    #[must_use]
-    fn diagnostic(self, id: &'static str) -> Diagnostic {
-        Diagnostic {
-            id,
-            level: self,
-            title: String::new(),
-            annotations: vec![],
-            footer: vec![],
-        }
-    }
-
-    #[must_use]
-    fn annotation(
-        self,
-        span: impl Into<DiagnosticSpan>,
-        message: impl std::fmt::Display,
-    ) -> DiagnosticAnnotation {
-        DiagnosticAnnotation {
-            span: span.into(),
-            level: self,
-            message: message.to_string(),
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 pub struct Annotated<T, R> {
     pub repository: R,
@@ -59,7 +23,7 @@ impl<T: AsDiagnostic, R: DiagnosticSourceMap + Sized> Annotated<T, R> {
         &'a self,
         renderer: &'a annotate_snippets::Renderer,
     ) -> impl std::fmt::Display + 'a {
-        self.error.display(&self.repository, renderer)
+        Display(&self.error, &self.repository, renderer)
     }
 }
 
@@ -253,98 +217,11 @@ impl DiagnosticSourceMap for DiagnosticSource<'_> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Diagnostic {
-    pub id: &'static str,
-    pub level: Level,
-    /// Title on the first line.
-    pub title: String,
-    /// Snippets and annotations.
-    pub annotations: Vec<DiagnosticAnnotation>,
-    /// Help strings in the footer.
-    pub footer: Vec<String>,
-}
-
-impl Diagnostic {
-    #[must_use]
-    pub fn id(mut self, id: &'static str) -> Self {
-        self.id = id;
-        self
-    }
-
-    #[must_use]
-    pub fn title(mut self, title: impl std::fmt::Display) -> Self {
-        self.title = title.to_string();
-        self
-    }
-
-    #[must_use]
-    pub fn annotations(
-        mut self,
-        annotations: impl IntoIterator<Item = DiagnosticAnnotation>,
-    ) -> Self {
-        self.annotations.extend(annotations);
-        self
-    }
-
-    #[must_use]
-    pub fn annotation(mut self, snippet: DiagnosticAnnotation) -> Self {
-        self.annotations.push(snippet);
-        self
-    }
-
-    #[must_use]
-    pub fn footers(mut self, footers: impl IntoIterator<Item = String>) -> Self {
-        self.footer.extend(footers);
-        self
-    }
-
-    #[must_use]
-    pub fn footer(mut self, footer: impl std::fmt::Display) -> Self {
-        self.footer.push(footer.to_string());
-        self
-    }
-}
-
-impl AsRef<Diagnostic> for Diagnostic {
-    #[inline]
-    fn as_ref(&self) -> &Diagnostic {
-        self
-    }
-}
-
-impl Diagnostic {
-    #[inline]
-    #[must_use]
-    pub fn new(id: &'static str) -> Self {
-        Self {
-            id,
-            level: Level::Error,
-            title: String::new(),
-            annotations: Vec::new(),
-            footer: Vec::new(),
-        }
-    }
-
-    pub fn display<'a>(
-        &'a self,
-        source_files: &'a dyn DiagnosticSourceMap,
-        renderer: &'a annotate_snippets::Renderer,
-    ) -> impl std::fmt::Display + 'a {
-        Display(self, source_files, renderer)
-    }
-}
-
 pub trait AsDiagnostic {
-    fn as_diagnostic(&self) -> Diagnostic;
-
-    fn display<'a>(
+    fn as_diagnostic<'a>(
         &'a self,
-        source_files: &'a dyn DiagnosticSourceMap,
-        render: &'a annotate_snippets::Renderer,
-    ) -> impl std::fmt::Display + 'a {
-        Display(self.as_diagnostic(), source_files, render)
-    }
+        source_map: &'a dyn DiagnosticSourceMap,
+    ) -> Vec<annotate_snippets::Group<'a>>;
 
     fn into_diagnostic_error<R: DiagnosticSourceMap>(self, source_files: R) -> Annotated<Self, R>
     where
@@ -358,52 +235,21 @@ pub trait AsDiagnostic {
 }
 
 struct Display<'a, D>(
-    D,
+    &'a D,
     &'a dyn DiagnosticSourceMap,
     &'a annotate_snippets::Renderer,
 );
-impl<D: AsRef<Diagnostic>> std::fmt::Display for Display<'_, D> {
+impl<D: AsDiagnostic> std::fmt::Display for Display<'_, D> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let diag = self.0.as_ref();
-
-        // Group annotations by file, but preserve their order.
-        let snippets = diag
-            .annotations
-            .chunk_by(|a, b| a.span.file == b.span.file)
-            .filter_map(|annotations| {
-                let file_id = annotations[0].span.file; // `chunk_by` guarantees non-empty chunks.
-                let source = self.1.get_source(file_id)?;
-                Some(
-                    annotate_snippets::Snippet::source(source.source)
-                        .origin(source.file)
-                        .fold(true)
-                        .annotations(annotations.iter().map(|annotation| {
-                            annotation
-                                .level
-                                .span(annotation.span.span.into())
-                                .label(&annotation.message)
-                        })),
-                )
-            });
-
-        let message = diag
-            .level
-            .title(&diag.title)
-            .id(diag.id)
-            .snippets(snippets)
-            .footers(
-                diag.footer
-                    .iter()
-                    .map(|footer| annotate_snippets::Level::Help.title(footer)),
-            );
-        let rendered = self.2.render(message);
-        rendered.fmt(f)
+        let report = self.0.as_diagnostic(self.1);
+        let rendered = self.2.render(&report);
+        f.write_str(&rendered)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct DiagnosticAnnotation {
     pub span: DiagnosticSpan,
-    pub level: Level,
+    pub level: Level<'static>,
     pub message: String,
 }

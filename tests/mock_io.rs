@@ -243,8 +243,11 @@ impl<'a> Test<'a> {
         let ast = match werk_parser::parse_werk(self.source) {
             Ok(ast) => ast,
             Err(err) => {
-                return Err(Error::Eval(EvalError::Parse(DiagnosticFileId(0), err))
-                    .into_diagnostic_error(&*self as _));
+                return Err(Error::Eval(EvalError::Parse(werk_parser::ErrorInFile {
+                    file: DiagnosticFileId(0),
+                    error: err,
+                }))
+                .into_diagnostic_error(&*self as _));
             }
         };
         self.reload_test_pragmas(&ast);

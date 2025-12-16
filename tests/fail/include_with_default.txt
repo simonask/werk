@@ -4,9 +4,9 @@ error[E0036]: `default` statements are not allowed in included files
 1 | default target="foo"
   | ^^^^^^^^^^^^^^^^^^^^ `default` statements are not allowed in included files
   |
- ::: /INPUT:1:1
+  = help: move `default` statements to the top-level Werkfile
+note: included here
+ --> /INPUT:1:1
   |
 1 | include "included"
-  | ------------------ note: included here
-  |
-  = help: move `default` statements to the top-level Werkfile
+  | ^^^^^^^^^^^^^^^^^^

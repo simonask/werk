@@ -228,7 +228,8 @@ impl Workspace {
         source: &str,
     ) -> Result<DiagnosticFileId, EvalError> {
         let file = self.register_werkfile_source(path, source, None)?;
-        let ast = werk_parser::parse_werk(source).map_err(|err| EvalError::Parse(file, err))?;
+        let ast = werk_parser::parse_werk(source)
+            .map_err(|err| EvalError::Parse(werk_parser::ErrorInFile { file, error: err }))?;
         self.eval_werkfile(file, ast, false)
     }
 
@@ -333,7 +334,12 @@ impl Workspace {
             let id =
                 self.register_werkfile_source(&included_file, &source, Some(file.span(stmt.span)))?;
             werk_parser::parse_werk(&source)
-                .map_err(|err| EvalError::Parse(id, err))
+                .map_err(|err| {
+                    EvalError::Parse(werk_parser::ErrorInFile {
+                        file: id,
+                        error: err,
+                    })
+                })
                 .and_then(|ast| self.eval_werkfile(id, ast, true))
                 .map_err(|err| match err {
                     EvalError::IncludeDuplicate(..) => err,

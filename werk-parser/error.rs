@@ -1,6 +1,7 @@
-use std::sync::Arc;
+use std::{borrow::Cow, ops::Range, sync::Arc};
 
-use werk_util::{AnnotateLevelExt, DiagnosticFileId, Level, Offset, Span};
+use annotate_snippets::{AnnotationKind, Snippet};
+use werk_util::{DiagnosticFileId, DiagnosticSourceMap, Level, Offset, Span};
 use winnow::{error::AddContext, stream::Location};
 
 use crate::parser::{Input, Parser};
@@ -83,108 +84,51 @@ pub struct ErrorInFile<E> {
 }
 
 impl<E: AsRef<Error>> werk_util::AsDiagnostic for ErrorInFile<E> {
-    fn as_diagnostic(&self) -> werk_util::Diagnostic {
-        let level = Level::Error;
-        let file_id = self.file;
+    fn as_diagnostic<'a>(
+        &'a self,
+        source_map: &'a dyn DiagnosticSourceMap,
+    ) -> Vec<annotate_snippets::Group<'a>> {
         let error = self.error.as_ref();
 
-        let context = error
-            .context
-            .as_ref()
-            .map(|context| {
-                context.iter().filter_map(|(offset, c)| match c {
-                    ErrContext::WhileParsing(thing) => Some(werk_util::DiagnosticAnnotation {
-                        span: offset.to_span().with_file(file_id),
-                        level: Level::Info,
-                        message: format!("while parsing {thing}"),
-                    }),
-                    ErrContext::Note(note) => Some(werk_util::DiagnosticAnnotation {
-                        span: offset.to_span().with_file(file_id),
-                        level: Level::Note,
-                        message: (*note).to_string(),
-                    }),
-                    _ => None,
-                })
-            })
-            .into_iter()
-            .flatten();
+        let source = source_map
+            .get_source(self.file)
+            .expect("input file is not in the source map");
+        let group = Level::ERROR
+            .primary_title("parse error")
+            .id(error.fail.id())
+            .element(
+                Snippet::source(source.source)
+                    .path(source.file)
+                    .annotation(
+                        AnnotationKind::Primary
+                            .span(error.span().into())
+                            .label(error.fail.to_string()),
+                    )
+                    .annotations(error.context().iter().filter_map(|(offset, c)| {
+                        match c {
+                            ErrContext::WhileParsing(thing) => Some(
+                                AnnotationKind::Context
+                                    .span(offset.to_span().into())
+                                    .label(format!("while parsing {thing}")),
+                            ),
+                            ErrContext::Note(note) => Some(
+                                AnnotationKind::Context
+                                    .span(offset.to_span().into())
+                                    .label((*note).to_string()),
+                            ),
+                            _ => None,
+                        }
+                    })),
+            )
+            .elements(error.context().iter().filter_map(|(_offset, c)| {
+                if let ErrContext::Hint(note) = c {
+                    Some(Level::HELP.message(*note))
+                } else {
+                    None
+                }
+            }));
 
-        let hints = error
-            .context
-            .as_ref()
-            .map(|context| {
-                context.iter().filter_map(|c| {
-                    if let ErrContext::Hint(h) = c.1 {
-                        Some(h.to_string())
-                    } else {
-                        None
-                    }
-                })
-            })
-            .into_iter()
-            .flatten();
-
-        let span = error.span().with_file(file_id);
-
-        match error.fail {
-            Failure::Unknown => {
-                level
-                    .diagnostic("P9999")
-                    .title("parse error")
-                    .annotations(context.chain(Some(
-                        span.annotation(level, "no error message; this is a parser bug"),
-                    )))
-            }
-            Failure::Expected(expected) => level
-                .diagnostic("P1001")
-                .title("parse error")
-                .annotations(context.chain(Some(
-                    span.annotation(level, format_args!("expected {expected}")),
-                ))),
-            Failure::Unexpected(unexpected) => level
-                .diagnostic("P2001")
-                .title("parse error")
-                .annotations(context.chain(Some(
-                    span.annotation(level, format_args!("unexpected {unexpected}")),
-                ))),
-            Failure::ExpectedKeyword(expected) => level
-                .diagnostic("P1002")
-                .title("parse error")
-                .annotations(context.chain(Some(
-                    span.annotation(level, format_args!("expected keyword `{expected}`")),
-                ))),
-            Failure::InvalidEscapeChar(ch) => level
-                .diagnostic("P1003")
-                .title("parse error")
-                .annotations(context.chain(Some(
-                    span.annotation(level, format_args!("invalid escape sequence: '{ch}'")),
-                ))),
-            Failure::InvalidInterpolationOp => level
-                .diagnostic("P1004")
-                .title("parse error")
-                .annotations(context.chain(Some(
-                    span.annotation(level, "invalid interpolation operator"),
-                ))),
-            Failure::ExpectedChar(ch) => level
-                .diagnostic("P1005")
-                .title("parse error")
-                .annotations(context.chain(Some(
-                    span.annotation(level, format_args!("expected character {ch}")),
-                ))),
-            Failure::ValidRegex(ref error) => level
-                .diagnostic("P0100")
-                .title("parse error")
-                .annotations(context.chain(Some(
-                    span.annotation(level, format_args!("invalid regex pattern: {error}")),
-                ))),
-            Failure::ParseInt(ref parse_int_error) => level
-                .diagnostic("P0101")
-                .title("parse error")
-                .annotations(context.chain(Some(
-                    span.annotation(level, format_args!("invalid integer: {parse_int_error}")),
-                ))),
-        }
-        .footers(hints)
+        vec![group]
     }
 }
 
@@ -217,6 +161,23 @@ pub enum Failure {
     ValidRegex(Arc<regex::Error>),
     #[error(transparent)]
     ParseInt(#[from] std::num::ParseIntError),
+}
+
+impl Failure {
+    #[inline]
+    pub fn id(&self) -> &'static str {
+        match self {
+            Failure::Unknown => "P9999",
+            Failure::Expected(_) => "P1001",
+            Failure::Unexpected(_) => "P2001",
+            Failure::ExpectedKeyword(_) => "P1002",
+            Failure::InvalidEscapeChar(_) => "P1003",
+            Failure::InvalidInterpolationOp => "P1004",
+            Failure::ExpectedChar(_) => "P1005",
+            Failure::ValidRegex(_) => "P0100",
+            Failure::ParseInt(_) => "P0101",
+        }
+    }
 }
 
 impl winnow::error::FromExternalError<Input<'_>, std::num::ParseIntError> for ModalErr {

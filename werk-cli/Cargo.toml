@@ -12,7 +12,7 @@ path = "main.rs"
 
 [dependencies]
 ahash.workspace = true
-annotate-snippets = "0.11.5"
+annotate-snippets.workspace = true
 anstream.workspace = true
 anstyle-query = "1.1.2"
 anyhow = "1.0.93"
