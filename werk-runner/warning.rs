@@ -29,6 +29,7 @@ pub enum Warning {
 }
 
 impl Warning {
+    #[must_use] 
     pub fn id(&self) -> &'static str {
         match self {
             Warning::NoPatternStem(_) => "W0010",
@@ -45,6 +46,7 @@ impl Warning {
         }
     }
 
+    #[must_use] 
     pub fn span(&self) -> Option<DiagnosticSpan> {
         match self {
             Warning::NoPatternStem(span)

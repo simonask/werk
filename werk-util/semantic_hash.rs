@@ -52,6 +52,5 @@ macro_rules! hash_is_semantic {
     };
 }
 
-pub(crate) use hash_is_semantic;
 
 hash_is_semantic!(str);

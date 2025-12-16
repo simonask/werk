@@ -88,8 +88,7 @@ impl<'a> Normalize<'a> for &'a std::path::Path {
                 std::path::Component::CurDir => {}
                 std::path::Component::ParentDir => {
                     if !buf.pop() {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        return Err(std::io::Error::other(
                             TooManyParents,
                         ));
                     }

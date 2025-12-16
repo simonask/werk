@@ -1,4 +1,4 @@
-use std::{borrow::Cow, ops::Range, sync::Arc};
+use std::sync::Arc;
 
 use annotate_snippets::{AnnotationKind, Snippet};
 use werk_util::{DiagnosticFileId, DiagnosticSourceMap, Level, Offset, Span};
@@ -165,6 +165,7 @@ pub enum Failure {
 
 impl Failure {
     #[inline]
+    #[must_use] 
     pub fn id(&self) -> &'static str {
         match self {
             Failure::Unknown => "P9999",

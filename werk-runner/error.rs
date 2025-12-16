@@ -185,30 +185,27 @@ impl werk_util::AsDiagnostic for Error {
         )];
 
         // Additional context and help
-        match self {
-            Error::AmbiguousPattern(err) => {
-                let first_source = source_map
-                    .get_source(err.pattern1.file)
-                    .expect("valid file ID");
-                let second_source = source_map
-                    .get_source(err.pattern2.file)
-                    .expect("valid file ID");
-                diag.push(
-                    Level::NOTE.secondary_title("first pattern here").element(
-                        Snippet::source(first_source.source)
-                            .path(first_source.file)
-                            .annotation(AnnotationKind::Context.span(err.pattern1.span.into())),
-                    ),
-                );
-                diag.push(
-                    Level::NOTE.secondary_title("second pattern here").element(
-                        Snippet::source(second_source.source)
-                            .path(second_source.file)
-                            .annotation(AnnotationKind::Context.span(err.pattern2.span.into())),
-                    ),
-                );
-            }
-            _ => (),
+        if let Error::AmbiguousPattern(err) = self {
+            let first_source = source_map
+                .get_source(err.pattern1.file)
+                .expect("valid file ID");
+            let second_source = source_map
+                .get_source(err.pattern2.file)
+                .expect("valid file ID");
+            diag.push(
+                Level::NOTE.secondary_title("first pattern here").element(
+                    Snippet::source(first_source.source)
+                        .path(first_source.file)
+                        .annotation(AnnotationKind::Context.span(err.pattern1.span.into())),
+                ),
+            );
+            diag.push(
+                Level::NOTE.secondary_title("second pattern here").element(
+                    Snippet::source(second_source.source)
+                        .path(second_source.file)
+                        .annotation(AnnotationKind::Context.span(err.pattern2.span.into())),
+                ),
+            );
         }
 
         diag
