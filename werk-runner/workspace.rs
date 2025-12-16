@@ -2,9 +2,10 @@ use ahash::HashMap;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::{borrow::Cow, collections::hash_map, sync::Arc};
+use stringleton::Symbol;
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_parser::ast;
-use werk_util::{DiagnosticFileId, DiagnosticSpan, Symbol};
+use werk_util::{DiagnosticFileId, DiagnosticSpan};
 
 use crate::{
     DirEntry, Error, EvalError, Io, Render, Value, Warning,

@@ -532,6 +532,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
+name = "ctor"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "424e0138278faeb2b401f174ad17e715c829512d74f3d1e81eb43365c2e0590e"
+
+[[package]]
 name = "ctrlc"
 version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1152,6 +1158,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29fc123b2f6600099ca18248f69e3ee02b09c4188c0d98e9a690d90dec3e408a"
 
 [[package]]
+name = "linkme"
+version = "0.3.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e3283ed2d0e50c06dd8602e0ab319bb048b6325d0bba739db64ed8205179898"
+dependencies = [
+ "linkme-impl",
+]
+
+[[package]]
+name = "linkme-impl"
+version = "0.3.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5cec0ec4228b4853bb129c84dbf093a27e6c7a20526da046defc334a1b017f7"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1755,6 +1781,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
+name = "stringleton"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f44e65a6af54fa159199b353dd00227b68f08e0113f3b5f406b6d36cdaa4ef37"
+dependencies = [
+ "ctor",
+ "linkme",
+ "stringleton-registry",
+]
+
+[[package]]
+name = "stringleton-registry"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3367599ca3efb8bbf1f7cda51e9dba9c7a8f020ec966737640ae453239e52ea"
+dependencies = [
+ "hashbrown",
+ "serde",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1810,6 +1857,7 @@ dependencies = [
  "regex",
  "smol",
  "smol-macros",
+ "stringleton",
  "toml_edit",
  "tracing",
  "tracing-subscriber",
@@ -2210,6 +2258,7 @@ name = "werk-fs"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "stringleton",
  "thiserror",
  "werk-util",
  "winnow",
@@ -2225,6 +2274,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "stringleton",
  "thiserror",
  "unicode-ident",
  "werk-util",
@@ -2251,6 +2301,7 @@ dependencies = [
  "rustc-stable-hash",
  "serde",
  "smol",
+ "stringleton",
  "thiserror",
  "toml_edit",
  "tracing",

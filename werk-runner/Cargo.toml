@@ -34,6 +34,7 @@ memchr = "2.7.4"
 annotate-snippets.workspace = true
 werk-util.workspace = true
 bitflags = "2.8.0"
+stringleton.workspace = true
 
 [lints]
 workspace = true

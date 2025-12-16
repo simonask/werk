@@ -1,4 +1,4 @@
-use werk_util::Symbol;
+use stringleton::Symbol;
 
 use crate::{Absolute, Path, PathBuf};
 

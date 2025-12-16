@@ -13,6 +13,7 @@ winnow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 werk-util.workspace = true
+stringleton.workspace = true
 
 [lints]
 workspace = true

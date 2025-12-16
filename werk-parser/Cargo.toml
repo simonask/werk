@@ -20,6 +20,7 @@ regex.workspace = true
 annotate-snippets.workspace = true
 serde.workspace = true
 werk-util.workspace = true
+stringleton.workspace = true
 
 [dev-dependencies]
 anstream.workspace = true

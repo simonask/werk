@@ -3,8 +3,8 @@ use std::{
     ops::{BitOr, BitOrAssign},
 };
 
+use stringleton::Symbol;
 use werk_fs::{Absolute, SymPath};
-use werk_util::Symbol;
 
 use crate::cache::Hash128;
 

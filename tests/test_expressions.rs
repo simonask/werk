@@ -1,7 +1,7 @@
 use werk_runner::Value;
 
+use stringleton::Symbol;
 use tests::mock_io::*;
-use werk_util::Symbol;
 
 fn evaluate_global(source: &str, global_variable_name_to_check: &str) -> Value {
     let mut test = Test::new(source).unwrap();

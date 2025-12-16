@@ -1,9 +1,10 @@
 use std::{borrow::Cow, fmt::Write as _, sync::Arc};
 
 use indexmap::IndexMap;
+use stringleton::Symbol;
 use werk_fs::Absolute;
 use werk_parser::ast;
-use werk_util::{DiagnosticFileId, DiagnosticSpan, Symbol};
+use werk_util::{DiagnosticFileId, DiagnosticSpan};
 
 use crate::{
     AmbiguousPatternError, EvalError, Lookup, LookupValue, Pattern, PatternMatcher, PatternRegex,

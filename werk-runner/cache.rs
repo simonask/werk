@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
+use stringleton::Symbol;
 use werk_fs::Absolute;
-use werk_util::Symbol;
 
 /// The contents of `.werk-cache`.
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]

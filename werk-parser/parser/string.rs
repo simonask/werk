@@ -6,7 +6,8 @@ use crate::{
     fatal,
     parser::{Input, Parser as _},
 };
-use werk_util::{Offset, Symbol};
+use stringleton::Symbol;
+use werk_util::Offset;
 use winnow::{
     Parser,
     ascii::{dec_int, digit1, multispace1},
