@@ -506,7 +506,7 @@ impl<'a> Inner<'a> {
     ) -> Result<Option<Absolute<werk_fs::PathBuf>>, Error> {
         let mut check_implicit_depfile_was_generated = None;
 
-        let depfile_path = werk_fs::Path::new(&depfile)
+        let depfile_path = werk_fs::Path::new(depfile)
             .and_then(|p| p.absolutize(werk_fs::Path::ROOT))
             .map_err(|err| Error::InvalidTargetPath(depfile.string.clone(), err))?;
         let dep = self.get_depfile_build_spec(&depfile_path)?;

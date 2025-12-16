@@ -29,7 +29,7 @@ pub enum Warning {
 }
 
 impl Warning {
-    #[must_use] 
+    #[must_use]
     pub fn id(&self) -> &'static str {
         match self {
             Warning::NoPatternStem(_) => "W0010",
@@ -46,7 +46,7 @@ impl Warning {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn span(&self) -> Option<DiagnosticSpan> {
         match self {
             Warning::NoPatternStem(span)
@@ -105,8 +105,7 @@ impl werk_util::AsDiagnostic for Warning {
                     .element(Level::HELP.message("maybe a `let` statement should be changed to a `config` statement?"))
             }
 
-            Warning::OutputDirectoryChanged(..) => annotate_snippets::Group::with_title(title),
-            Warning::ZombieChild => annotate_snippets::Group::with_title(title),
+            Warning::OutputDirectoryChanged(..) | Warning::ZombieChild => annotate_snippets::Group::with_title(title),
         };
 
         vec![group]
