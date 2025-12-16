@@ -27,7 +27,7 @@ anstream.workspace = true
 winnow.workspace = true
 
 [dev-dependencies]
-criterion = "0.5.1"
+criterion = "0.8.1"
 iai = "0.1"
 
 [lib]

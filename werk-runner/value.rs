@@ -486,7 +486,7 @@ impl Value {
     }
 
     #[must_use]
-    pub fn display_friendly(&self, max_width: usize) -> DisplayFriendly {
+    pub fn display_friendly(&self, max_width: usize) -> DisplayFriendly<'_> {
         DisplayFriendly(self, max_width)
     }
 }

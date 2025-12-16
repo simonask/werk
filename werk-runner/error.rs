@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
+use annotate_snippets::{AnnotationKind, Snippet};
 use werk_fs::Absolute;
-use werk_util::{AnnotateLevelExt, DiagnosticFileId, DiagnosticSpan, Level};
+use werk_util::{DiagnosticFileId, DiagnosticSourceMap, DiagnosticSpan, Level};
 
 use crate::{OwnedDependencyChain, ShellCommandLine, TaskId, Value, depfile::DepfileError};
 
@@ -151,11 +152,12 @@ impl From<ignore::Error> for Error {
 }
 
 impl werk_util::AsDiagnostic for Error {
-    fn as_diagnostic(&self) -> werk_util::Diagnostic {
-        let level = Level::Error;
-
+    fn as_diagnostic<'a>(
+        &'a self,
+        source_map: &'a dyn DiagnosticSourceMap,
+    ) -> Vec<annotate_snippets::Group<'a>> {
         let id = match self {
-            Error::Eval(eval_error) => return eval_error.as_diagnostic(),
+            Error::Eval(eval_error) => return eval_error.as_diagnostic(source_map),
             Error::Io(..) => "R0001",
             Error::CommandNotFound(..) => "R0002",
             Error::NoRuleToBuildTarget(..) => "R0003",
@@ -177,16 +179,36 @@ impl werk_util::AsDiagnostic for Error {
             Error::Custom(..) => "R9999",
         };
 
-        let diag = level.diagnostic(id).title(self); // Use the Display impl from thiserror.
+        // Use the Display impl from thiserror.
+        let mut diag = vec![annotate_snippets::Group::with_title(
+            Level::ERROR.primary_title(self.to_string()).id(id),
+        )];
 
         // Additional context and help
-        match self {
-            Error::AmbiguousPattern(err) => diag.annotations([
-                err.pattern1.annotation(Level::Note, "first pattern here"),
-                err.pattern2.annotation(Level::Note, "second pattern here"),
-            ]),
-            _ => diag,
+        if let Error::AmbiguousPattern(err) = self {
+            let first_source = source_map
+                .get_source(err.pattern1.file)
+                .expect("valid file ID");
+            let second_source = source_map
+                .get_source(err.pattern2.file)
+                .expect("valid file ID");
+            diag.push(
+                Level::NOTE.secondary_title("first pattern here").element(
+                    Snippet::source(first_source.source)
+                        .path(first_source.file)
+                        .annotation(AnnotationKind::Context.span(err.pattern1.span.into())),
+                ),
+            );
+            diag.push(
+                Level::NOTE.secondary_title("second pattern here").element(
+                    Snippet::source(second_source.source)
+                        .path(second_source.file)
+                        .annotation(AnnotationKind::Context.span(err.pattern2.span.into())),
+                ),
+            );
         }
+
+        diag
     }
 }
 
@@ -335,8 +357,8 @@ pub enum EvalError {
     ),
     #[error("`default` statements are not allowed in included files")]
     DefaultInInclude(DiagnosticSpan),
-    #[error("{1}")]
-    Parse(DiagnosticFileId, werk_parser::Error),
+    #[error("{}", .0.error)]
+    Parse(werk_parser::ErrorInFile<werk_parser::Error>),
 }
 
 /// Error in an `include` statement.
@@ -392,15 +414,18 @@ impl EvalError {
             | EvalError::IncludeError(span, ..)
             | EvalError::IncludeDuplicate(span, ..)
             | EvalError::DefaultInInclude(span) => *span,
-            EvalError::Parse(file, err) => file.span(err.span()),
+            EvalError::Parse(err) => err.file.span(err.error.span()),
         }
     }
 }
 
 impl werk_util::AsDiagnostic for EvalError {
-    fn as_diagnostic(&self) -> werk_util::Diagnostic {
-        let level = Level::Error;
+    fn as_diagnostic<'a>(
+        &'a self,
+        source_map: &'a dyn DiagnosticSourceMap,
+    ) -> Vec<annotate_snippets::Group<'a>> {
         let span = self.span();
+        let source = source_map.get_source(span.file).expect("valid file ID");
 
         let id = match self {
             EvalError::InvalidEdition(..) => "E0001",
@@ -440,38 +465,65 @@ impl werk_util::AsDiagnostic for EvalError {
             EvalError::AssertCustomFailed(..) => "E0031",
             EvalError::AmbiguousPathResolution(..) => "E0032",
             EvalError::IncludeError(_, err) => {
-                return err
-                    .as_diagnostic()
-                    .annotation(span.annotation(Level::Note, "included here"));
+                let mut groups = err.as_diagnostic(source_map);
+                groups.push(
+                    Level::NOTE.secondary_title("included here").element(
+                        Snippet::source(source.source)
+                            .path(source.file)
+                            .annotation(AnnotationKind::Primary.span(span.span.into())),
+                    ),
+                );
+                return groups;
             }
             EvalError::IncludeDuplicate(..) => "E0035",
             EvalError::DefaultInInclude(..) => "E0036",
-            EvalError::Parse(file, err) => {
-                return err.with_file_ref(*file).as_diagnostic();
+            EvalError::Parse(err) => {
+                return err.as_diagnostic(source_map);
             }
         };
 
-        let diag = level
-            .diagnostic(id)
-            .title(self) // Use the `Display` implementation from thiserror.
-            .annotation(span.annotation(level, self));
+        let title = self.to_string();
+
+        let diag = Level::ERROR
+            .primary_title(title.clone()) // Use the `Display` implementation from thiserror.
+            .id(id)
+            .element(
+                Snippet::source(source.source)
+                    .path(source.file)
+                    .annotation(AnnotationKind::Primary.span(span.span.into()).label(title)),
+            );
 
         // Help messages and additional context.
-        match self {
-            EvalError::NoSuchCaptureGroup(..) => diag.footer(
+        let diag = match self {
+            EvalError::NoSuchCaptureGroup(..) => diag.element(Level::HELP.message(
                 "pattern capture groups are zero-indexed, starting from 0",
-            ),
-            EvalError::AmbiguousPathResolution(_, err) => diag
-                .annotation(err.build_recipe.annotation(Level::Note, "matched this build recipe"))
-                .footer("use `<...:out-dir>` or `<...:workspace>` to disambiguate between paths in the workspace and the output directory"),
-            EvalError::DuplicateConfigStatement(_, previous_span) => diag
-                .annotation(previous_span.annotation(Level::Note, "previous config statement here")),
-            EvalError::ExpectedInt(..) => diag.footer("integers are stringly typed in array index operations, so \"0\" is the first element"),
-            EvalError::IndexOutOfBounds(..) => diag.footer("arrays are indexed from zero, and negative indices refer to elements from the end of the array"),
-            EvalError::IncludeDuplicate(_, Some(previous_span), _) => diag.annotation(previous_span.annotation(Level::Note, "already included here")),
-            EvalError::DefaultInInclude(_) => diag.footer("move `default` statements to the top-level Werkfile"),
+            )),
+            EvalError::AmbiguousPathResolution(_, err) => {
+                let previous_definition_file = source_map.get_source(err.build_recipe.file).expect("invalid file ID");
+                diag
+                .element(
+                    Snippet::source(previous_definition_file.source)
+                        .path(previous_definition_file.file)
+                        .annotation(AnnotationKind::Context.span(err.build_recipe.span.into()).label("matched this build recipe")))
+                .element(Level::HELP.message("use `<...:out-dir>` or `<...:workspace>` to disambiguate between paths in the workspace and the output directory"))
+            },
+            EvalError::DuplicateConfigStatement(_, previous_span) => {
+                let previous_definition_file = source_map.get_source(previous_span.file).expect("invalid file ID");
+                diag
+                .element(Snippet::source(previous_definition_file.source).path(previous_definition_file.file).annotation(AnnotationKind::Context.span(previous_span.span.into()).label("previous config statement here")))
+            },
+            EvalError::ExpectedInt(..) => diag.element(Level::HELP.message("integers are stringly typed in array index operations, so \"0\" is the first element")),
+            EvalError::IndexOutOfBounds(..) => diag.element(Level::HELP.message("arrays are indexed from zero, and negative indices refer to elements from the end of the array")),
+            EvalError::IncludeDuplicate(_, Some(previous_span), _) => {
+                let previous_definition_file = source_map.get_source(previous_span.file).expect("invalid file ID");
+                diag
+                .element(Snippet::source(previous_definition_file.source).path(previous_definition_file.file).annotation(AnnotationKind::Context.span(previous_span.span.into()).label("already included here")))
+            },
+            EvalError::DefaultInInclude(_) => diag.element(Level::HELP.message("move `default` statements to the top-level Werkfile")),
             _ => diag,
-        }
+        };
+
+        vec![diag]
     }
 }
 

@@ -102,7 +102,7 @@ pub struct Workspace {
     // through the `Io` trait, and never directly.
     output_directory: Absolute<std::path::PathBuf>,
     // Using IndexMap to ensure that the ordering of glob results is well-defined.
-    workspace_files: IndexMap<Absolute<werk_fs::PathBuf>, DirEntry, ahash::RandomState>,
+    files: IndexMap<Absolute<werk_fs::PathBuf>, DirEntry, ahash::RandomState>,
     /// The contents of `<out-dir>/.werk-cache.toml`.
     werk_cache: Mutex<WerkCache>,
     /// Caches of expensive runtime values (glob, which, env).
@@ -169,7 +169,7 @@ impl Workspace {
             manifest,
             project_root,
             output_directory: settings.output_directory.clone(),
-            workspace_files,
+            files: workspace_files,
             werk_cache: Mutex::new(werk_cache),
             runtime_caches: Mutex::new(Caches {
                 glob_cache: HashMap::default(),
@@ -228,7 +228,8 @@ impl Workspace {
         source: &str,
     ) -> Result<DiagnosticFileId, EvalError> {
         let file = self.register_werkfile_source(path, source, None)?;
-        let ast = werk_parser::parse_werk(source).map_err(|err| EvalError::Parse(file, err))?;
+        let ast = werk_parser::parse_werk(source)
+            .map_err(|err| EvalError::Parse(werk_parser::ErrorInFile { file, error: err }))?;
         self.eval_werkfile(file, ast, false)
     }
 
@@ -333,7 +334,12 @@ impl Workspace {
             let id =
                 self.register_werkfile_source(&included_file, &source, Some(file.span(stmt.span)))?;
             werk_parser::parse_werk(&source)
-                .map_err(|err| EvalError::Parse(id, err))
+                .map_err(|err| {
+                    EvalError::Parse(werk_parser::ErrorInFile {
+                        file: id,
+                        error: err,
+                    })
+                })
                 .and_then(|ast| self.eval_werkfile(id, ast, true))
                 .map_err(|err| match err {
                     EvalError::IncludeDuplicate(..) => err,
@@ -484,7 +490,7 @@ impl Workspace {
     pub fn workspace_files(
         &self,
     ) -> impl ExactSizeIterator<Item = (&Absolute<werk_fs::PathBuf>, &DirEntry)> + '_ {
-        self.workspace_files.iter()
+        self.files.iter()
     }
 
     #[inline]
@@ -502,7 +508,7 @@ impl Workspace {
     }
 
     pub fn get_project_file(&self, path: &Absolute<werk_fs::Path>) -> Option<&DirEntry> {
-        self.workspace_files.get(path)
+        self.files.get(path)
     }
 
     pub fn get_existing_project_or_output_file(
@@ -579,7 +585,7 @@ impl Workspace {
 
                 // Note: Workspace files are already sorted.
                 let matches = self
-                    .workspace_files
+                    .files
                     .iter()
                     .filter_map(|(path, entry)| {
                         if entry.metadata.is_file && matcher.is_match(path.as_os_path()) {

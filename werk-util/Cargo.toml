@@ -10,7 +10,7 @@ path = "lib.rs"
 
 [dependencies]
 ahash.workspace = true
-hashbrown = "0.15.2"
+hashbrown = "0.16.1"
 parking_lot.workspace = true
 serde.workspace = true
 annotate-snippets.workspace = true

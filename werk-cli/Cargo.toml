@@ -12,7 +12,7 @@ path = "main.rs"
 
 [dependencies]
 ahash.workspace = true
-annotate-snippets = "0.11.5"
+annotate-snippets.workspace = true
 anstream.workspace = true
 anstyle-query = "1.1.2"
 anyhow = "1.0.93"
@@ -23,7 +23,7 @@ line-span = "0.1.5"
 num_cpus = "1.16.0"
 owo-colors = "4.1.0"
 parking_lot.workspace = true
-shadow-rs = "1.1.1"
+shadow-rs = "1.4.0"
 smol.workspace = true
 thiserror.workspace = true
 toml_edit.workspace = true
@@ -36,7 +36,7 @@ werk-util.workspace = true
 anstyle = "1.0.10"
 serde.workspace = true
 serde_json = "1.0.137"
-notify-debouncer-full = "0.5.0"
+notify-debouncer-full = "0.6.0"
 ctrlc = { version = "3.4.5", features = ["termination"] }
 futures.workspace = true
 libc = "0.2.169"
@@ -44,11 +44,14 @@ clap_complete = { version = "4.5.44", features = ["unstable-dynamic"] }
 
 [target.'cfg(windows)'.dependencies]
 # Needed to get terminal width.
-windows-sys = { version = "0.59.0", features = [
+windows-sys = { version = "0.61.2", features = [
     "Win32_System_Console",
     "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage",
+    "Win32_Storage_FileSystem",
 ] }
 
 
 [build-dependencies]
-shadow-rs = "0.38.0"
+shadow-rs = "1.4.0"

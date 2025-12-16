@@ -1,9 +1,8 @@
 error[P1003]: parse error
- --> INPUT:1:9
+ --> INPUT:1:12
   |
 1 | let a = "\p"
   | -       -  ^ invalid escape sequence: 'p'
   | |       |
-  | |       info: while parsing string literal
-  | info: while parsing `let` statement
-  |
+  | |       while parsing string literal
+  | while parsing `let` statement

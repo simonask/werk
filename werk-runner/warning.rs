@@ -1,5 +1,6 @@
+use annotate_snippets::{AnnotationKind, Snippet};
 use werk_fs::Absolute;
-use werk_util::{AnnotateLevelExt as _, DiagnosticSpan, Level};
+use werk_util::{DiagnosticSourceMap, DiagnosticSpan, Level};
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum Warning {
@@ -27,70 +28,86 @@ pub enum Warning {
     ZombieChild,
 }
 
-impl werk_util::AsDiagnostic for Warning {
-    fn as_diagnostic(&self) -> werk_util::Diagnostic {
-        let level = Level::Warning;
-
+impl Warning {
+    #[must_use]
+    pub fn id(&self) -> &'static str {
         match self {
-            Warning::NoPatternStem(span) => level
-                .diagnostic("W0010")
-                .annotation(span.annotation(level,
-                    "this string uses `%`, but it will evaluate to an empty string",
-                ))
-                .footer("perhaps you meant to escape the literal character: `\\%`"),
-            Warning::NoImpliedValue(span) => level
-                .diagnostic("W0011")
-                .annotation(span.annotation(level,
+            Warning::NoPatternStem(_) => "W0010",
+            Warning::NoImpliedValue(_) => "W0011",
+            Warning::IgnoringUnresolvedPath(_, _) => "W0020",
+            Warning::IgnoringNonAbsolutePath(_, _) => "W0021",
+            Warning::IgnoringPathOutsideOutputDirectory(_, _) => "W0022",
+            Warning::IgnoringFileNotFound(_, _) => "W0023",
+            Warning::DepfileNotGenerated(_, _) => "W0030",
+            Warning::WarningExpression(_, _) => "W9999",
+            Warning::UnusedDefine(_) => "W1000",
+            Warning::OutputDirectoryChanged(..) => "W1001",
+            Warning::ZombieChild => "W1002",
+        }
+    }
 
-                "this string uses the implicit value `{}` or `<>`, but the current expression has no implicit value",
-            )).footer("use an expression chain `lhs | rhs` to introduce an implicit value"),
-            Warning::IgnoringUnresolvedPath(span, path) => level
-                .diagnostic("W0020")
-                .annotation(span.annotation(level,
+    #[must_use]
+    pub fn span(&self) -> Option<DiagnosticSpan> {
+        match self {
+            Warning::NoPatternStem(span)
+            | Warning::NoImpliedValue(span)
+            | Warning::IgnoringUnresolvedPath(span, _)
+            | Warning::IgnoringNonAbsolutePath(span, _)
+            | Warning::IgnoringPathOutsideOutputDirectory(span, _)
+            | Warning::IgnoringFileNotFound(span, _)
+            | Warning::DepfileNotGenerated(span, _)
+            | Warning::WarningExpression(span, _) => Some(*span),
+            Warning::UnusedDefine(_)
+            | Warning::OutputDirectoryChanged(..)
+            | Warning::ZombieChild => None,
+        }
+    }
+}
 
-                    format!("path `{path}` is not resolved"),
-                )),
-            Warning::IgnoringNonAbsolutePath(span, path_buf) => level
-                .diagnostic("W0021")
-                .annotation(span.annotation(level,
+impl werk_util::AsDiagnostic for Warning {
+    fn as_diagnostic<'a>(
+        &'a self,
+        source_map: &'a dyn DiagnosticSourceMap,
+    ) -> Vec<annotate_snippets::Group<'a>> {
+        let title = Level::WARNING.primary_title(self.to_string()).id(self.id());
+        let span = self.span();
+        let source = span.map(|span| source_map.get_source(span.file).expect("invalid file ID"));
+        let snippet = source.map(|source| Snippet::source(source.source).path(source.file));
 
-                    format!("path `{}` is not absolute", path_buf.display()),
-                ))
-                .footer("use \"<...>\" to convert abstract paths to native OS paths"),
-            Warning::IgnoringPathOutsideOutputDirectory(span, absolute) => level
-                .diagnostic("W0022")
-                .annotation(span.annotation(level,
+        let group = match self {
+            Warning::NoPatternStem(span) => {
+                title.element(snippet.unwrap().annotation(AnnotationKind::Primary.span(span.span.into()).label("this string uses `%`, but it will evaluate to an empty string"))).element(Level::HELP.message("perhaps you meant to escape the literal character: `\\%`"))
+            },
+            Warning::NoImpliedValue(span) =>  {
+                title.element(snippet.unwrap().annotation(AnnotationKind::Primary.span(span.span.into()).label("this string uses the implicit value `{}` or `<>`, but the current expression has no implicit value"))).element(Level::HELP.message("use an expression chain `lhs | rhs` to introduce an implicit value"))
+            }
+            Warning::IgnoringUnresolvedPath(span, path) => {
+                title.element(snippet.unwrap().annotation(AnnotationKind::Primary.span(span.span.into()).label(format!("path `{path}` is not resolved"))))
+            }
+            Warning::IgnoringNonAbsolutePath(span, path_buf) => {
+                title.element(snippet.unwrap().annotation(AnnotationKind::Primary.span(span.span.into()).label(format!("path `{}` is not absolute", path_buf.display())))).element(Level::HELP.message("use \"<...>\" to convert abstract paths to native OS paths"))
+            }
+            Warning::IgnoringPathOutsideOutputDirectory(span, absolute) => {
+                title.element(snippet.unwrap().annotation(AnnotationKind::Primary.span(span.span.into()).label(format!("path `{}` is outside the output directory", absolute.display())))).element(Level::HELP.message("use \"<...:out-dir>\" to unambiguously produce an absolute path in the output directory"))
+            }
+            Warning::IgnoringFileNotFound(span, absolute) => {
+                title.element(snippet.unwrap().annotation(AnnotationKind::Primary.span(span.span.into()).label(format!("file `{}` not found", absolute.display()))))
+            }
+            Warning::DepfileNotGenerated(span, absolute) => {
+                title.element(snippet.unwrap().annotation(AnnotationKind::Primary.span(span.span.into()).label(format!("depfile `{}` was not generated", absolute.display()))))
+                    .element(Level::HELP.message("pass `-MMD`, `-MF`, or similar flags to your compiler to implicitly generate a depfile, or add a recipe to generate the depfile"))
+            }
+            Warning::WarningExpression(span, message) => {
+                title.element(snippet.unwrap().annotation(AnnotationKind::Primary.span(span.span.into()).label(message)))
+            }
+            Warning::UnusedDefine(key) => {
+                title.element(Level::HELP.message(format!("no `config` statement exists with the name `{key}`")))
+                    .element(Level::HELP.message("maybe a `let` statement should be changed to a `config` statement?"))
+            }
 
-                   format!("path `{}` is outside the output directory", absolute.display()),
-                ))
-                .footer("use \"<...:out-dir>\" to unambiguously produce an absolute path in the output directory"),
-            Warning::IgnoringFileNotFound(span, absolute) => level
-                .diagnostic("W0023")
-                .annotation(span.annotation(level,
+            Warning::OutputDirectoryChanged(..) | Warning::ZombieChild => annotate_snippets::Group::with_title(title),
+        };
 
-                    format!("file `{}` not found", absolute.display()),
-                )),
-            Warning::DepfileNotGenerated(span, absolute) => level
-                .diagnostic("W0030")
-                .annotation(span.annotation(level,
-
-                    format!("expected this rule to write `{}`", absolute.display()),
-                ))
-                .footer(
-                    "pass `-MMD`, `-MF`, or similar flags to your compiler to implicitly generate a depfile",)
-                    .footer(
-                    "or add a recipe to generate the depfile"
-                ),
-            Warning::WarningExpression(span, message) => level
-                .diagnostic("W9999")
-                .annotation(span.annotation(level, message)),
-            Warning::UnusedDefine(key) => level
-                .diagnostic("W1000")
-                .footer(format_args!("no `config` statement exists with the name `{key}`"))
-                .footer("maybe a `let` statement should be changed to a `config` statement?"),
-            Warning::OutputDirectoryChanged(..) => level
-                .diagnostic("W1001"),
-            Warning::ZombieChild => level.diagnostic("W1002"),
-        }.title(self) // Use Display impl from thiserror
+        vec![group]
     }
 }

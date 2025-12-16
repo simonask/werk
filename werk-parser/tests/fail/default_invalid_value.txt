@@ -3,4 +3,3 @@ error[P1001]: parse error
   |
 1 | default target = hello
   |                  ^ expected string literal
-  |

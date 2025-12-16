@@ -30,9 +30,9 @@ regex = "1.11.1"
 regex-syntax = "0.8.5"
 serde = { version = "1.0.215", features = ["derive"] }
 smol = "2.0.2"
-toml_edit = "0.22.22"
+toml_edit = "0.23.9"
 futures = "0.3.31"
-annotate-snippets = "0.11.5"
+annotate-snippets = "0.12.10"
 anstream = "0.6.18"
 
 [workspace.lints.clippy]

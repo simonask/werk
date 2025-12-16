@@ -243,8 +243,11 @@ impl<'a> Test<'a> {
         let ast = match werk_parser::parse_werk(self.source) {
             Ok(ast) => ast,
             Err(err) => {
-                return Err(Error::Eval(EvalError::Parse(DiagnosticFileId(0), err))
-                    .into_diagnostic_error(&*self as _));
+                return Err(Error::Eval(EvalError::Parse(werk_parser::ErrorInFile {
+                    file: DiagnosticFileId(0),
+                    error: err,
+                }))
+                .into_diagnostic_error(&*self as _));
             }
         };
         self.reload_test_pragmas(&ast);
@@ -863,10 +866,9 @@ pub fn touch_fs(fs: &mut MockDir, path: &std::path::Path, now: SystemTime) -> st
                         }
                     } else {
                         match occupied_entry.into_mut() {
-                            MockDirEntry::File(..) => Err(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                "touch file below file",
-                            )),
+                            MockDirEntry::File(..) => {
+                                Err(std::io::Error::other("touch file below file"))
+                            }
                             MockDirEntry::Dir(subdir) => touch_fs(subdir, rest, now),
                         }
                     }

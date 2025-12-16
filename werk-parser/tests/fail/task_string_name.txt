@@ -1,9 +1,9 @@
 error[P1001]: parse error
- --> INPUT:1:1
+ --> INPUT:1:6
   |
 1 | task "hello" {}
   | -    ^ expected identifier
   | |
-  | info: while parsing task recipe
+  | while parsing task recipe
   |
   = help: `task` must be followed by an identifier

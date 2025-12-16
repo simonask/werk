@@ -557,7 +557,7 @@ fn eval_string_interpolation_stem<P: Scope + ?Sized>(
     scope: &P,
     span: DiagnosticSpan,
     stem: ast::InterpolationStem,
-) -> Result<LookupValue, EvalError> {
+) -> Result<LookupValue<'_>, EvalError> {
     Ok(match stem {
         ast::InterpolationStem::Implied => scope
             .get(Lookup::Implied)

@@ -1,9 +1,9 @@
 error[P1005]: parse error
- --> INPUT:1:1
+ --> INPUT:1:11
   |
 1 | let hello
   | -        ^ expected character =
   | |
-  | info: while parsing `let` statement
+  | while parsing `let` statement
   |
   = help: `let <identifier>` must be followed by a `=`

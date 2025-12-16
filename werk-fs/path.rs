@@ -257,7 +257,7 @@ impl Path {
 
     #[inline]
     #[must_use]
-    pub fn ancestors(&self) -> Ancestors {
+    pub fn ancestors(&self) -> Ancestors<'_> {
         Ancestors { path: Some(self) }
     }
 
@@ -401,7 +401,7 @@ impl Path {
 
     #[inline]
     #[must_use]
-    pub fn components(&self) -> Components {
+    pub fn components(&self) -> Components<'_> {
         Components { path: Some(self) }
     }
 
@@ -433,7 +433,7 @@ impl Path {
     }
 
     #[inline]
-    pub fn normalize(&self) -> Result<Cow<Absolute<Self>>, PathError> {
+    pub fn normalize(&self) -> Result<Cow<'_, Absolute<Self>>, PathError> {
         Normalize::normalize(self).map_err(Into::into)
     }
 }

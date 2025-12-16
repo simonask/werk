@@ -1,9 +1,9 @@
 error[P1001]: parse error
- --> INPUT:1:1
+ --> INPUT:1:5
   |
 1 | let = "hello"
   | -   ^ expected identifier
   | |
-  | info: while parsing `let` statement
+  | while parsing `let` statement
   |
   = help: `let` must be followed by an identifier
