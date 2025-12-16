@@ -1,6 +1,7 @@
 use std::{fmt::Write, hash::Hash as _};
 
-use werk_util::{SemanticHash, Span, Symbol};
+use stringleton::Symbol;
+use werk_util::{SemanticHash, Span};
 
 use crate::parser::{
     escape_pattern_literal, escape_string_literal, parse_pattern_expr_unquoted,

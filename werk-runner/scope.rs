@@ -1,5 +1,6 @@
 use ahash::HashMap;
-use werk_util::{DiagnosticSpan, Symbol, SymbolRegistryLock};
+use stringleton::{Symbol, sym};
+use werk_util::DiagnosticSpan;
 
 use crate::{
     Io, PatternMatchData, Render, TaskId, Value, Warning, Workspace,
@@ -345,62 +346,29 @@ pub fn default_global_constants() -> &'static HashMap<Symbol, Value> {
         std::sync::OnceLock::new();
     GLOBAL_CONSTANTS.get_or_init(|| {
         let mut map = HashMap::default();
-        let mut sym = SymbolRegistryLock::lock();
         map.extend([
-            (sym.insert("EMPTY"), Value::from(String::new())),
+            (sym!(EMPTY), Value::from(String::new())),
+            (sym!(EXE_SUFFIX), Value::from(exe_suffix().to_owned())),
+            (sym!(DYLIB_PREFIX), Value::from(dylib_prefix().to_owned())),
+            (sym!(DYLIB_SUFFIX), Value::from(dylib_suffix().to_owned())),
             (
-                sym.insert("EXE_SUFFIX"),
-                Value::from(exe_suffix().to_owned()),
-            ),
-            (
-                sym.insert("DYLIB_PREFIX"),
-                Value::from(dylib_prefix().to_owned()),
-            ),
-            (
-                sym.insert("DYLIB_SUFFIX"),
-                Value::from(dylib_suffix().to_owned()),
-            ),
-            (
-                sym.insert("STATICLIB_PREFIX"),
+                sym!(STATICLIB_PREFIX),
                 Value::from(staticlib_prefix().to_owned()),
             ),
             (
-                sym.insert("STATICLIB_SUFFIX"),
+                sym!(STATICLIB_SUFFIX),
                 Value::from(staticlib_suffix().to_owned()),
             ),
-            (sym.insert("OS"), Value::from(current_os().to_owned())),
+            (sym!(OS), Value::from(current_os().to_owned())),
+            (sym!(OS_FAMILY), Value::from(current_os_family().to_owned())),
+            (sym!(ARCH), Value::from(current_arch().to_owned())),
             (
-                sym.insert("OS_FAMILY"),
-                Value::from(current_os_family().to_owned()),
-            ),
-            (sym.insert("ARCH"), Value::from(current_arch().to_owned())),
-            (
-                sym.insert("ARCH_FAMILY"),
+                sym!(ARCH_FAMILY),
                 Value::from(current_arch_family().to_owned()),
             ),
         ]);
         map
     })
-}
-
-pub struct SymCache {
-    pub symbol_in: Symbol,
-    pub symbol_out: Symbol,
-    pub symbol_color: Symbol,
-}
-
-impl SymCache {
-    pub fn get() -> &'static SymCache {
-        static CACHE: std::sync::OnceLock<SymCache> = std::sync::OnceLock::new();
-        CACHE.get_or_init(|| {
-            let mut sym = SymbolRegistryLock::lock();
-            SymCache {
-                symbol_in: sym.insert("in"),
-                symbol_out: sym.insert("out"),
-                symbol_color: sym.insert("COLOR"),
-            }
-        })
-    }
 }
 
 impl Scope for Workspace {
@@ -428,8 +396,7 @@ impl Scope for Workspace {
         }
 
         // Runtime constants.
-        let cache = SymCache::get();
-        if name == cache.symbol_color {
+        if name == sym!(COLOR) {
             return Some(LookupValue::Owned(Eval::inherent(Value::from(
                 if self.force_color { "1" } else { "0" }.to_owned(),
             ))));
@@ -500,10 +467,9 @@ impl Scope for BuildRecipeScope<'_> {
             Lookup::InputFile => Some(LookupValue::ValueRef(Eval::inherent(&self.input_files))),
             Lookup::OutputFile => Some(LookupValue::ValueRef(Eval::inherent(&self.output_file))),
             Lookup::Ident(name) => {
-                let sym_cache = SymCache::get();
-                if name == sym_cache.symbol_in {
+                if name == sym!(in) {
                     return Some(LookupValue::ValueRef(Eval::inherent(&self.input_files)));
-                } else if name == sym_cache.symbol_out {
+                } else if name == sym!(out) {
                     return Some(LookupValue::ValueRef(Eval::inherent(&self.output_file)));
                 }
 

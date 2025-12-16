@@ -1,8 +1,11 @@
 use macro_rules_attribute::apply;
+use stringleton::sym;
 use tests::mock_io::*;
 use werk_fs::Absolute;
 use werk_runner::{Runner, TaskId, Value};
-use werk_util::{Annotated, Symbol};
+use werk_util::Annotated;
+
+stringleton::enable!(tests);
 
 #[test]
 fn test_path_resolution() {
@@ -44,41 +47,35 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
     };
     let globals = &workspace.manifest.global_variables;
     assert_eq!(
-        globals.get(&Symbol::new("exists-resolved")).unwrap().value,
+        globals.get(&sym!("exists-resolved")).unwrap().value,
         Value::from(foo_workspace.clone())
     );
     assert_eq!(
-        globals
-            .get(&Symbol::new("exists-explicit-out-dir"))
-            .unwrap()
-            .value,
+        globals.get(&sym!("exists-explicit-out-dir")).unwrap().value,
         Value::from(foo_output)
     );
     assert_eq!(
         globals
-            .get(&Symbol::new("exists-explicit-workspace"))
+            .get(&sym!("exists-explicit-workspace"))
             .unwrap()
             .value,
         Value::from(foo_workspace.clone())
     );
 
     assert_eq!(
+        globals.get(&sym!("exists-not-resolved")).unwrap().value,
+        Value::from(bar_output.clone())
+    );
+    assert_eq!(
         globals
-            .get(&Symbol::new("exists-not-resolved"))
+            .get(&sym!("exists-not-explicit-out-dir"))
             .unwrap()
             .value,
         Value::from(bar_output.clone())
     );
     assert_eq!(
         globals
-            .get(&Symbol::new("exists-not-explicit-out-dir"))
-            .unwrap()
-            .value,
-        Value::from(bar_output.clone())
-    );
-    assert_eq!(
-        globals
-            .get(&Symbol::new("exists-not-explicit-workspace"))
+            .get(&sym!("exists-not-explicit-workspace"))
             .unwrap()
             .value,
         Value::from(bar_workspace)

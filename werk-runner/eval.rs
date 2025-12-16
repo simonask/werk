@@ -1,10 +1,11 @@
 mod string;
 mod used;
 pub(crate) use string::*;
+use stringleton::Symbol;
 pub use used::*;
 
 use werk_fs::Absolute;
-use werk_util::{DiagnosticFileId, Spanned as _, Symbol};
+use werk_util::{DiagnosticFileId, Spanned as _};
 
 use std::sync::Arc;
 

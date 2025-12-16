@@ -3,8 +3,9 @@ use std::{future::Future, sync::Arc, time::SystemTime};
 use futures::{StreamExt, channel::oneshot, future};
 use indexmap::{IndexMap, map::Entry};
 use parking_lot::Mutex;
+use stringleton::sym;
 use werk_fs::{Absolute, Normalize as _, Path, SymPath};
-use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, Symbol, cancel};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, cancel};
 
 use crate::{
     AmbiguousPatternError, BuildRecipeScope, ChildCaptureOutput, ChildLinesStream, Env, Error,
@@ -378,7 +379,7 @@ impl<'a> Inner<'a> {
     ) -> Result<BuildStatus, Error> {
         let mut scope = BuildRecipeScope::new(self.workspace, task_id, &recipe_match);
         scope.set(
-            Symbol::new("out"),
+            sym!("out"),
             Eval::inherent(Value::from(recipe_match.target_file.to_string())),
         );
 
@@ -514,7 +515,7 @@ impl<'a> Inner<'a> {
 
         // Make the `depfile` variable available to the recipe body.
         scope.set(
-            Symbol::from("depfile"),
+            sym!("depfile"),
             Eval::inherent(Value::String(depfile.clone())),
         );
 

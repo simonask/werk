@@ -30,3 +30,5 @@ pub use which::Error as WhichError;
 
 #[doc(no_inline)]
 pub use globset;
+
+stringleton::enable!();

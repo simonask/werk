@@ -9,7 +9,7 @@ pub mod token;
 
 pub use expr::*;
 pub use string::*;
-use werk_util::Symbol;
+use stringleton::Symbol;
 
 /// Whitespace and comments within statements and expressions (not doc
 /// comments).

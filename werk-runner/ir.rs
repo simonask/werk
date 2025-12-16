@@ -1,7 +1,8 @@
 use indexmap::IndexMap;
+use stringleton::Symbol;
 use werk_fs::Absolute;
 use werk_parser::ast;
-use werk_util::{DiagnosticFileId, DiagnosticMainSourceMap, DiagnosticSpan, Symbol};
+use werk_util::{DiagnosticFileId, DiagnosticMainSourceMap, DiagnosticSpan};
 
 use crate::{
     AmbiguousPatternError, ConfigVar, EvalError, LocalVariables, Pattern, PatternMatchData, Value,
