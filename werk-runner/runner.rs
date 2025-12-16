@@ -368,6 +368,7 @@ impl<'a> Inner<'a> {
     }
 
     #[tracing::instrument(level = "debug", skip_all, fields(target_file))]
+    #[allow(clippy::too_many_lines)]
     async fn execute_build_recipe(
         self: &Arc<Self>,
         task_id: TaskId,
