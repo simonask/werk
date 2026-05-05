@@ -21,6 +21,7 @@
 - [Configure your build](./build_config.md)
 - [Watch for changes](./watch.md)
 - [Color support](./color.md)
+- [Editor support](./editor_support.md)
 
 # Reference Guide
 

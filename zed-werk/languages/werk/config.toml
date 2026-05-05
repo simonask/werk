@@ -1,0 +1,6 @@
+name = "Werk"
+grammar = "werk"
+path_suffixes = ["werk", "Werkfile"]
+line_comments = ["# "]
+tab_size = 4
+hard_tabs = false

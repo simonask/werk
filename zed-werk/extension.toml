@@ -1,0 +1,18 @@
+id = "werk"
+name = "Werk"
+description = "Werk build system language support"
+version = "0.1.0"
+schema_version = 1
+authors = ["Simon Ask Ulsnes <simon@ulsnes.dk>"]
+repository = "https://github.com/simonask/werk"
+
+[grammars.werk]
+# After publishing tree-sitter-werk/ to its own GitHub repository, update
+# this URL and set rev to the relevant commit hash.
+#
+# For local development, initialize tree-sitter-werk/ as a git repository,
+# then use:
+#   repository = "file:///absolute/path/to/tree-sitter-werk"
+#   rev = ""   # or the output of: git -C tree-sitter-werk rev-parse HEAD
+repository = "https://github.com/simonask/tree-sitter-werk"
+rev = "baa503a56c8d52c9a9b06e58e140b840a0835fa2"
