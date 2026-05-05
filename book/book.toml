@@ -1,7 +1,6 @@
 [book]
 authors = ["Simon Ask Ulsnes"]
 language = "en"
-multilingual = false
 src = "src"
 title = "Werk Book"
 
