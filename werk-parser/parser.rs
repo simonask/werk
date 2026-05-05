@@ -279,11 +279,12 @@ impl Parse for ast::DefaultStmt {
             entry(token, ws_1).map(ast::DefaultStmt::Loud),
             entry(token, ws_1).map(ast::DefaultStmt::Explain),
             entry(token, ws_1).map(ast::DefaultStmt::Verbose),
-            entry(token, ws_1).map(ast::DefaultStmt::WatchDelay),
-            entry(token, ws_1).map(ast::DefaultStmt::Jobs),
-            entry(token, ws_1).map(ast::DefaultStmt::Edition),
-            fatal(Failure::Expected(&"valid key for `default` statement")).help("one of `target`, `out-dir`, `print-commands`, `print-fresh`, `quiet`, `loud`, `explain`, `verbose`, `watch-delay`, `jobs`, or `edition`"),
-        ))
+            alt((
+                entry(token, ws_1).map(ast::DefaultStmt::WatchDelay),
+                entry(token, ws_1).map(ast::DefaultStmt::Jobs),
+                entry(token, ws_1).map(ast::DefaultStmt::Edition),
+                fatal(Failure::Expected(&"valid key for `default` statement")).help("one of `target`, `out-dir`, `print-commands`, `print-fresh`, `quiet`, `loud`, `explain`, `verbose`, `watch-delay`, `jobs`, or `edition`"),
+        ))))
         .parse_next(input)
     }
 }
@@ -341,11 +342,11 @@ impl Parse for ast::TaskRecipeStmt {
             parse.map(ast::TaskRecipeStmt::Env),
             parse.map(ast::TaskRecipeStmt::Info),
             parse.map(ast::TaskRecipeStmt::Warn),
-            parse.map(ast::TaskRecipeStmt::SetCapture),
+            alt((parse.map(ast::TaskRecipeStmt::SetCapture),
             parse.map(ast::TaskRecipeStmt::SetNoCapture),
             fatal(Failure::Expected(&"task recipe statement")).help(
                 "could be one of `let`, `from`, `build`, `depfile`, `run`, `spawn`, `info`, or `warn` statement",
-            ),
+            ))),
         ))
         .parse_next(input)
     }
@@ -382,11 +383,13 @@ impl Parse for ast::BuildRecipeStmt {
             parse.map(ast::BuildRecipeStmt::Env),
             parse.map(ast::BuildRecipeStmt::Info),
             parse.map(ast::BuildRecipeStmt::Warn),
-            parse.map(ast::BuildRecipeStmt::SetCapture),
-            parse.map(ast::BuildRecipeStmt::SetNoCapture),
-            fatal(Failure::Expected(&"build recipe statement")).help(
-                "could be one of `let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
-            ),
+            alt((
+                parse.map(ast::BuildRecipeStmt::SetCapture),
+                parse.map(ast::BuildRecipeStmt::SetNoCapture),
+                fatal(Failure::Expected(&"build recipe statement")).help(
+                    "could be one of `let`, `from`, `build`, `depfile`, `run`, or `echo` statement",
+                ),
+            )),
         ))
         .parse_next(input)
     }
@@ -537,10 +540,10 @@ impl Parse for ast::Expr {
             parse.map(ast::Expr::Which),
             parse.map(ast::Expr::Env),
             parse.map(ast::Expr::Error),
-            parse.map(ast::Expr::Ident),
-            parse.map(ast::Expr::SubExpr),
-            fatal(Failure::Expected(&"expression"))
-                .help("expressions must start with a value, or an `env`, `glob`, `which`, or `shell` operation")
+            alt((parse.map(ast::Expr::Ident),
+                parse.map(ast::Expr::SubExpr),
+                fatal(Failure::Expected(&"expression"))
+                    .help("expressions must start with a value, or an `env`, `glob`, `which`, or `shell` operation")))
         ))
         .parse_next(input)?;
 
@@ -664,16 +667,22 @@ fn expression_chain_op(input: &mut Input) -> PResult<ast::ExprOp> {
             parse.map(ast::ExprOp::Map),
             parse.map(ast::ExprOp::Flatten),
             parse.map(ast::ExprOp::Filter),
+        )),
+        alt((
             parse.map(ast::ExprOp::FilterMatch),
             parse.map(ast::ExprOp::Discard),
             parse.map(ast::ExprOp::Join),
             parse.map(ast::ExprOp::Split),
-            parse.map(ast::ExprOp::Dedup))),
-        alt((parse.map(ast::ExprOp::Lines),
+            parse.map(ast::ExprOp::Dedup),
+        )),
+        alt((
+            parse.map(ast::ExprOp::Lines),
             parse.map(ast::ExprOp::Len),
             parse.map(ast::ExprOp::First),
             parse.map(ast::ExprOp::Last),
             parse.map(ast::ExprOp::Tail),
+        )),
+        alt((
             parse.map(ast::ExprOp::Info),
             parse.map(ast::ExprOp::Warn),
             parse.map(ast::ExprOp::Error),
@@ -706,15 +715,16 @@ fn parse_run_expr<const ALLOW_SPAWN: bool>(input: &mut Input<'_>) -> PResult<ast
         parse.map(ast::RunExpr::Warn),
         parse.map(ast::RunExpr::Write),
         parse.map(ast::RunExpr::Copy),
-        parse.map(ast::RunExpr::Delete),
-        parse.map(ast::RunExpr::Touch),
-        parse.map(ast::RunExpr::EnvRemove),
-        parse.map(ast::RunExpr::Env),
-        parse_run_expr_block::<ALLOW_SPAWN>.map(ast::RunExpr::Block),
-        fatal(Failure::Expected(&"a run expression"))
-            .help(if ALLOW_SPAWN {
-                "one of `shell`, `spawn`, `info`, `warn`, `write`, `copy`, `delete`, `env`, `env-remove`, a string literal, a list, or a block"
-            } else { "one of `shell`, `info`, `warn`, `write`, `copy`, `delete`, `env`, `env-remove`, a string literal, a list, or a block"} )
+        alt((parse.map(ast::RunExpr::Delete),
+            parse.map(ast::RunExpr::Touch),
+            parse.map(ast::RunExpr::EnvRemove),
+            parse.map(ast::RunExpr::Env),
+            parse_run_expr_block::<ALLOW_SPAWN>.map(ast::RunExpr::Block),
+            fatal(Failure::Expected(&"a run expression"))
+                .help(if ALLOW_SPAWN {
+                    "one of `shell`, `spawn`, `info`, `warn`, `write`, `copy`, `delete`, `env`, `env-remove`, a string literal, a list, or a block"
+                } else { "one of `shell`, `info`, `warn`, `write`, `copy`, `delete`, `env`, `env-remove`, a string literal, a list, or a block"} )
+        ))
     )).parse_next(input)
 }
 

@@ -1956,7 +1956,7 @@ dependencies = [
  "werk-parser",
  "werk-runner",
  "werk-util",
- "winnow 0.7.15",
+ "winnow 1.0.2",
 ]
 
 [[package]]
@@ -2395,7 +2395,7 @@ dependencies = [
  "stringleton",
  "thiserror",
  "werk-util",
- "winnow 0.7.15",
+ "winnow 1.0.2",
 ]
 
 [[package]]
@@ -2412,7 +2412,7 @@ dependencies = [
  "thiserror",
  "unicode-ident",
  "werk-util",
- "winnow 0.7.15",
+ "winnow 1.0.2",
 ]
 
 [[package]]
@@ -2451,7 +2451,7 @@ dependencies = [
  "werk-parser",
  "werk-util",
  "which",
- "winnow 0.7.15",
+ "winnow 1.0.2",
 ]
 
 [[package]]
@@ -2719,6 +2719,9 @@ name = "winnow"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee1708bef14716a11bae175f579062d4554d95be2c6829f518df847b7b3fdd0"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "wit-bindgen"

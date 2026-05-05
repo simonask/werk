@@ -22,7 +22,7 @@ werk-parser.path = "werk-parser"
 werk-planner.path = "werk-planner"
 werk-runner.path = "werk-runner"
 werk-util.path = "werk-util"
-winnow = "0.7.0"
+winnow = "1.0.2"
 thiserror = "2.0"
 tracing = "0.1.40"
 indexmap = { version = "2.6.0", features = ["serde"] }
