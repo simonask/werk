@@ -843,7 +843,7 @@ impl<'a> Inner<'a> {
                         future::Either::Left((_canceled, _)) => {
                             render.message(
                                 Some(task_id),
-                                &format!("Terminating spawned: {command_line}",),
+                                &format!("Terminating spawned: {command_line}"),
                             );
                             _ = child.kill();
                             _ = reader.wait().await;
