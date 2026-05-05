@@ -5,7 +5,7 @@ members = [
     "werk-runner",
     "werk-fs",
     "tests",
-    "werk-util",
+    "werk-util", "werk-planner",
 ]
 resolver = "2"
 
@@ -17,9 +17,10 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 ahash = "0.8.11"
-werk-runner.path = "werk-runner"
-werk-parser.path = "werk-parser"
 werk-fs.path = "werk-fs"
+werk-parser.path = "werk-parser"
+werk-planner.path = "werk-planner"
+werk-runner.path = "werk-runner"
 werk-util.path = "werk-util"
 winnow = "0.7.0"
 thiserror = "2.0"

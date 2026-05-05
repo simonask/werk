@@ -1,0 +1,15 @@
+[package]
+name = "werk-planner"
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+werk-parser.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
