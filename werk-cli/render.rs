@@ -28,7 +28,7 @@ pub struct OutputSettings {
 impl OutputSettings {
     pub fn from_args_and_defaults(
         args: &crate::Args,
-        defaults: &werk_runner::ir::Defaults,
+        defaults: &werk_runner::Defaults,
         color_stderr: ColorOutputKind,
     ) -> Self {
         let verbose = args.output.verbose | defaults.verbose.unwrap_or(false);

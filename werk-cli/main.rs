@@ -223,7 +223,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     })?;
 
     // Read the `default` statements from the AST.
-    let defaults = werk_runner::ir::Defaults::new(&ast, main_file_id).map_err(|err| {
+    let defaults = werk_runner::Defaults::new(&ast, main_file_id).map_err(|err| {
         print_eval_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
     })?;
 
@@ -428,7 +428,7 @@ async fn autowatch_loop(
         };
 
         // Reload config.
-        let defaults = match werk_runner::ir::Defaults::new(&ast, main_file_id) {
+        let defaults = match werk_runner::Defaults::new(&ast, main_file_id) {
             Ok(config) => config,
             Err(err) => {
                 print_eval_error(
@@ -550,7 +550,7 @@ fn make_notifier_for_files(
     Ok(notifier)
 }
 
-pub fn print_list(manifest: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write) {
+pub fn print_list(manifest: &werk_runner::Manifest, out: &mut dyn std::io::Write) {
     let configs = manifest
         .config_variables
         .iter()
@@ -708,7 +708,7 @@ pub fn get_workspace_dir<'a>(
 }
 
 pub fn get_workspace_settings(
-    defaults: &werk_runner::ir::Defaults,
+    defaults: &werk_runner::Defaults,
     args: &Args,
     workspace_dir: &Absolute<std::path::Path>,
     color_stdout: ColorOutputKind,

@@ -1,15 +1,18 @@
 mod cache;
+mod defaults;
 pub mod depfile;
 mod error;
 mod io;
-pub mod ir;
+mod manifest;
 mod outdatedness;
 mod render;
 mod runner;
 mod workspace;
 
+pub use defaults::*;
 pub use error::*;
 pub use io::*;
+pub use manifest::*;
 pub use outdatedness::*;
 pub use render::*;
 pub use runner::*;
