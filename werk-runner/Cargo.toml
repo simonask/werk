@@ -11,6 +11,8 @@ path = "lib.rs"
 [dependencies]
 werk-parser.workspace = true
 werk-fs.workspace = true
+werk-planner.workspace = true
+werk-eval.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
@@ -26,14 +28,14 @@ regex-syntax.workspace = true
 anyhow = "1.0.93"
 serde.workspace = true
 toml_edit = { workspace = true, features = ["serde"] }
-rustc-stable-hash = "0.1.0"
+rustc-stable-hash.workspace = true
 winnow.workspace = true
 smol.workspace = true
 pin-project-lite = "0.2.16"
 memchr = "2.7.4"
 annotate-snippets.workspace = true
 werk-util.workspace = true
-bitflags = "2.8.0"
+bitflags.workspace = true
 stringleton.workspace = true
 
 [lints]

@@ -1,11 +1,10 @@
-use ahash::HashMap;
 use stringleton::{Symbol, sym};
+use werk_fs::Absolute;
 use werk_util::DiagnosticSpan;
 
 use crate::{
-    Io, PatternMatchData, Render, TaskId, Value, Warning, Workspace,
-    eval::{Eval, Used},
-    ir,
+    BuildRecipeMatch, DirEntry, Eval, EvalError, Io, Messenger, PatternMatchData, ResolvePathError,
+    ResolvePathMode, TaskId, Used, Value, Warning, default_global_constants,
 };
 
 pub type LocalVariables = indexmap::IndexMap<Symbol, Eval<Value>>;
@@ -20,17 +19,47 @@ pub struct ConfigVar {
     pub span: DiagnosticSpan,
 }
 
+pub trait Scope: Send + Sync {
+    fn get(&self, name: Lookup) -> Option<LookupValue<'_>>;
+    fn io(&self) -> &dyn Io;
+    fn messenger(&self) -> &dyn Messenger;
+    fn message(&self, message: &str);
+    fn warning(&self, warning: &Warning);
+    fn which(&self, program_name: &str)
+    -> Result<Eval<Absolute<std::path::PathBuf>>, which::Error>;
+    fn env(&self, variable_name: &str) -> Eval<Option<String>>;
+    fn resolve_path(
+        &self,
+        path: &Absolute<werk_fs::Path>,
+        mode: ResolvePathMode,
+    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError>;
+
+    fn get_output_file_path(
+        &self,
+        path: &Absolute<werk_fs::Path>,
+    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError> {
+        self.resolve_path(path, ResolvePathMode::OutDir)
+    }
+
+    fn get_input_file(&self, path: &Absolute<werk_fs::Path>) -> Option<DirEntry>;
+    fn glob_workspace_files(
+        &self,
+        pattern_string: &str,
+    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, globset::Error>;
+    fn current_working_directory(&self) -> &Absolute<std::path::Path>;
+}
+
 pub struct TaskRecipeScope<'a> {
-    workspace: &'a Workspace,
+    global_scope: &'a dyn Scope,
     vars: LocalVariables,
     task_id: TaskId,
 }
 
 pub struct BuildRecipeScope<'a> {
-    workspace: &'a Workspace,
+    global_scope: &'a dyn Scope,
     vars: LocalVariables,
     task_id: TaskId,
-    recipe_match: &'a ir::BuildRecipeMatch<'a>,
+    recipe_match: &'a BuildRecipeMatch<'a>,
     input_files: Value,
     output_file: Value,
 }
@@ -129,28 +158,12 @@ impl std::ops::Deref for LookupValue<'_> {
     }
 }
 
-pub trait Scope: Send + Sync {
-    fn get(&self, name: Lookup) -> Option<LookupValue<'_>>;
-    fn workspace(&self) -> &Workspace;
-
-    fn task_id(&self) -> Option<TaskId>;
-    fn render(&self) -> &dyn Render;
-
-    fn io(&self) -> &dyn Io {
-        self.workspace().io()
-    }
-
-    fn warning(&self, warning: &Warning) {
-        self.render().warning(self.task_id(), warning);
-    }
-}
-
 impl<'a> TaskRecipeScope<'a> {
     #[inline]
     #[must_use]
-    pub fn new(workspace: &'a Workspace, task_id: TaskId) -> Self {
+    pub fn new(global_scope: &'a dyn Scope, task_id: TaskId) -> Self {
         Self {
-            workspace,
+            global_scope,
             vars: LocalVariables::new(),
             task_id,
         }
@@ -169,12 +182,12 @@ impl<'a> BuildRecipeScope<'a> {
     #[inline]
     #[must_use]
     pub fn new(
-        workspace: &'a Workspace,
+        global_scope: &'a dyn Scope,
         task_id: TaskId,
-        recipe_match: &'a ir::BuildRecipeMatch<'a>,
+        recipe_match: &'a BuildRecipeMatch<'a>,
     ) -> Self {
         Self {
-            workspace,
+            global_scope,
             vars: LocalVariables::new(),
             task_id,
             recipe_match,
@@ -230,197 +243,6 @@ impl<'a> MatchScope<'a> {
     }
 }
 
-#[must_use]
-pub const fn current_os() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "windows"
-    } else if cfg!(target_os = "macos") {
-        "macos"
-    } else if cfg!(target_os = "ios") {
-        "ios"
-    } else if cfg!(target_os = "linux") {
-        "linux"
-    } else if cfg!(target_os = "android") {
-        "android"
-    } else if cfg!(target_os = "freebsd") {
-        "freebsd"
-    } else if cfg!(target_os = "dragonfly") {
-        "dragonfly"
-    } else if cfg!(target_os = "openbsd") {
-        "openbsd"
-    } else if cfg!(target_os = "netbsd") {
-        "netbsd"
-    } else if cfg!(target_family = "wasm") {
-        "wasm-wasi"
-    } else {
-        "none"
-    }
-}
-
-#[must_use]
-pub const fn current_os_family() -> &'static str {
-    if cfg!(target_family = "unix") {
-        "unix"
-    } else if cfg!(target_family = "windows") {
-        "windows"
-    } else if cfg!(target_family = "wasm") {
-        "wasm"
-    } else {
-        "none"
-    }
-}
-
-#[must_use]
-pub const fn current_arch() -> &'static str {
-    if cfg!(target_arch = "x86") {
-        "x86"
-    } else if cfg!(target_arch = "x86_64") {
-        "x86_64"
-    } else if cfg!(target_arch = "mips") {
-        "mips"
-    } else if cfg!(target_arch = "powerpc") {
-        "powerpc"
-    } else if cfg!(target_arch = "powerpc64") {
-        "powerpc64"
-    } else if cfg!(target_arch = "arm") {
-        "arm"
-    } else if cfg!(target_arch = "aarch64") {
-        "aarch64"
-    } else if cfg!(target_family = "wasm") {
-        "wasm"
-    } else {
-        "none"
-    }
-}
-
-#[must_use]
-pub const fn current_arch_family() -> &'static str {
-    if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
-        "x86"
-    } else if cfg!(target_arch = "mips") {
-        "mips"
-    } else if cfg!(any(target_arch = "powerpc", target_arch = "powerpc64")) {
-        "powerpc"
-    } else if cfg!(any(target_arch = "arm", target_arch = "aarch64")) {
-        "arm"
-    } else if cfg!(target_family = "wasm") {
-        "wasm"
-    } else {
-        "none"
-    }
-}
-
-#[must_use]
-pub const fn exe_suffix() -> &'static str {
-    if cfg!(windows) { ".exe" } else { "" }
-}
-
-#[must_use]
-pub const fn dylib_prefix() -> &'static str {
-    if cfg!(windows) { "" } else { "lib" }
-}
-
-#[must_use]
-pub const fn dylib_suffix() -> &'static str {
-    if cfg!(windows) {
-        ".dll"
-    } else if cfg!(any(target_os = "macos", target_os = "ios")) {
-        ".dylib"
-    } else {
-        ".so"
-    }
-}
-
-#[must_use]
-pub const fn staticlib_prefix() -> &'static str {
-    if cfg!(windows) { "" } else { "lib" }
-}
-
-#[must_use]
-pub const fn staticlib_suffix() -> &'static str {
-    if cfg!(windows) { ".lib" } else { ".a" }
-}
-
-pub fn default_global_constants() -> &'static HashMap<Symbol, Value> {
-    static GLOBAL_CONSTANTS: std::sync::OnceLock<HashMap<Symbol, Value>> =
-        std::sync::OnceLock::new();
-    GLOBAL_CONSTANTS.get_or_init(|| {
-        let mut map = HashMap::default();
-        map.extend([
-            (sym!(EMPTY), Value::from(String::new())),
-            (sym!(EXE_SUFFIX), Value::from(exe_suffix().to_owned())),
-            (sym!(DYLIB_PREFIX), Value::from(dylib_prefix().to_owned())),
-            (sym!(DYLIB_SUFFIX), Value::from(dylib_suffix().to_owned())),
-            (
-                sym!(STATICLIB_PREFIX),
-                Value::from(staticlib_prefix().to_owned()),
-            ),
-            (
-                sym!(STATICLIB_SUFFIX),
-                Value::from(staticlib_suffix().to_owned()),
-            ),
-            (sym!(OS), Value::from(current_os().to_owned())),
-            (sym!(OS_FAMILY), Value::from(current_os_family().to_owned())),
-            (sym!(ARCH), Value::from(current_arch().to_owned())),
-            (
-                sym!(ARCH_FAMILY),
-                Value::from(current_arch_family().to_owned()),
-            ),
-        ]);
-        map
-    })
-}
-
-impl Scope for Workspace {
-    fn get(&self, name: Lookup) -> Option<LookupValue<'_>> {
-        let Lookup::Ident(name) = name else {
-            return None;
-        };
-
-        if let Some(var) = self
-            .manifest
-            .global_variables
-            .get(&name)
-            .map(LookupValue::EvalRef)
-        {
-            return Some(var);
-        }
-
-        // Global build-time constants.
-        if let Some(global_constant) = default_global_constants()
-            .get(&name)
-            .map(Eval::inherent)
-            .map(LookupValue::ValueRef)
-        {
-            return Some(global_constant);
-        }
-
-        // Runtime constants.
-        if name == sym!(COLOR) {
-            return Some(LookupValue::Owned(Eval::inherent(Value::from(
-                if self.force_color { "1" } else { "0" }.to_owned(),
-            ))));
-        }
-
-        None
-    }
-
-    #[inline]
-    fn workspace(&self) -> &Workspace {
-        self
-    }
-
-    #[inline]
-    fn task_id(&self) -> Option<TaskId> {
-        None
-    }
-
-    #[inline]
-    fn render(&self) -> &dyn Render {
-        &*self.render
-    }
-}
-
 impl Scope for TaskRecipeScope<'_> {
     #[inline]
     fn get(&self, lookup: Lookup) -> Option<LookupValue<'_>> {
@@ -429,25 +251,60 @@ impl Scope for TaskRecipeScope<'_> {
         };
 
         let Some(local) = self.vars.get(&name) else {
-            return self.workspace.get(lookup);
+            return self.global_scope.get(lookup);
         };
 
         Some(LookupValue::Ref(&local.value, &local.used))
     }
 
-    #[inline]
-    fn workspace(&self) -> &Workspace {
-        self.workspace
+    fn io(&self) -> &dyn Io {
+        self.global_scope.io()
     }
 
-    #[inline]
-    fn task_id(&self) -> Option<TaskId> {
-        Some(self.task_id)
+    fn messenger(&self) -> &dyn Messenger {
+        self.global_scope.messenger()
     }
 
-    #[inline]
-    fn render(&self) -> &dyn Render {
-        &*self.workspace.render
+    fn message(&self, message: &str) {
+        self.messenger().message(Some(self.task_id), message);
+    }
+
+    fn warning(&self, warning: &Warning) {
+        self.messenger().warning(Some(self.task_id), warning)
+    }
+
+    fn which(
+        &self,
+        program_name: &str,
+    ) -> Result<Eval<Absolute<std::path::PathBuf>>, which::Error> {
+        self.global_scope.which(program_name)
+    }
+
+    fn env(&self, variable_name: &str) -> Eval<Option<String>> {
+        self.global_scope.env(variable_name)
+    }
+
+    fn resolve_path(
+        &self,
+        path: &Absolute<werk_fs::Path>,
+        mode: ResolvePathMode,
+    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError> {
+        self.global_scope.resolve_path(path, mode)
+    }
+
+    fn get_input_file(&self, path: &Absolute<werk_fs::Path>) -> Option<DirEntry> {
+        self.global_scope.get_input_file(path)
+    }
+
+    fn glob_workspace_files(
+        &self,
+        pattern_string: &str,
+    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, globset::Error> {
+        self.global_scope.glob_workspace_files(pattern_string)
+    }
+
+    fn current_working_directory(&self) -> &Absolute<std::path::Path> {
+        self.global_scope.current_working_directory()
     }
 }
 
@@ -474,26 +331,61 @@ impl Scope for BuildRecipeScope<'_> {
                 }
 
                 let Some(local) = self.vars.get(&name) else {
-                    return self.workspace.get(lookup);
+                    return self.global_scope.get(lookup);
                 };
                 Some(LookupValue::EvalRef(local))
             }
         }
     }
 
-    #[inline]
-    fn workspace(&self) -> &Workspace {
-        self.workspace
+    fn io(&self) -> &dyn Io {
+        self.global_scope.io()
     }
 
-    #[inline]
-    fn task_id(&self) -> Option<TaskId> {
-        Some(self.task_id)
+    fn messenger(&self) -> &dyn Messenger {
+        self.global_scope.messenger()
     }
 
-    #[inline]
-    fn render(&self) -> &dyn Render {
-        &*self.workspace.render
+    fn message(&self, message: &str) {
+        self.messenger().message(Some(self.task_id), message);
+    }
+
+    fn warning(&self, warning: &Warning) {
+        self.messenger().warning(Some(self.task_id), warning)
+    }
+
+    fn which(
+        &self,
+        program_name: &str,
+    ) -> Result<Eval<Absolute<std::path::PathBuf>>, which::Error> {
+        self.global_scope.which(program_name)
+    }
+
+    fn env(&self, variable_name: &str) -> Eval<Option<String>> {
+        self.global_scope.env(variable_name)
+    }
+
+    fn resolve_path(
+        &self,
+        path: &Absolute<werk_fs::Path>,
+        mode: ResolvePathMode,
+    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError> {
+        self.global_scope.resolve_path(path, mode)
+    }
+
+    fn get_input_file(&self, path: &Absolute<werk_fs::Path>) -> Option<DirEntry> {
+        self.global_scope.get_input_file(path)
+    }
+
+    fn glob_workspace_files(
+        &self,
+        pattern_string: &str,
+    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, globset::Error> {
+        self.global_scope.glob_workspace_files(pattern_string)
+    }
+
+    fn current_working_directory(&self) -> &Absolute<std::path::Path> {
+        self.global_scope.current_working_directory()
     }
 }
 
@@ -506,19 +398,54 @@ impl Scope for SubexprScope<'_> {
         }
     }
 
-    #[inline]
-    fn workspace(&self) -> &Workspace {
-        self.parent.workspace()
+    fn io(&self) -> &dyn Io {
+        self.parent.io()
     }
 
-    #[inline]
-    fn task_id(&self) -> Option<TaskId> {
-        self.parent.task_id()
+    fn messenger(&self) -> &dyn Messenger {
+        self.parent.messenger()
     }
 
-    #[inline]
-    fn render(&self) -> &dyn Render {
-        self.parent.render()
+    fn message(&self, message: &str) {
+        self.parent.message(message)
+    }
+
+    fn warning(&self, warning: &Warning) {
+        self.parent.warning(warning)
+    }
+
+    fn which(
+        &self,
+        program_name: &str,
+    ) -> Result<Eval<Absolute<std::path::PathBuf>>, which::Error> {
+        self.parent.which(program_name)
+    }
+
+    fn env(&self, variable_name: &str) -> Eval<Option<String>> {
+        self.parent.env(variable_name)
+    }
+
+    fn resolve_path(
+        &self,
+        path: &Absolute<werk_fs::Path>,
+        mode: ResolvePathMode,
+    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError> {
+        self.parent.resolve_path(path, mode)
+    }
+
+    fn get_input_file(&self, path: &Absolute<werk_fs::Path>) -> Option<DirEntry> {
+        self.parent.get_input_file(path)
+    }
+
+    fn glob_workspace_files(
+        &self,
+        pattern_string: &str,
+    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, globset::Error> {
+        self.parent.glob_workspace_files(pattern_string)
+    }
+
+    fn current_working_directory(&self) -> &Absolute<std::path::Path> {
+        self.parent.current_working_directory()
     }
 }
 
@@ -539,18 +466,53 @@ impl Scope for MatchScope<'_> {
         }
     }
 
-    #[inline]
-    fn workspace(&self) -> &Workspace {
-        self.parent.workspace()
+    fn io(&self) -> &dyn Io {
+        self.parent.io()
     }
 
-    #[inline]
-    fn task_id(&self) -> Option<TaskId> {
-        self.parent.task_id()
+    fn messenger(&self) -> &dyn Messenger {
+        self.parent.messenger()
     }
 
-    #[inline]
-    fn render(&self) -> &dyn Render {
-        self.parent.render()
+    fn message(&self, message: &str) {
+        self.parent.message(message)
+    }
+
+    fn warning(&self, warning: &Warning) {
+        self.parent.warning(warning)
+    }
+
+    fn which(
+        &self,
+        program_name: &str,
+    ) -> Result<Eval<Absolute<std::path::PathBuf>>, which::Error> {
+        self.parent.which(program_name)
+    }
+
+    fn env(&self, variable_name: &str) -> Eval<Option<String>> {
+        self.parent.env(variable_name)
+    }
+
+    fn resolve_path(
+        &self,
+        path: &Absolute<werk_fs::Path>,
+        mode: ResolvePathMode,
+    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError> {
+        self.parent.resolve_path(path, mode)
+    }
+
+    fn get_input_file(&self, path: &Absolute<werk_fs::Path>) -> Option<DirEntry> {
+        self.parent.get_input_file(path)
+    }
+
+    fn glob_workspace_files(
+        &self,
+        pattern_string: &str,
+    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, globset::Error> {
+        self.parent.glob_workspace_files(pattern_string)
+    }
+
+    fn current_working_directory(&self) -> &Absolute<std::path::Path> {
+        self.parent.current_working_directory()
     }
 }

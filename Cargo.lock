@@ -1952,6 +1952,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "tracing-subscriber",
+ "werk-eval",
  "werk-fs",
  "werk-parser",
  "werk-runner",
@@ -2380,11 +2381,34 @@ dependencies = [
  "toml_edit",
  "tracing",
  "tracing-subscriber",
+ "werk-eval",
  "werk-fs",
  "werk-parser",
  "werk-runner",
  "werk-util",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "werk-eval"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "annotate-snippets",
+ "bitflags",
+ "futures",
+ "globset",
+ "ignore",
+ "indexmap",
+ "regex",
+ "regex-syntax",
+ "stringleton",
+ "thiserror",
+ "tracing",
+ "werk-fs",
+ "werk-parser",
+ "werk-util",
+ "which",
 ]
 
 [[package]]
@@ -2419,7 +2443,10 @@ dependencies = [
 name = "werk-planner"
 version = "0.1.0"
 dependencies = [
+ "stringleton",
+ "werk-fs",
  "werk-parser",
+ "werk-util",
 ]
 
 [[package]]
@@ -2447,8 +2474,10 @@ dependencies = [
  "toml_edit",
  "tracing",
  "walkdir",
+ "werk-eval",
  "werk-fs",
  "werk-parser",
+ "werk-planner",
  "werk-util",
  "which",
  "winnow 1.0.2",
@@ -2463,6 +2492,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
  "parking_lot",
+ "rustc-stable-hash",
  "serde",
 ]
 

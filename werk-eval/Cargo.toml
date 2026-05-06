@@ -1,0 +1,32 @@
+[package]
+name = "werk-eval"
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+werk-parser.workspace = true
+werk-util.workspace = true
+werk-fs.workspace = true
+indexmap.workspace = true
+ahash.workspace = true
+stringleton.workspace = true
+bitflags.workspace = true
+regex-syntax.workspace = true
+thiserror.workspace = true
+globset.workspace = true
+annotate-snippets.workspace = true
+regex.workspace = true
+which.workspace = true
+futures.workspace = true
+ignore.workspace = true
+
+# TODO: Remove this dependency (use the diagnostics system instead)
+tracing.workspace = true
+
+[lints]
+workspace = true

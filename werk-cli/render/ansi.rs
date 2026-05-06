@@ -5,7 +5,8 @@ use anstream::stream::IsTerminal;
 use indexmap::IndexMap;
 use owo_colors::OwoColorize as _;
 use parking_lot::Mutex;
-use werk_runner::{BuildStatus, Error, Outdatedness, ShellCommandLine, TaskId, Warning};
+use werk_eval::{ShellCommandLine, TaskId, Warning};
+use werk_runner::{BuildStatus, Error, Outdatedness};
 use werk_util::{AsDiagnostic as _, DiagnosticSecondarySourceMap};
 
 use std::{io::Write, sync::Arc};
@@ -385,6 +386,16 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
     }
 }
 
+impl<const LINEAR: bool> werk_eval::Messenger for TerminalRenderer<LINEAR> {
+    fn message(&self, task_id: Option<TaskId>, message: &str) {
+        self.inner.lock().message(task_id, message)
+    }
+
+    fn warning(&self, task_id: Option<TaskId>, warning: &Warning) {
+        self.inner.lock().warning(task_id, warning)
+    }
+}
+
 impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
     fn will_build(&self, task_id: TaskId, num_steps: usize, outdatedness: &Outdatedness) {
         self.inner
@@ -419,14 +430,6 @@ impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
         self.inner
             .lock()
             .did_execute(task_id, command, status, step, num_steps);
-    }
-
-    fn message(&self, task_id: Option<TaskId>, message: &str) {
-        self.inner.lock().message(task_id, message)
-    }
-
-    fn warning(&self, task_id: Option<TaskId>, warning: &Warning) {
-        self.inner.lock().warning(task_id, warning)
     }
 
     fn runner_message(&self, message: &str) {

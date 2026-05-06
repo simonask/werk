@@ -5,8 +5,7 @@ use std::{
 
 use stringleton::Symbol;
 use werk_fs::{Absolute, SymPath};
-
-use crate::cache::Hash128;
+use werk_util::hash128::Hash128;
 
 /// The external variables used when evaluating an expression.
 #[derive(Debug, Clone, Default)]

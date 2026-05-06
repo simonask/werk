@@ -1,7 +1,7 @@
 use std::{fmt::Write as _, io::Write, time::Instant};
 
 use owo_colors::OwoColorize;
-use werk_runner::TaskId;
+use werk_eval::TaskId;
 
 use crate::render::TtyWidth;
 

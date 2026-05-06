@@ -3,8 +3,9 @@ use tests::mock_io;
 
 use mock_io::*;
 use stringleton::Symbol;
+use werk_eval::{ShellCommandLine, TaskId};
 use werk_fs::{Absolute, Path};
-use werk_runner::{BuildStatus, Outdatedness, Reason, ShellCommandLine, TaskId};
+use werk_runner::{BuildStatus, Outdatedness, Reason};
 
 static WERK: &str = r#"
 config profile = env "PROFILE"

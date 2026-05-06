@@ -8,10 +8,10 @@ use std::{
 };
 
 use parking_lot::Mutex;
+use werk_eval::{DirEntry, EvalError, Io as _, Metadata, ShellCommandLine, TaskId, Warning};
 use werk_fs::Absolute;
 use werk_runner::{
-    BuildStatus, DirEntry, Env, Error, EvalError, GlobSettings, Io, Metadata, Outdatedness,
-    ShellCommandLine, TaskId, Warning, WhichError, Workspace, WorkspaceSettings, globset,
+    BuildStatus, Error, Outdatedness, WhichError, Workspace, WorkspaceSettings, globset,
 };
 use werk_util::{
     Annotated, AsDiagnostic as _, DiagnosticFileId, DiagnosticSource, DiagnosticSourceMap, Offset,
@@ -361,13 +361,13 @@ impl<'a> Test<'a> {
         }
     }
 
-    pub fn run_pragma_tests(&self) -> Result<(), werk_runner::EvalError> {
+    pub fn run_pragma_tests(&self) -> Result<(), EvalError> {
         let fs = self.io.filesystem.lock();
         for (span, filename, expected) in &self.pragma_check_files {
             let out_file = self.output_path(filename.split('/'));
             let (_entry, actual) = read_fs(&fs, &out_file).unwrap();
             if actual != expected {
-                return Err(werk_runner::EvalError::AssertCustomFailed(
+                return Err(EvalError::AssertCustomFailed(
                     DiagnosticFileId(0).span(*span),
                     format!(
                         "contents of output file `{filename}` do not match\nexpected: {expected:?}\n  actual: {actual:?}"
@@ -592,6 +592,24 @@ impl MockRender {
     }
 }
 
+impl werk_eval::Messenger for MockRender {
+    fn message(&self, task_id: Option<TaskId>, message: &str) {
+        tracing::trace!(
+            "info({}) {message}",
+            task_id.map(|t| t.to_string()).unwrap_or_default()
+        );
+        self.log
+            .lock()
+            .push(MockRenderEvent::Message(task_id, message.to_string()));
+    }
+
+    fn warning(&self, task_id: Option<TaskId>, warning: &Warning) {
+        self.log
+            .lock()
+            .push(MockRenderEvent::Warning(task_id, warning.to_string()));
+    }
+}
+
 impl werk_runner::Render for MockRender {
     fn will_build(&self, task_id: TaskId, num_steps: usize, outdatedness: &Outdatedness) {
         self.log.lock().push(MockRenderEvent::WillBuild(
@@ -638,22 +656,6 @@ impl werk_runner::Render for MockRender {
             num_steps,
         ));
     }
-
-    fn message(&self, task_id: Option<TaskId>, message: &str) {
-        tracing::trace!(
-            "info({}) {message}",
-            task_id.map(|t| t.to_string()).unwrap_or_default()
-        );
-        self.log
-            .lock()
-            .push(MockRenderEvent::Message(task_id, message.to_string()));
-    }
-
-    fn warning(&self, task_id: Option<TaskId>, warning: &Warning) {
-        self.log
-            .lock()
-            .push(MockRenderEvent::Warning(task_id, warning.to_string()));
-    }
 }
 
 pub type MockDir = HashMap<OsString, MockDirEntry>;
@@ -665,14 +667,15 @@ pub enum MockDirEntry {
     Dir(MockDir),
 }
 
-pub type Program = Box<dyn FnMut(&ShellCommandLine, &mut MockDir, &Env) -> ProgramResult + Send>;
+pub type Program =
+    Box<dyn FnMut(&ShellCommandLine, &mut MockDir, &werk_eval::Env) -> ProgramResult + Send>;
 
 #[derive(Default)]
 pub struct MockIo {
     pub filesystem: Mutex<MockDir>,
     pub which: Mutex<HashMap<String, Absolute<std::path::PathBuf>>>,
     pub programs: Mutex<HashMap<Absolute<std::path::PathBuf>, Program>>,
-    pub env: Mutex<Env>,
+    pub env: Mutex<werk_eval::Env>,
     pub oplog: Mutex<Vec<MockIoOp>>,
     pub now: AtomicU64,
 }
@@ -1012,7 +1015,9 @@ impl MockIo {
         &self,
         program: impl Into<String>,
         path: Absolute<std::path::PathBuf>,
-        fun: impl FnMut(&ShellCommandLine, &mut MockDir, &Env) -> ProgramResult + Send + 'static,
+        fun: impl FnMut(&ShellCommandLine, &mut MockDir, &werk_eval::Env) -> ProgramResult
+        + Send
+        + 'static,
     ) -> &Self {
         let program = program.into();
         self.which.lock().insert(program.clone(), path.clone());
@@ -1066,7 +1071,7 @@ struct MockChild {
     status: Option<Pin<Box<futures::future::Ready<std::io::Result<std::process::ExitStatus>>>>>,
 }
 
-impl werk_runner::Child for MockChild {
+impl werk_eval::Child for MockChild {
     fn stdin(
         self: std::pin::Pin<&mut Self>,
     ) -> Option<std::pin::Pin<&mut dyn futures::AsyncWrite>> {
@@ -1108,14 +1113,14 @@ impl werk_runner::Child for MockChild {
     }
 }
 
-impl werk_runner::Io for MockIo {
+impl werk_eval::Io for MockIo {
     fn run_recipe_command(
         &self,
         command_line: &ShellCommandLine,
         _working_dir: &Absolute<std::path::Path>,
-        env: &Env,
+        env: &werk_eval::Env,
         forward_stdout: bool,
-    ) -> std::io::Result<Box<dyn werk_runner::Child>> {
+    ) -> std::io::Result<Box<dyn werk_eval::Child>> {
         tracing::trace!("run during build: {}", command_line);
         self.oplog
             .lock()
@@ -1152,7 +1157,7 @@ impl werk_runner::Io for MockIo {
         &self,
         command_line: &ShellCommandLine,
         _working_dir: &Absolute<std::path::Path>,
-        command_env: &werk_runner::Env,
+        command_env: &werk_eval::Env,
     ) -> Result<std::process::Output, std::io::Error> {
         self.oplog
             .lock()
@@ -1186,14 +1191,14 @@ impl werk_runner::Io for MockIo {
     fn glob_workspace(
         &self,
         path: &Absolute<std::path::Path>,
-        settings: &GlobSettings,
-    ) -> Result<Vec<DirEntry>, Error> {
+        settings: &werk_eval::GlobSettings,
+    ) -> Result<Vec<DirEntry>, werk_eval::GlobError> {
         fn glob(
             path: &Absolute<std::path::Path>,
             dir: &MockDir,
             results: &mut Vec<DirEntry>,
             ignore_explicitly: &globset::GlobSet,
-        ) -> Result<(), Error> {
+        ) -> Result<(), werk_eval::GlobError> {
             for (name, entry) in dir {
                 let entry_path = path.join(name).unwrap();
                 match entry {
@@ -1239,7 +1244,7 @@ impl werk_runner::Io for MockIo {
         result.map(move |()| results)
     }
 
-    fn metadata(&self, path: &Absolute<std::path::Path>) -> Result<Metadata, Error> {
+    fn metadata(&self, path: &Absolute<std::path::Path>) -> Result<Metadata, std::io::Error> {
         let fs = self.filesystem.lock();
         read_fs(&fs, path)
             .map(|(entry, _)| entry.metadata)

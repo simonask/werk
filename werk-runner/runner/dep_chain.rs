@@ -1,4 +1,4 @@
-use super::TaskId;
+use werk_eval::TaskId;
 
 #[derive(Debug, Clone, Copy)]
 pub struct DepChainEntry<'a> {

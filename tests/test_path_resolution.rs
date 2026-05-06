@@ -1,8 +1,9 @@
 use macro_rules_attribute::apply;
 use stringleton::sym;
 use tests::mock_io::*;
+use werk_eval::{EvalError, ResolvePathError, TaskId, Value};
 use werk_fs::Absolute;
-use werk_runner::{Runner, TaskId, Value};
+use werk_runner::Runner;
 use werk_util::Annotated;
 
 stringleton::enable!(tests);
@@ -141,7 +142,8 @@ task build {
     match runner.build_or_run("build").await {
         Ok(_) => panic!("expected error"),
         Err(Annotated {
-            error: werk_runner::Error::Eval(werk_runner::EvalError::AmbiguousPathResolution(_, err)),
+            error:
+                werk_runner::Error::Eval(EvalError::PathResolution(_, ResolvePathError::Ambiguous(err))),
             ..
         }) => {
             assert_eq!(err.path, Absolute::try_from("/bar").unwrap());

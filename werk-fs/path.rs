@@ -585,6 +585,11 @@ impl PathBuf {
         PathBuf { path }
     }
 
+    #[inline]
+    pub fn into_string(self) -> String {
+        self.path
+    }
+
     pub fn from_utf8(path: Vec<u8>) -> Result<Self, PathError> {
         match String::from_utf8(path) {
             Ok(path) => {

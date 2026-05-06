@@ -11,8 +11,9 @@ use futures::future::{self, Either};
 use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
 use render::{AutoStream, ColorOutputKind};
+use werk_eval::Warning;
 use werk_fs::{Absolute, Normalize as _, PathError};
-use werk_runner::{BuildStatus, Runner, Warning, Workspace, WorkspaceSettings};
+use werk_runner::{BuildStatus, Runner, Workspace, WorkspaceSettings};
 use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticSource, DiagnosticSourceMap};
 
 shadow_rs::shadow!(build);
@@ -231,7 +232,7 @@ async fn try_main(args: Args) -> Result<(), Error> {
     tracing::info!("Project directory: {}", workspace_dir.display());
     tracing::info!("Output directory: {}", settings.output_directory.display());
 
-    let io: Arc<dyn werk_runner::Io> = if args.dry_run || args.list {
+    let io: Arc<dyn werk_eval::Io> = if args.dry_run || args.list {
         Arc::new(dry_run::DryRun::new())
     } else {
         Arc::new(werk_runner::RealSystem::new())

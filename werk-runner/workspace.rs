@@ -2,16 +2,20 @@ use ahash::HashMap;
 use indexmap::IndexMap;
 use parking_lot::Mutex;
 use std::{borrow::Cow, collections::hash_map, sync::Arc};
-use stringleton::Symbol;
+use stringleton::{Symbol, sym};
+use werk_eval::{
+    AmbiguousPathError, AmbiguousPatternError, BuildRecipe, DirEntry, Eval, EvalError,
+    GlobSettings, Io, Lookup, LookupValue, ResolvePathError, ResolvePathMode, TaskRecipe,
+    UsedVariable, Value, Warning,
+};
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_parser::ast;
-use werk_util::{DiagnosticFileId, DiagnosticSpan};
+use werk_util::{DiagnosticFileId, DiagnosticSpan, hash128::Hash128};
 
 use crate::{
-    DirEntry, Error, EvalError, Io, Render, Value, Warning,
-    cache::{Hash128, TargetOutdatednessCache, WerkCache},
-    eval::{self, Eval, UsedVariable},
-    ir::{self, BuildRecipe, TaskRecipe},
+    Error, Render,
+    cache::{TargetOutdatednessCache, WerkCache},
+    ir,
 };
 
 #[derive(Clone)]
@@ -45,38 +49,6 @@ impl WorkspaceSettings {
             force_color: false,
             jobs: 1,
             artificial_delay: None,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-#[allow(clippy::struct_excessive_bools)]
-pub struct GlobSettings {
-    /// Read the workspace directory's `.gitignore`. Enabled by default.
-    pub git_ignore: bool,
-    /// Read a global gitignore file, specified in the `core.excludeFiles`
-    /// config option. Enabled by default.
-    pub git_ignore_global: bool,
-    /// Read `.git/info/exclude`. Enabled by default.
-    pub git_ignore_exclude: bool,
-    /// Read `.gitignore` from parent directoryes. Enabled by default.
-    pub git_ignore_from_parents: bool,
-    /// Enables reading `.ignore` files, supported by `ripgrep` and The Silver Searcher. Enabled by default.
-    pub dot_ignore: bool,
-    /// Explicit file name patterns to ignore in addition to gitignore and .ignore files.
-    pub ignore_explicitly: globset::GlobSet,
-}
-
-impl Default for GlobSettings {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            git_ignore: true,
-            git_ignore_global: true,
-            git_ignore_exclude: true,
-            git_ignore_from_parents: true,
-            dot_ignore: true,
-            ignore_explicitly: globset::GlobSet::empty(),
         }
     }
 }
@@ -302,7 +274,7 @@ impl Workspace {
         file: DiagnosticFileId,
         stmt: &ast::IncludeStmt,
     ) -> Result<(), EvalError> {
-        let value = eval::eval_chain(self, &stmt.param, file)?;
+        let value = werk_eval::eval_chain(self, &stmt.param, file)?;
         let mut files = vec![];
         value.value.try_visit(|include_file| {
             let path = werk_fs::PathBuf::new(include_file.string)
@@ -366,7 +338,7 @@ impl Workspace {
         // Note: Other types of `default` statements are handled upstream, while
         // parsing `Defaults`, which happens prior to creating the workspace.
         if let ast::DefaultStmt::Target(stmt) = stmt {
-            let value = eval::eval_string_expr(self, &stmt.value, file)?;
+            let value = werk_eval::eval_string_expr(self, &stmt.value, file)?;
             self.default_target = Some(value.value.string);
         }
 
@@ -403,7 +375,7 @@ impl Workspace {
                 .global_variables
                 .insert(stmt.ident.ident, evaluated);
         } else {
-            let mut value = eval::eval_chain(self, &stmt.value, file)?;
+            let mut value = werk_eval::eval_chain(self, &stmt.value, file)?;
             value
                 .used
                 .insert(UsedVariable::Global(stmt.ident.ident, hash));
@@ -424,7 +396,7 @@ impl Workspace {
 
     fn eval_let(&mut self, file: DiagnosticFileId, stmt: &ast::LetStmt) -> Result<(), EvalError> {
         let hash = compute_stable_semantic_hash(&stmt.value);
-        let mut value = eval::eval_chain(self, &stmt.value, file)?;
+        let mut value = werk_eval::eval_chain(self, &stmt.value, file)?;
         value
             .used
             .insert(UsedVariable::Global(stmt.ident.ident, hash));
@@ -461,7 +433,8 @@ impl Workspace {
         build_recipe: ast::BuildRecipe,
     ) -> Result<(), EvalError> {
         let hash = compute_stable_semantic_hash(&build_recipe);
-        let mut pattern_builder = eval::eval_pattern_builder(self, &build_recipe.pattern, file)?;
+        let mut pattern_builder =
+            werk_eval::eval_pattern_builder(self, &build_recipe.pattern, file)?;
 
         // TODO: Consider if it isn't better to do this while matching recipes.
         pattern_builder.ensure_absolute_path();
@@ -533,14 +506,13 @@ impl Workspace {
                 path: fs_path,
                 metadata,
             })),
-            Err(Error::Io(err)) => {
+            Err(err) => {
                 if err.kind() == std::io::ErrorKind::NotFound {
                     Ok(None)
                 } else {
                     Err(err.into())
                 }
             }
-            Err(err) => Err(err),
         }
     }
 
@@ -654,7 +626,7 @@ impl Workspace {
         }
     }
 
-    pub fn register_used_recipe_hash(&self, recipe: &ir::BuildRecipe) -> Hash128 {
+    pub fn register_used_recipe_hash(&self, recipe: &BuildRecipe) -> Hash128 {
         let mut state = self.runtime_caches.lock();
         let state = &mut *state;
         match state
@@ -802,5 +774,127 @@ impl werk_util::DiagnosticSourceMap for &Workspace {
         id: werk_util::DiagnosticFileId,
     ) -> Option<werk_util::DiagnosticSource<'_>> {
         self.manifest.get_source(id)
+    }
+}
+
+impl werk_eval::Scope for Workspace {
+    fn get(&self, name: Lookup) -> Option<LookupValue<'_>> {
+        let Lookup::Ident(name) = name else {
+            return None;
+        };
+
+        if let Some(var) = self
+            .manifest
+            .global_variables
+            .get(&name)
+            .map(LookupValue::EvalRef)
+        {
+            return Some(var);
+        }
+
+        // Global build-time constants.
+        if let Some(global_constant) = werk_eval::default_global_constants()
+            .get(&name)
+            .map(Eval::inherent)
+            .map(LookupValue::ValueRef)
+        {
+            return Some(global_constant);
+        }
+
+        // Runtime constants.
+        if name == sym!(COLOR) {
+            return Some(LookupValue::Owned(Eval::inherent(Value::from(
+                if self.force_color { "1" } else { "0" }.to_owned(),
+            ))));
+        }
+
+        None
+    }
+
+    fn io(&self) -> &dyn Io {
+        &*self.io
+    }
+
+    fn messenger(&self) -> &dyn werk_eval::Messenger {
+        &*self.render
+    }
+
+    fn message(&self, message: &str) {
+        self.render.message(None, message);
+    }
+
+    fn warning(&self, warning: &werk_eval::Warning) {
+        self.render.warning(None, warning);
+    }
+
+    fn which(
+        &self,
+        program_name: &str,
+    ) -> Result<Eval<Absolute<std::path::PathBuf>>, which::Error> {
+        let (path, hash) = Workspace::which(self, program_name)?;
+        let path = path.into_owned();
+        Ok(Eval::using_vars(
+            path,
+            hash.map(|hash| UsedVariable::Which(Symbol::new(program_name), hash)),
+        ))
+    }
+
+    fn env(&self, variable_name: &str) -> Eval<Option<String>> {
+        let (value, hash) = Workspace::env(self, variable_name);
+        Eval::using_var(
+            Some(value),
+            UsedVariable::Env(Symbol::new(variable_name), hash),
+        )
+    }
+
+    fn resolve_path(
+        &self,
+        path: &Absolute<werk_fs::Path>,
+        mode: werk_eval::ResolvePathMode,
+    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError> {
+        match mode {
+            ResolvePathMode::Infer => {
+                if let Some(workspace_file) = self.get_project_file(path) {
+                    // Check if the path also matches a build recipe, and must be disambiguated.
+                    match self.manifest.match_build_recipe(path) {
+                        Ok(Some(recipe)) => Err(ResolvePathError::Ambiguous(AmbiguousPathError {
+                            path: path.to_path_buf(),
+                            build_recipe: recipe.recipe.pattern.span,
+                        })),
+                        Err(AmbiguousPatternError { pattern1, .. }) => {
+                            Err(ResolvePathError::Ambiguous(AmbiguousPathError {
+                                path: path.to_path_buf(),
+                                build_recipe: pattern1,
+                            }))
+                        }
+                        Ok(None) => Ok(workspace_file.path.clone()),
+                    }
+                } else {
+                    Ok(path.resolve(self.output_directory()))
+                }
+            }
+            ResolvePathMode::OutDir => Ok(path.resolve(self.output_directory())),
+            ResolvePathMode::Workspace => Ok(path.resolve(self.project_root())),
+            ResolvePathMode::Illegal => Err(ResolvePathError::Illegal),
+        }
+    }
+
+    fn get_input_file(&self, path: &Absolute<werk_fs::Path>) -> Option<DirEntry> {
+        Workspace::get_project_file(self, path).cloned()
+    }
+
+    fn glob_workspace_files(
+        &self,
+        pattern_string: &str,
+    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, globset::Error> {
+        let (results, hash) = Workspace::glob_workspace_files(self, pattern_string)?;
+        Ok(Eval::using_var(
+            results,
+            UsedVariable::Glob(Symbol::new(pattern_string), hash),
+        ))
+    }
+
+    fn current_working_directory(&self) -> &Absolute<std::path::Path> {
+        self.project_root()
     }
 }

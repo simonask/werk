@@ -1,13 +1,12 @@
 use indexmap::IndexMap;
 use stringleton::Symbol;
+use werk_eval::{
+    AmbiguousPatternError, BuildRecipe, BuildRecipeMatch, ConfigVar, EvalError, LocalVariables,
+    RecipeMatch, TaskRecipe, Value,
+};
 use werk_fs::Absolute;
 use werk_parser::ast;
 use werk_util::{DiagnosticFileId, DiagnosticMainSourceMap, DiagnosticSpan};
-
-use crate::{
-    AmbiguousPatternError, ConfigVar, EvalError, LocalVariables, Pattern, PatternMatchData, Value,
-    cache::Hash128,
-};
 
 type Result<T, E = EvalError> = std::result::Result<T, E>;
 
@@ -129,7 +128,7 @@ impl Manifest {
             if let Ok(path) = path.normalize() {
                 if let Some(build_recipe_match) = self.match_build_recipe(&path)? {
                     if let Some(task) = task {
-                        return Err(crate::AmbiguousPatternError {
+                        return Err(AmbiguousPatternError {
                             pattern1: build_recipe_match.recipe.pattern.span,
                             pattern2: task.ast.name.span.with_file(task.span.file),
                             path: name.to_owned(),
@@ -146,39 +145,10 @@ impl Manifest {
     }
 }
 
-pub enum RecipeMatch<'a> {
-    Task(&'a TaskRecipe),
-    Build(BuildRecipeMatch<'a>),
-}
-
-pub struct BuildRecipeMatch<'a> {
-    pub recipe: &'a BuildRecipe,
-    pub match_data: PatternMatchData,
-    pub target_file: Box<Absolute<werk_fs::Path>>,
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Edition {
     #[default]
     V1,
-}
-
-#[derive(Debug)]
-pub struct TaskRecipe {
-    pub span: DiagnosticSpan,
-    pub name: Symbol,
-    pub doc_comment: String,
-    pub ast: ast::TaskRecipe,
-    pub hash: Hash128,
-}
-
-#[derive(Debug)]
-pub struct BuildRecipe {
-    pub span: DiagnosticSpan,
-    pub pattern: Pattern,
-    pub doc_comment: String,
-    pub ast: ast::BuildRecipe,
-    pub hash: Hash128,
 }
 
 #[derive(Debug, Default, PartialEq)]

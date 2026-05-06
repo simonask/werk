@@ -1,8 +1,9 @@
+use werk_eval::{ShellCommandLine, TaskId};
 use werk_util::DiagnosticFileId;
 
-use crate::{BuildStatus, Error, Outdatedness, ShellCommandLine, TaskId, Warning};
+use crate::{BuildStatus, Error, Outdatedness};
 
-pub trait Render: Send + Sync {
+pub trait Render: werk_eval::Messenger + Send + Sync {
     /// Build task is about to start.
     fn will_build(&self, task_id: TaskId, num_steps: usize, outdatedness: &Outdatedness);
 
@@ -50,14 +51,6 @@ pub trait Render: Send + Sync {
         step: usize,
         num_steps: usize,
     );
-
-    /// Emit a message from the user, typically from the `info` expression in
-    /// the manifest.
-    fn message(&self, task_id: Option<TaskId>, message: &str);
-
-    /// Emit a warning from the user, typically from the `warn` expression in
-    /// the manifest.
-    fn warning(&self, task_id: Option<TaskId>, warning: &Warning);
 
     /// Emit an informational message from the runtime, typically the `werk`
     /// binary wants to tell the user about something that happened.

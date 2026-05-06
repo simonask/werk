@@ -1,7 +1,7 @@
 use std::{future::Future, pin::Pin};
 
+use werk_eval::{Child, DirEntry, Env, ShellCommandLine};
 use werk_fs::Absolute;
-use werk_runner::{Child, DirEntry, Env, Error, ShellCommandLine};
 
 pub struct DryRun(werk_runner::RealSystem);
 
@@ -60,7 +60,7 @@ impl Child for DryRunChild {
     }
 }
 
-impl werk_runner::Io for DryRun {
+impl werk_eval::Io for DryRun {
     fn run_recipe_command(
         &self,
         command_line: &ShellCommandLine,
@@ -95,12 +95,15 @@ impl werk_runner::Io for DryRun {
     fn glob_workspace(
         &self,
         path: &Absolute<std::path::Path>,
-        settings: &werk_runner::GlobSettings,
-    ) -> Result<Vec<DirEntry>, Error> {
+        settings: &werk_eval::GlobSettings,
+    ) -> Result<Vec<DirEntry>, werk_eval::GlobError> {
         self.0.glob_workspace(path, settings)
     }
 
-    fn metadata(&self, path: &Absolute<std::path::Path>) -> Result<werk_runner::Metadata, Error> {
+    fn metadata(
+        &self,
+        path: &Absolute<std::path::Path>,
+    ) -> Result<werk_eval::Metadata, std::io::Error> {
         self.0.metadata(path)
     }
 

@@ -4,23 +4,23 @@ use futures::{StreamExt, channel::oneshot, future};
 use indexmap::{IndexMap, map::Entry};
 use parking_lot::Mutex;
 use stringleton::sym;
+use werk_eval::{
+    AmbiguousPatternError, BuildRecipeMatch, BuildRecipeScope, Env, Eval, RecipeMatch, RunCommand,
+    ShellCommandLine, StringValue, TaskId, TaskRecipe, TaskRecipeScope, Value, Warning,
+};
 use werk_fs::{Absolute, Normalize as _, Path, SymPath};
 use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, cancel};
 
 use crate::{
-    AmbiguousPatternError, BuildRecipeScope, ChildCaptureOutput, ChildLinesStream, Env, Error,
-    Outdatedness, OutdatednessTracker, Reason, Scope as _, ShellCommandLine, StringValue,
-    TaskRecipeScope, Value, Warning, Workspace, WorkspaceSettings,
-    depfile::Depfile,
-    eval::{self, Eval},
-    ir,
+    ChildCaptureOutput, ChildLinesStream, Error, Outdatedness, OutdatednessTracker, Reason,
+    Workspace, WorkspaceSettings, depfile::Depfile,
 };
 
-mod command;
+// mod command;
 mod dep_chain;
 mod task;
 
-pub use command::*;
+// pub use command::*;
 pub use dep_chain::*;
 pub use task::*;
 
@@ -196,7 +196,7 @@ impl<'a> Inner<'a> {
     fn get_build_spec(&self, target: &Absolute<Path>) -> Result<TaskSpec<'a>, Error> {
         let recipe_match = self.workspace.manifest.match_build_recipe(target)?;
         Ok(if let Some(recipe_match) = recipe_match {
-            TaskSpec::Recipe(ir::RecipeMatch::Build(recipe_match))
+            TaskSpec::Recipe(RecipeMatch::Build(recipe_match))
         } else {
             TaskSpec::CheckExists(target.to_owned())
         })
@@ -205,7 +205,7 @@ impl<'a> Inner<'a> {
     fn get_build_spec_relaxed(&self, target: &Absolute<Path>) -> Result<TaskSpec<'a>, Error> {
         let recipe_match = self.workspace.manifest.match_build_recipe(target)?;
         Ok(if let Some(recipe_match) = recipe_match {
-            TaskSpec::Recipe(ir::RecipeMatch::Build(recipe_match))
+            TaskSpec::Recipe(RecipeMatch::Build(recipe_match))
         } else {
             TaskSpec::CheckExistsRelaxed(target.to_owned())
         })
@@ -224,7 +224,7 @@ impl<'a> Inner<'a> {
             .manifest
             .match_task_recipe(target)
             .ok_or_else(|| Error::NoRuleToBuildTarget(target.to_owned()))?;
-        Ok(TaskSpec::Recipe(ir::RecipeMatch::Task(recipe_match)))
+        Ok(TaskSpec::Recipe(RecipeMatch::Task(recipe_match)))
     }
 
     fn get_build_or_command_spec(&self, target: &str) -> Result<TaskSpec<'a>, Error> {
@@ -244,16 +244,14 @@ impl<'a> Inner<'a> {
                     .into());
                 }
 
-                return Ok(TaskSpec::Recipe(ir::RecipeMatch::Build(build_recipe_match)));
+                return Ok(TaskSpec::Recipe(RecipeMatch::Build(build_recipe_match)));
             } else if task_recipe_match.is_none() {
                 return Ok(TaskSpec::CheckExists(path.into_owned()));
             }
         }
 
         match task_recipe_match {
-            Some(task_recipe_match) => {
-                Ok(TaskSpec::Recipe(ir::RecipeMatch::Task(task_recipe_match)))
-            }
+            Some(task_recipe_match) => Ok(TaskSpec::Recipe(RecipeMatch::Task(task_recipe_match))),
             None => Err(Error::NoRuleToBuildTarget(target.to_owned())),
         }
     }
@@ -373,7 +371,7 @@ impl<'a> Inner<'a> {
     async fn execute_build_recipe(
         self: &Arc<Self>,
         task_id: TaskId,
-        recipe_match: ir::BuildRecipeMatch<'_>,
+        recipe_match: BuildRecipeMatch<'_>,
         cancel: &cancel::Receiver,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
@@ -387,8 +385,8 @@ impl<'a> Inner<'a> {
             .workspace
             .take_build_target_cache(&recipe_match.target_file);
         // Check the target's mtime.
-        let out_mtime = scope
-            .workspace()
+        let out_mtime = self
+            .workspace
             .get_existing_output_file(&recipe_match.target_file)?
             .map(|entry| entry.metadata.mtime);
 
@@ -400,7 +398,7 @@ impl<'a> Inner<'a> {
         );
 
         // Evaluate recipe body (`out` is available and in scope).
-        let evaluated = eval::eval_build_recipe_statements(
+        let evaluated = werk_eval::eval_build_recipe_statements(
             &mut scope,
             &recipe_match.recipe.ast.body.statements,
             recipe_match.recipe.span.file,
@@ -443,8 +441,7 @@ impl<'a> Inner<'a> {
         outdatedness.add_reasons(dep_reasons);
 
         // Create the parent directory for the target file if it doesn't exist.
-        scope
-            .workspace()
+        self.workspace
             .create_output_parent_dirs(&recipe_match.target_file)?;
 
         let (outdated, new_cache) = outdatedness.finish();
@@ -529,7 +526,7 @@ impl<'a> Inner<'a> {
                 let dep_reasons = self
                     .clone()
                     .build_dependencies(
-                        vec![TaskSpec::Recipe(ir::RecipeMatch::Build(
+                        vec![TaskSpec::Recipe(RecipeMatch::Build(
                             depfile_recipe_match_data,
                         ))],
                         dep_chain,
@@ -587,7 +584,7 @@ impl<'a> Inner<'a> {
     async fn execute_task_recipe(
         self: &Arc<Self>,
         task_id: TaskId,
-        recipe: &ir::TaskRecipe,
+        recipe: &TaskRecipe,
         cancel: &cancel::Receiver,
         dep_chain: DepChainEntry<'_>,
     ) -> Result<BuildStatus, Error> {
@@ -595,7 +592,7 @@ impl<'a> Inner<'a> {
 
         // Evaluate dependencies (`out` is not available in commands).
 
-        let evaluated = eval::eval_task_recipe_statements(
+        let evaluated = werk_eval::eval_task_recipe_statements(
             &mut scope,
             &recipe.ast.body.statements,
             recipe.span.file,
@@ -1024,11 +1021,11 @@ impl<'a> Inner<'a> {
 
         match spec {
             TaskSpec::Recipe(recipe) => match recipe {
-                ir::RecipeMatch::Task(recipe) => {
+                RecipeMatch::Task(recipe) => {
                     self.execute_task_recipe(task_id, recipe, cancel, dep_chain_entry)
                         .await
                 }
-                ir::RecipeMatch::Build(recipe_match) => {
+                RecipeMatch::Build(recipe_match) => {
                     self.execute_build_recipe(task_id, recipe_match, cancel, dep_chain_entry)
                         .await
                 }

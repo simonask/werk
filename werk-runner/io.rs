@@ -1,152 +1,12 @@
-use std::{
-    path::{Path, PathBuf},
-    time::SystemTime,
-};
+use std::path::{Path, PathBuf};
 
 pub use ignore::WalkState;
 use parking_lot::Mutex;
+use werk_eval::{Child, DirEntry, Env, GlobSettings, Metadata, ShellCommandLine};
 use werk_fs::{Absolute, Normalize as _};
-
-use crate::{Env, Error, GlobSettings, ShellCommandLine};
 
 mod child;
 pub use child::*;
-
-/// Abstract interface to the file system and OS.
-///
-/// All interactions with the file system and OS should go through this, which
-/// in particular means that things like methods on `std::path::Path` should
-/// avoid accessing the filesystem. For example, methods like `canonicalize()`
-/// or `metadata()` do access the filesystem, and should be avoided.
-///
-/// This abstraction exists to allow for testing the runner in a controlled
-/// environment.
-pub trait Io: Send + Sync + 'static {
-    /// Run a command as part of a recipe. This will do nothing in dry-run mode.
-    fn run_recipe_command(
-        &self,
-        command_line: &ShellCommandLine,
-        working_dir: &Absolute<Path>,
-        env: &Env,
-        forward_stdout: bool,
-    ) -> Result<Box<dyn Child>, std::io::Error>;
-
-    /// Run a command as part of evaluating the contents of a Werkfile. This
-    /// might still do something in dry-run mode.
-    fn run_during_eval(
-        &self,
-        command_line: &ShellCommandLine,
-        working_dir: &Absolute<Path>,
-        env: &Env,
-    ) -> Result<std::process::Output, std::io::Error>;
-
-    /// Determine the absolute filesystem path to a program.
-    fn which(&self, command: &str) -> Result<Absolute<PathBuf>, which::Error>;
-
-    /// Glob the workspace directory, adhering to the glob settings.
-    ///
-    /// If this function produces a path to a `.werk-cache` file, the
-    /// `Workspace` constructor will fail.
-    fn glob_workspace(
-        &self,
-        path: &Absolute<Path>,
-        settings: &GlobSettings,
-    ) -> Result<Vec<DirEntry>, Error>;
-
-    /// Query the metadata of a filesystem path.
-    fn metadata(&self, path: &Absolute<Path>) -> Result<Metadata, Error>;
-
-    /// Read a file from the filesystem.
-    fn read_file(&self, path: &Absolute<Path>) -> Result<Vec<u8>, std::io::Error>;
-
-    /// Write a file to the filesystem.
-    fn write_file(&self, path: &Absolute<Path>, data: &[u8]) -> Result<(), std::io::Error>;
-
-    /// Copy one file to another on the file system. Must do nothing in dry-run.
-    /// May do nothing if the paths are equal.
-    fn copy_file(&self, from: &Absolute<Path>, to: &Absolute<Path>) -> Result<(), std::io::Error>;
-
-    /// Delete a file from the filesystem. Must do nothing in dry-run.
-    fn delete_file(&self, path: &Absolute<Path>) -> Result<(), std::io::Error>;
-
-    /// Create a file, or update an existing file's mtime. (Equivalent to UNIX `touch`.)
-    fn touch(&self, path: &Absolute<Path>) -> Result<(), std::io::Error>;
-
-    /// Create the parent directories of `path`, recursively.
-    fn create_parent_dirs(&self, path: &Absolute<Path>) -> Result<(), std::io::Error>;
-
-    /// Read environment variable.
-    fn read_env(&self, name: &str) -> Option<String>;
-
-    /// Is this object actually executing commands or not? The return value
-    /// should be used for diagnostic purposes only, because the actual behavior
-    /// of the runner is not affected by this.
-    fn is_dry_run(&self) -> bool;
-}
-
-#[derive(Debug, Clone)]
-pub struct DirEntry {
-    pub path: Absolute<PathBuf>,
-    pub metadata: Metadata,
-}
-
-impl TryFrom<ignore::DirEntry> for DirEntry {
-    type Error = ignore::Error;
-
-    #[inline]
-    fn try_from(entry: ignore::DirEntry) -> Result<Self, Self::Error> {
-        let metadata = entry.metadata()?.try_into()?;
-        let path = entry.into_path();
-
-        // `ignore` claims that this is always true.
-        assert!(path.is_absolute());
-        let path = path.normalize()?;
-
-        Ok(DirEntry { path, metadata })
-    }
-}
-
-impl TryFrom<std::fs::DirEntry> for DirEntry {
-    type Error = std::io::Error;
-
-    #[inline]
-    fn try_from(entry: std::fs::DirEntry) -> Result<Self, Self::Error> {
-        let metadata = entry.metadata()?.try_into()?;
-        let path = entry.path();
-
-        assert!(path.is_absolute());
-        let path = path.normalize()?;
-
-        Ok(DirEntry { path, metadata })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Metadata {
-    pub mtime: SystemTime,
-    pub is_file: bool,
-    pub is_symlink: bool,
-}
-
-impl Metadata {
-    #[inline]
-    #[must_use]
-    pub fn is_dir(&self) -> bool {
-        !self.is_file
-    }
-}
-
-impl TryFrom<std::fs::Metadata> for Metadata {
-    type Error = std::io::Error;
-
-    fn try_from(metadata: std::fs::Metadata) -> Result<Self, Self::Error> {
-        Ok(Metadata {
-            mtime: metadata.modified()?,
-            is_file: metadata.is_file(),
-            is_symlink: metadata.file_type().is_symlink(),
-        })
-    }
-}
 
 #[derive(Default)]
 pub struct RealSystem(());
@@ -159,7 +19,7 @@ impl RealSystem {
     }
 }
 
-impl Io for RealSystem {
+impl werk_eval::Io for RealSystem {
     fn run_recipe_command(
         &self,
         command_line: &ShellCommandLine,
@@ -194,7 +54,7 @@ impl Io for RealSystem {
 
         tracing::trace!("spawning {command:?}");
         let child = command.spawn()?;
-        Ok(Box::new(child))
+        Ok(Box::new(ChildProcess(child)))
     }
 
     fn run_during_eval(
@@ -238,8 +98,8 @@ impl Io for RealSystem {
         &self,
         path: &Absolute<Path>,
         settings: &GlobSettings,
-    ) -> Result<Vec<DirEntry>, Error> {
-        struct Builder<'s>(&'s Mutex<Result<Vec<DirEntry>, Error>>);
+    ) -> Result<Vec<DirEntry>, werk_eval::GlobError> {
+        struct Builder<'s>(&'s Mutex<Result<Vec<DirEntry>, werk_eval::GlobError>>);
         impl<'s> ignore::ParallelVisitorBuilder<'s> for Builder<'s> {
             fn build(&mut self) -> Box<dyn ignore::ParallelVisitor + 's> {
                 Box::new(Visitor(Ok(Vec::new()), self.0))
@@ -247,8 +107,8 @@ impl Io for RealSystem {
         }
 
         struct Visitor<'s>(
-            Result<Vec<DirEntry>, Error>,
-            &'s Mutex<Result<Vec<DirEntry>, Error>>,
+            Result<Vec<DirEntry>, werk_eval::GlobError>,
+            &'s Mutex<Result<Vec<DirEntry>, werk_eval::GlobError>>,
         );
         impl ignore::ParallelVisitor for Visitor<'_> {
             fn visit(&mut self, entry: Result<ignore::DirEntry, ignore::Error>) -> WalkState {
@@ -307,11 +167,11 @@ impl Io for RealSystem {
 
         let results = Mutex::new(Ok(Vec::new()));
         walker.visit(&mut Builder(&results));
-        results.into_inner().map_err(Error::custom)
+        results.into_inner().map_err(Into::into)
     }
 
-    fn metadata(&self, path: &Absolute<Path>) -> Result<Metadata, Error> {
-        path.metadata()?.try_into().map_err(Into::into)
+    fn metadata(&self, path: &Absolute<Path>) -> Result<Metadata, std::io::Error> {
+        path.metadata()?.try_into()
     }
 
     fn read_file(&self, path: &Absolute<Path>) -> Result<Vec<u8>, std::io::Error> {

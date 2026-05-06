@@ -1,11 +1,13 @@
 [workspace]
 members = [
-    "werk-parser",
-    "werk-cli",
-    "werk-runner",
-    "werk-fs",
     "tests",
-    "werk-util", "werk-planner",
+    "werk-cli",
+    "werk-eval",
+    "werk-fs",
+    "werk-parser",
+    "werk-planner",
+    "werk-runner",
+    "werk-util",
 ]
 resolver = "2"
 
@@ -22,6 +24,7 @@ werk-parser.path = "werk-parser"
 werk-planner.path = "werk-planner"
 werk-runner.path = "werk-runner"
 werk-util.path = "werk-util"
+werk-eval.path = "werk-eval"
 winnow = "1.0.2"
 thiserror = "2.0"
 tracing = "0.1.40"
@@ -36,6 +39,11 @@ futures = "0.3.31"
 annotate-snippets = "0.12.10"
 anstream = "0.6.18"
 stringleton = { version = "0.2.1", features = ["serde"] }
+bitflags = "2.8.0"
+rustc-stable-hash = "0.1.0"
+globset = "0.4.15"
+which = "8.0.0"
+ignore = "0.4.23"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

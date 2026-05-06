@@ -7,6 +7,9 @@ license.workspace = true
 
 [dependencies]
 werk-parser.workspace = true
+werk-util.workspace = true
+werk-fs.workspace = true
+stringleton.workspace = true
 
 [lib]
 path = "lib.rs"

@@ -15,6 +15,7 @@ parking_lot.workspace = true
 serde.workspace = true
 annotate-snippets.workspace = true
 indexmap.workspace = true
+rustc-stable-hash.workspace = true
 
 [lints]
 workspace = true

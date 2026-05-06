@@ -16,13 +16,13 @@ pub(crate) enum PatternMatcher {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct PatternRegexCaptures {
+pub struct PatternRegexCaptures {
     pub stem_capture_index: Option<usize>,
     pub num_normal_capture_groups: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PatternRegex {
+pub struct PatternRegex {
     /// The regular expression used to match this pattern.
     pub regex: regex::Regex,
     /// Information about the capture groups in the regex.
