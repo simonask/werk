@@ -1,9 +1,9 @@
-use werk_eval::TaskId;
+use werk_eval::TaskName;
 
 #[derive(Debug, Clone, Copy)]
 pub struct DepChainEntry<'a> {
     parent: DepChain<'a>,
-    this: TaskId,
+    this: TaskName,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -14,7 +14,7 @@ pub enum DepChain<'a> {
 }
 
 impl<'a> DepChain<'a> {
-    fn collect_vec(&self) -> Vec<TaskId> {
+    fn collect_vec(&self) -> Vec<TaskName> {
         match self {
             DepChain::Empty => Vec::new(),
             DepChain::Owned(owned) => owned.vec.clone(),
@@ -23,7 +23,7 @@ impl<'a> DepChain<'a> {
     }
 
     #[must_use]
-    pub fn contains(&self, task: TaskId) -> bool {
+    pub fn contains(&self, task: TaskName) -> bool {
         match self {
             DepChain::Empty => false,
             DepChain::Owned(owned) => owned.vec.contains(&task),
@@ -32,7 +32,7 @@ impl<'a> DepChain<'a> {
     }
 
     #[must_use]
-    pub fn push<'b>(self, task: TaskId) -> DepChainEntry<'b>
+    pub fn push<'b>(self, task: TaskName) -> DepChainEntry<'b>
     where
         'a: 'b,
     {
@@ -52,14 +52,14 @@ impl DepChainEntry<'_> {
     }
 
     #[must_use]
-    pub fn collect_vec(&self) -> Vec<TaskId> {
+    pub fn collect_vec(&self) -> Vec<TaskName> {
         let mut vec = self.parent.collect_vec();
         vec.push(self.this);
         vec
     }
 
     #[must_use]
-    pub fn contains(&self, task_id: TaskId) -> bool {
+    pub fn contains(&self, task_id: TaskName) -> bool {
         if self.this == task_id {
             true
         } else {
@@ -70,13 +70,13 @@ impl DepChainEntry<'_> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnedDependencyChain {
-    vec: Vec<TaskId>,
+    vec: Vec<TaskName>,
 }
 
 impl OwnedDependencyChain {
     #[inline]
     #[must_use]
-    pub fn into_inner(self) -> Vec<TaskId> {
+    pub fn into_inner(self) -> Vec<TaskName> {
         self.vec
     }
 }

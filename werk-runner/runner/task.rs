@@ -1,5 +1,5 @@
 use futures::channel::oneshot;
-use werk_eval::{BuildRecipeMatch, RecipeMatch, TaskId};
+use werk_eval::{BuildRecipeMatch, RecipeMatch, TaskName};
 use werk_fs::Absolute;
 
 use crate::Error;
@@ -24,16 +24,16 @@ pub enum TaskSpec<'a> {
 
 impl TaskSpec<'_> {
     #[must_use]
-    pub fn to_task_id(&self) -> TaskId {
+    pub fn to_task_id(&self) -> TaskName {
         match self {
             TaskSpec::Recipe(RecipeMatch::Build(build_recipe_match)) => {
-                TaskId::build(build_recipe_match.target_file.clone())
+                TaskName::build(build_recipe_match.target_file.clone())
             }
             TaskSpec::Recipe(RecipeMatch::Task(task_recipe_match)) => {
-                TaskId::command(task_recipe_match.name)
+                TaskName::command(task_recipe_match.name)
             }
             TaskSpec::CheckExists(path_buf) | TaskSpec::CheckExistsRelaxed(path_buf) => {
-                TaskId::build(path_buf.clone().into_boxed_path())
+                TaskName::build(path_buf.clone().into_boxed_path())
             }
         }
     }

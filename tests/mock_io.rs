@@ -8,7 +8,7 @@ use std::{
 };
 
 use parking_lot::Mutex;
-use werk_eval::{DirEntry, EvalError, Io as _, Metadata, ShellCommandLine, TaskId, Warning};
+use werk_eval::{DirEntry, EvalError, Io as _, Metadata, ShellCommandLine, TaskName, Warning};
 use werk_fs::Absolute;
 use werk_runner::{
     BuildStatus, Error, Outdatedness, WhichError, Workspace, WorkspaceSettings, globset,
@@ -572,18 +572,18 @@ pub struct MockRender {
 
 #[derive(Debug, PartialEq)]
 pub enum MockRenderEvent {
-    WillBuild(TaskId, usize, Outdatedness),
-    DidBuild(TaskId, Result<BuildStatus, Error>),
-    WillExecute(TaskId, ShellCommandLine, usize, usize),
+    WillBuild(TaskName, usize, Outdatedness),
+    DidBuild(TaskName, Result<BuildStatus, Error>),
+    WillExecute(TaskName, ShellCommandLine, usize, usize),
     DidExecute(
-        TaskId,
+        TaskName,
         ShellCommandLine,
         Result<std::process::ExitStatus, ()>,
         usize,
         usize,
     ),
-    Message(Option<TaskId>, String),
-    Warning(Option<TaskId>, String),
+    Message(Option<TaskName>, String),
+    Warning(Option<TaskName>, String),
 }
 
 impl MockRender {
@@ -593,7 +593,7 @@ impl MockRender {
 }
 
 impl werk_eval::Messenger for MockRender {
-    fn message(&self, task_id: Option<TaskId>, message: &str) {
+    fn message(&self, task_id: Option<TaskName>, message: &str) {
         tracing::trace!(
             "info({}) {message}",
             task_id.map(|t| t.to_string()).unwrap_or_default()
@@ -603,7 +603,7 @@ impl werk_eval::Messenger for MockRender {
             .push(MockRenderEvent::Message(task_id, message.to_string()));
     }
 
-    fn warning(&self, task_id: Option<TaskId>, warning: &Warning) {
+    fn warning(&self, task_id: Option<TaskName>, warning: &Warning) {
         self.log
             .lock()
             .push(MockRenderEvent::Warning(task_id, warning.to_string()));
@@ -611,7 +611,7 @@ impl werk_eval::Messenger for MockRender {
 }
 
 impl werk_runner::Render for MockRender {
-    fn will_build(&self, task_id: TaskId, num_steps: usize, outdatedness: &Outdatedness) {
+    fn will_build(&self, task_id: TaskName, num_steps: usize, outdatedness: &Outdatedness) {
         self.log.lock().push(MockRenderEvent::WillBuild(
             task_id,
             num_steps,
@@ -619,7 +619,7 @@ impl werk_runner::Render for MockRender {
         ));
     }
 
-    fn did_build(&self, task_id: TaskId, result: &Result<BuildStatus, Error>) {
+    fn did_build(&self, task_id: TaskName, result: &Result<BuildStatus, Error>) {
         self.log
             .lock()
             .push(MockRenderEvent::DidBuild(task_id, result.clone()));
@@ -627,7 +627,7 @@ impl werk_runner::Render for MockRender {
 
     fn will_execute(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         step: usize,
         num_steps: usize,
@@ -642,7 +642,7 @@ impl werk_runner::Render for MockRender {
 
     fn did_execute(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         result: &Result<std::process::ExitStatus, std::io::Error>,
         step: usize,
@@ -1246,8 +1246,8 @@ impl werk_eval::Io for MockIo {
 
     fn metadata(&self, path: &Absolute<std::path::Path>) -> Result<Metadata, std::io::Error> {
         let fs = self.filesystem.lock();
-        read_fs(&fs, path)
-            .map(|(entry, _)| entry.metadata)}
+        read_fs(&fs, path).map(|(entry, _)| entry.metadata)
+    }
 
     fn read_file(&self, path: &Absolute<std::path::Path>) -> Result<Vec<u8>, std::io::Error> {
         self.oplog.lock().push(MockIoOp::ReadFile(path.to_owned()));

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use annotate_snippets::{AnnotationKind, Snippet};
-use werk_eval::{EvalError, TaskId};
+use werk_eval::{EvalError, TaskName};
 use werk_util::{DiagnosticSourceMap, Level};
 
 use crate::{OwnedDependencyChain, depfile::DepfileError};
@@ -17,9 +17,9 @@ pub enum Error {
     #[error("circular dependency: {0}")]
     CircularDependency(OwnedDependencyChain),
     #[error("dependency failed: {0}: {1}")]
-    DependencyFailed(TaskId, Arc<Error>),
+    DependencyFailed(TaskName, Arc<Error>),
     #[error("task was cancelled: {0}")]
-    Cancelled(TaskId),
+    Cancelled(TaskName),
     #[error("eval error: {0}")]
     Eval(#[from] EvalError),
     #[error(transparent)]

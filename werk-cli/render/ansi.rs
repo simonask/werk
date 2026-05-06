@@ -5,7 +5,7 @@ use anstream::stream::IsTerminal;
 use indexmap::IndexMap;
 use owo_colors::OwoColorize as _;
 use parking_lot::Mutex;
-use werk_eval::{ShellCommandLine, TaskId, Warning};
+use werk_eval::{ShellCommandLine, TaskName, Warning};
 use werk_runner::{BuildStatus, Error, Outdatedness};
 use werk_util::{AsDiagnostic as _, DiagnosticSecondarySourceMap};
 
@@ -132,7 +132,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 }
 
 struct RenderState {
-    current_tasks: IndexMap<TaskId, TaskStatus>,
+    current_tasks: IndexMap<TaskName, TaskStatus>,
     num_tasks: usize,
     num_completed_tasks: usize,
     progress: Option<progress::Progress>,
@@ -166,7 +166,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 }
 
 impl<const LINEAR: bool> Renderer<LINEAR> {
-    pub fn will_build(&mut self, task_id: TaskId, num_steps: usize, outdatedness: &Outdatedness) {
+    pub fn will_build(&mut self, task_id: TaskName, num_steps: usize, outdatedness: &Outdatedness) {
         self.state
             .current_tasks
             .insert(task_id, TaskStatus::new(num_steps));
@@ -200,7 +200,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
         });
     }
 
-    fn did_build(&mut self, task_id: TaskId, result: &Result<BuildStatus, Error>) {
+    fn did_build(&mut self, task_id: TaskName, result: &Result<BuildStatus, Error>) {
         let Some(finished) = self.state.current_tasks.shift_remove(&task_id) else {
             return;
         };
@@ -245,7 +245,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 
     fn will_execute(
         &mut self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         step: usize,
         num_steps: usize,
@@ -276,7 +276,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 
     fn on_child_process_stderr_line(
         &mut self,
-        task_id: TaskId,
+        task_id: TaskName,
         _command: &ShellCommandLine,
         line_without_eol: &[u8],
         quiet: bool,
@@ -301,7 +301,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 
     fn on_child_process_stdout_line(
         &mut self,
-        _task_id: TaskId,
+        _task_id: TaskName,
         _command: &ShellCommandLine,
         line_without_eol: &[u8],
     ) {
@@ -315,7 +315,7 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 
     fn did_execute(
         &mut self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         result: &Result<std::process::ExitStatus, std::io::Error>,
         step: usize,
@@ -347,12 +347,12 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
         }
     }
 
-    fn message(&mut self, _task_id: Option<TaskId>, message: &str) {
+    fn message(&mut self, _task_id: Option<TaskName>, message: &str) {
         _ = self
             .render_lines(|out, _status| writeln!(out, "{} {}", "[info]".bright_green(), message));
     }
 
-    fn warning(&mut self, _task_id: Option<TaskId>, warning: &Warning) {
+    fn warning(&mut self, _task_id: Option<TaskName>, warning: &Warning) {
         // TODO: Dedup warnings based on span and ID.
         // TODO: Get the term width.
         let renderer = annotate_snippets::Renderer::styled();
@@ -387,29 +387,29 @@ impl<const LINEAR: bool> Renderer<LINEAR> {
 }
 
 impl<const LINEAR: bool> werk_eval::Messenger for TerminalRenderer<LINEAR> {
-    fn message(&self, task_id: Option<TaskId>, message: &str) {
+    fn message(&self, task_id: Option<TaskName>, message: &str) {
         self.inner.lock().message(task_id, message)
     }
 
-    fn warning(&self, task_id: Option<TaskId>, warning: &Warning) {
+    fn warning(&self, task_id: Option<TaskName>, warning: &Warning) {
         self.inner.lock().warning(task_id, warning)
     }
 }
 
 impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
-    fn will_build(&self, task_id: TaskId, num_steps: usize, outdatedness: &Outdatedness) {
+    fn will_build(&self, task_id: TaskName, num_steps: usize, outdatedness: &Outdatedness) {
         self.inner
             .lock()
             .will_build(task_id, num_steps, outdatedness);
     }
 
-    fn did_build(&self, task_id: TaskId, result: &Result<BuildStatus, Error>) {
+    fn did_build(&self, task_id: TaskName, result: &Result<BuildStatus, Error>) {
         self.inner.lock().did_build(task_id, result);
     }
 
     fn will_execute(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         step: usize,
         num_steps: usize,
@@ -421,7 +421,7 @@ impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
 
     fn did_execute(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         status: &std::io::Result<std::process::ExitStatus>,
         step: usize,
@@ -438,7 +438,7 @@ impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
 
     fn on_child_process_stderr_line(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         line_without_eol: &[u8],
         quiet: bool,
@@ -450,7 +450,7 @@ impl<const LINEAR: bool> werk_runner::Render for TerminalRenderer<LINEAR> {
 
     fn on_child_process_stdout_line(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         line_without_eol: &[u8],
     ) {

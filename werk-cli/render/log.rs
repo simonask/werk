@@ -16,11 +16,11 @@ impl LogWatcher {
 }
 
 impl werk_eval::Messenger for LogWatcher {
-    fn message(&self, task_id: Option<werk_eval::TaskId>, message: &str) {
+    fn message(&self, task_id: Option<werk_eval::TaskName>, message: &str) {
         tracing::info!(task_id = ?task_id, "Message: {message}");
     }
 
-    fn warning(&self, task_id: Option<werk_eval::TaskId>, message: &Warning) {
+    fn warning(&self, task_id: Option<werk_eval::TaskName>, message: &Warning) {
         tracing::warn!(task_id = ?task_id, "Warning: {message}");
     }
 }
@@ -28,7 +28,7 @@ impl werk_eval::Messenger for LogWatcher {
 impl werk_runner::Render for LogWatcher {
     fn will_build(
         &self,
-        task_id: werk_eval::TaskId,
+        task_id: werk_eval::TaskName,
         num_steps: usize,
         outdatedness: &werk_runner::Outdatedness,
     ) {
@@ -46,7 +46,7 @@ impl werk_runner::Render for LogWatcher {
 
     fn did_build(
         &self,
-        task_id: werk_eval::TaskId,
+        task_id: werk_eval::TaskName,
         result: &Result<werk_runner::BuildStatus, werk_runner::Error>,
     ) {
         match result {
@@ -63,7 +63,7 @@ impl werk_runner::Render for LogWatcher {
 
     fn will_execute(
         &self,
-        task_id: werk_eval::TaskId,
+        task_id: werk_eval::TaskName,
         command: &werk_eval::ShellCommandLine,
         step: usize,
         _num_steps: usize,
@@ -75,7 +75,7 @@ impl werk_runner::Render for LogWatcher {
 
     fn did_execute(
         &self,
-        task_id: werk_eval::TaskId,
+        task_id: werk_eval::TaskName,
         command: &werk_eval::ShellCommandLine,
         status: &std::io::Result<std::process::ExitStatus>,
         step: usize,

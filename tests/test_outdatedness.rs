@@ -3,7 +3,7 @@ use tests::mock_io;
 
 use mock_io::*;
 use stringleton::Symbol;
-use werk_eval::{ShellCommandLine, TaskId};
+use werk_eval::{ShellCommandLine, TaskName};
 use werk_fs::{Absolute, Path};
 use werk_runner::{BuildStatus, Outdatedness, Reason};
 
@@ -86,7 +86,7 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::try_build("/env-dep").unwrap(),
+            TaskName::try_build("/env-dep").unwrap(),
             Outdatedness::missing(Absolute::try_from("/env-dep")?)
         )
     );
@@ -132,7 +132,7 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::try_build("/env-dep").unwrap(),
+            TaskName::try_build("/env-dep").unwrap(),
             Outdatedness::new([Reason::Env(Symbol::from("PROFILE")),])
         )
     );
@@ -156,7 +156,7 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::try_build("/which-dep").unwrap(),
+            TaskName::try_build("/which-dep").unwrap(),
             Outdatedness::missing(Absolute::try_from("/which-dep")?)
         )
     );
@@ -209,7 +209,7 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::try_build("/which-dep").unwrap(),
+            TaskName::try_build("/which-dep").unwrap(),
             Outdatedness::new([
                 Reason::missing(Absolute::try_from("/which-dep")?),
                 Reason::Which(Symbol::from("clang"))
@@ -236,7 +236,7 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::try_build("/which-dep").unwrap(),
+            TaskName::try_build("/which-dep").unwrap(),
             Outdatedness::new([Reason::missing(Absolute::try_from("/which-dep")?),])
         )
     );
@@ -284,7 +284,7 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::try_build("/which-dep").unwrap(),
+            TaskName::try_build("/which-dep").unwrap(),
             Outdatedness::new([
                 Reason::missing(Absolute::try_from("/which-dep")?),
                 Reason::RecipeChanged
@@ -314,7 +314,7 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::try_build("/glob-dep").unwrap(),
+            TaskName::try_build("/glob-dep").unwrap(),
             Outdatedness::new([Reason::missing(Absolute::try_from("/glob-dep")?),])
         )
     );
@@ -360,7 +360,7 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::try_build("/glob-dep").unwrap(),
+            TaskName::try_build("/glob-dep").unwrap(),
             Outdatedness::new([
                 Reason::missing(Absolute::try_from("/glob-dep")?),
                 Reason::Glob(Symbol::from("/*.c"))
@@ -387,7 +387,7 @@ async fn test_outdated_define() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::try_build("/env-dep").unwrap(),
+            TaskName::try_build("/env-dep").unwrap(),
             Outdatedness::new([Reason::missing(Absolute::try_from("/env-dep")?),])
         )
     );
@@ -431,7 +431,7 @@ async fn test_outdated_define() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(Absolute::try_from("/env-dep").unwrap()),
+            TaskName::build(Absolute::try_from("/env-dep").unwrap()),
             Outdatedness::new([Reason::Define(Symbol::from("profile")),])
         )
     );
@@ -455,7 +455,7 @@ async fn test_outdated_define() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(Absolute::try_from("/env-dep").unwrap()),
+            TaskName::build(Absolute::try_from("/env-dep").unwrap()),
             Outdatedness::unchanged()
         )
     );
@@ -478,7 +478,7 @@ async fn test_outdated_global_constant() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(Absolute::try_from("/output").unwrap()),
+            TaskName::build(Absolute::try_from("/output").unwrap()),
             Outdatedness::new([Reason::Missing(Absolute::symbolicate(Absolute::try_from(
                 "/output"
             )?)),])
@@ -498,7 +498,7 @@ async fn test_outdated_global_constant() -> anyhow::Result<()> {
     assert_eq!(
         status,
         BuildStatus::Complete(
-            TaskId::build(Absolute::try_from("/output").unwrap()),
+            TaskName::build(Absolute::try_from("/output").unwrap()),
             Outdatedness::new([
                 Reason::GlobalChanged(Symbol::from("arg")),
                 Reason::GlobalChanged(Symbol::from("args"))

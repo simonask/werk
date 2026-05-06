@@ -1,18 +1,18 @@
-use werk_eval::{ShellCommandLine, TaskId};
+use werk_eval::{ShellCommandLine, TaskName};
 use werk_util::DiagnosticFileId;
 
 use crate::{BuildStatus, Error, Outdatedness};
 
 pub trait Render: werk_eval::Messenger + Send + Sync {
     /// Build task is about to start.
-    fn will_build(&self, task_id: TaskId, num_steps: usize, outdatedness: &Outdatedness);
+    fn will_build(&self, task_id: TaskName, num_steps: usize, outdatedness: &Outdatedness);
 
     /// Build task finished (all steps have been completed).
-    fn did_build(&self, task_id: TaskId, result: &Result<BuildStatus, Error>);
+    fn did_build(&self, task_id: TaskName, result: &Result<BuildStatus, Error>);
     /// Run command is about to be executed.
     fn will_execute(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         step: usize,
         num_steps: usize,
@@ -20,7 +20,7 @@ pub trait Render: werk_eval::Messenger + Send + Sync {
 
     fn on_child_process_stderr_line(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         line_without_eol: &[u8],
         quiet: bool,
@@ -30,7 +30,7 @@ pub trait Render: werk_eval::Messenger + Send + Sync {
 
     fn on_child_process_stdout_line(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         line_without_eol: &[u8],
     ) {
@@ -45,7 +45,7 @@ pub trait Render: werk_eval::Messenger + Send + Sync {
     /// function,
     fn did_execute(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         status: &std::io::Result<std::process::ExitStatus>,
         step: usize,

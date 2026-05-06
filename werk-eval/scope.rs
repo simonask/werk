@@ -4,7 +4,7 @@ use werk_util::DiagnosticSpan;
 
 use crate::{
     BuildRecipeMatch, DirEntry, Eval, Io, Messenger, PatternMatchData, ResolvePathError,
-    ResolvePathMode, TaskId, Used, Value, Warning, default_global_constants,
+    ResolvePathMode, TaskName, Used, Value, Warning, default_global_constants,
 };
 
 pub type LocalVariables = indexmap::IndexMap<Symbol, Eval<Value>>;
@@ -52,13 +52,13 @@ pub trait Scope: Send + Sync {
 pub struct TaskRecipeScope<'a> {
     global_scope: &'a dyn Scope,
     vars: LocalVariables,
-    task_id: TaskId,
+    task_id: TaskName,
 }
 
 pub struct BuildRecipeScope<'a> {
     global_scope: &'a dyn Scope,
     vars: LocalVariables,
-    task_id: TaskId,
+    task_id: TaskName,
     recipe_match: &'a BuildRecipeMatch<'a>,
     input_files: Value,
     output_file: Value,
@@ -161,7 +161,7 @@ impl std::ops::Deref for LookupValue<'_> {
 impl<'a> TaskRecipeScope<'a> {
     #[inline]
     #[must_use]
-    pub fn new(global_scope: &'a dyn Scope, task_id: TaskId) -> Self {
+    pub fn new(global_scope: &'a dyn Scope, task_id: TaskName) -> Self {
         Self {
             global_scope,
             vars: LocalVariables::new(),
@@ -183,7 +183,7 @@ impl<'a> BuildRecipeScope<'a> {
     #[must_use]
     pub fn new(
         global_scope: &'a dyn Scope,
-        task_id: TaskId,
+        task_id: TaskName,
         recipe_match: &'a BuildRecipeMatch<'a>,
     ) -> Self {
         Self {

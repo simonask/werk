@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use stringleton::sym;
 use werk_eval::{
     AmbiguousPatternError, BuildRecipeMatch, BuildRecipeScope, Env, Eval, RecipeMatch, RunCommand,
-    ShellCommandLine, StringValue, TaskId, TaskRecipe, TaskRecipeScope, Value, Warning,
+    ShellCommandLine, StringValue, TaskName, TaskRecipe, TaskRecipeScope, Value, Warning,
 };
 use werk_fs::{Absolute, Normalize as _, Path, SymPath};
 use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, cancel};
@@ -16,18 +16,16 @@ use crate::{
     Workspace, WorkspaceSettings, depfile::Depfile,
 };
 
-// mod command;
 mod dep_chain;
 mod task;
 
-// pub use command::*;
 pub use dep_chain::*;
 pub use task::*;
 
 /// Workspace-wide runner state.
 pub(crate) struct RunnerState {
     concurrency_limit: smol::lock::Semaphore,
-    tasks: Mutex<IndexMap<TaskId, TaskStatus>>,
+    tasks: Mutex<IndexMap<TaskName, TaskStatus>>,
 }
 
 impl RunnerState {
@@ -61,7 +59,7 @@ pub struct Settings {
 pub enum BuildStatus {
     /// Target was built, along with the outdatedness. If the outdatedness is
     /// empty, the target was determined to be up-to-date.
-    Complete(TaskId, Outdatedness),
+    Complete(TaskName, Outdatedness),
     /// Target is a dependency that exists in the filesystem, along with its
     /// last modification time.
     Exists(Absolute<SymPath>, SystemTime),
@@ -287,7 +285,11 @@ impl<'a> Inner<'a> {
             }
         }
 
-        fn finish_built(this: &RunnerState, task_id: TaskId, result: &Result<BuildStatus, Error>) {
+        fn finish_built(
+            this: &RunnerState,
+            task_id: TaskName,
+            result: &Result<BuildStatus, Error>,
+        ) {
             // Notify dependents
             let mut tasks = this.tasks.lock();
             let status = tasks.get_mut(&task_id).expect("task not registered");
@@ -370,7 +372,7 @@ impl<'a> Inner<'a> {
     #[allow(clippy::too_many_lines)]
     async fn execute_build_recipe(
         self: &Arc<Self>,
-        task_id: TaskId,
+        task_id: TaskName,
         recipe_match: BuildRecipeMatch<'_>,
         cancel: &cancel::Receiver,
         dep_chain: DepChainEntry<'_>,
@@ -583,7 +585,7 @@ impl<'a> Inner<'a> {
 
     async fn execute_task_recipe(
         self: &Arc<Self>,
-        task_id: TaskId,
+        task_id: TaskName,
         recipe: &TaskRecipe,
         cancel: &cancel::Receiver,
         dep_chain: DepChainEntry<'_>,
@@ -630,7 +632,7 @@ impl<'a> Inner<'a> {
 
     async fn execute_recipe_commands(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         cancel: &cancel::Receiver,
         run_commands: Vec<RunCommand>,
         mut env: Env,
@@ -740,7 +742,7 @@ impl<'a> Inner<'a> {
     #[expect(clippy::too_many_arguments)]
     async fn execute_recipe_run_command(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command_line: &ShellCommandLine,
         env: &Env,
         capture: bool,
@@ -808,7 +810,7 @@ impl<'a> Inner<'a> {
     #[expect(clippy::too_many_arguments)]
     fn execute_recipe_spawn_command(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command_line: &ShellCommandLine,
         env: &Env,
         capture: bool,
@@ -876,7 +878,7 @@ impl<'a> Inner<'a> {
 
     fn execute_recipe_delete_command(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         paths: &[Absolute<std::path::PathBuf>],
         silent: bool,
         span: DiagnosticSpan,
@@ -910,7 +912,7 @@ impl<'a> Inner<'a> {
 
     fn execute_recipe_touch_command(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         paths: &[Absolute<std::path::PathBuf>],
         silent: bool,
         span: DiagnosticSpan,
@@ -1012,7 +1014,7 @@ impl<'a> Inner<'a> {
     /// Unconditionally run the task if it is outdated.
     async fn rebuild_spec(
         self: &Arc<Self>,
-        task_id: TaskId,
+        task_id: TaskName,
         spec: TaskSpec<'a>,
         cancel: &cancel::Receiver,
         dep_chain: DepChain<'_>,

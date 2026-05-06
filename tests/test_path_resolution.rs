@@ -1,7 +1,7 @@
 use macro_rules_attribute::apply;
 use stringleton::sym;
 use tests::mock_io::*;
-use werk_eval::{EvalError, ResolvePathError, TaskId, Value};
+use werk_eval::{EvalError, ResolvePathError, TaskName, Value};
 use werk_fs::Absolute;
 use werk_runner::Runner;
 use werk_util::Annotated;
@@ -105,7 +105,7 @@ build "explicit" {
             error: werk_runner::Error::CircularDependency(chain),
             ..
         }) => {
-            let id = TaskId::try_build("/explicit").unwrap();
+            let id = TaskName::try_build("/explicit").unwrap();
             let chain = chain.into_inner();
             assert_eq!(chain, [id, id]);
         }
@@ -169,7 +169,7 @@ build "bar" {
     runner.build_or_run("bar").await.unwrap();
     std::mem::drop(runner);
     assert!(test.render.did_see(&MockRenderEvent::Message(
-        Some(TaskId::build(Absolute::try_from("/bar").unwrap())),
+        Some(TaskName::build(Absolute::try_from("/bar").unwrap())),
         expected_message,
     )));
 }

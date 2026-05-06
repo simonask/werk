@@ -4,7 +4,7 @@ use std::{
 };
 
 use stringleton::Symbol;
-use werk_eval::{TaskId, Used, UsedVariable};
+use werk_eval::{TaskName, Used, UsedVariable};
 use werk_fs::{Absolute, SymPath};
 
 use crate::{Workspace, cache::TargetOutdatednessCache};
@@ -29,7 +29,7 @@ pub enum Reason {
     /// Manual define changed.
     Define(Symbol),
     /// The recipe has a dependency that was rebuilt.
-    Rebuilt(TaskId),
+    Rebuilt(TaskName),
 }
 
 impl Reason {
