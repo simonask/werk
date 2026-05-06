@@ -3,7 +3,7 @@ use werk_fs::Absolute;
 use werk_util::DiagnosticSpan;
 
 use crate::{
-    BuildRecipeMatch, DirEntry, Eval, EvalError, Io, Messenger, PatternMatchData, ResolvePathError,
+    BuildRecipeMatch, DirEntry, Eval, Io, Messenger, PatternMatchData, ResolvePathError,
     ResolvePathMode, TaskId, Used, Value, Warning, default_global_constants,
 };
 
@@ -270,7 +270,7 @@ impl Scope for TaskRecipeScope<'_> {
     }
 
     fn warning(&self, warning: &Warning) {
-        self.messenger().warning(Some(self.task_id), warning)
+        self.messenger().warning(Some(self.task_id), warning);
     }
 
     fn which(
@@ -351,7 +351,7 @@ impl Scope for BuildRecipeScope<'_> {
     }
 
     fn warning(&self, warning: &Warning) {
-        self.messenger().warning(Some(self.task_id), warning)
+        self.messenger().warning(Some(self.task_id), warning);
     }
 
     fn which(
@@ -407,11 +407,11 @@ impl Scope for SubexprScope<'_> {
     }
 
     fn message(&self, message: &str) {
-        self.parent.message(message)
+        self.parent.message(message);
     }
 
     fn warning(&self, warning: &Warning) {
-        self.parent.warning(warning)
+        self.parent.warning(warning);
     }
 
     fn which(
@@ -475,11 +475,11 @@ impl Scope for MatchScope<'_> {
     }
 
     fn message(&self, message: &str) {
-        self.parent.message(message)
+        self.parent.message(message);
     }
 
     fn warning(&self, warning: &Warning) {
-        self.parent.warning(warning)
+        self.parent.warning(warning);
     }
 
     fn which(

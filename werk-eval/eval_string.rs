@@ -253,6 +253,7 @@ impl<'a> PatternBuilder<'a> {
         }
     }
 
+    #[must_use] 
     pub fn build_partial_regex(self) -> Eval<PatternRegex> {
         let value = self.build_partial_regex_inner();
         Eval {
@@ -263,6 +264,7 @@ impl<'a> PatternBuilder<'a> {
 
     /// Build the pattern either as a literal-match pattern or a regex pattern
     /// that matches the whole string (if it contains stems or capture groups)
+    #[must_use] 
     pub fn build(self) -> Eval<Pattern> {
         let span = self.span;
 

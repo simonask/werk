@@ -167,8 +167,7 @@ impl werk_eval::Io for RealSystem {
 
         let results = Mutex::new(Ok(Vec::new()));
         walker.visit(&mut Builder(&results));
-        results.into_inner().map_err(Into::into)
-    }
+        results.into_inner()}
 
     fn metadata(&self, path: &Absolute<Path>) -> Result<Metadata, std::io::Error> {
         path.metadata()?.try_into()

@@ -1247,9 +1247,7 @@ impl werk_eval::Io for MockIo {
     fn metadata(&self, path: &Absolute<std::path::Path>) -> Result<Metadata, std::io::Error> {
         let fs = self.filesystem.lock();
         read_fs(&fs, path)
-            .map(|(entry, _)| entry.metadata)
-            .map_err(Into::into)
-    }
+            .map(|(entry, _)| entry.metadata)}
 
     fn read_file(&self, path: &Absolute<std::path::Path>) -> Result<Vec<u8>, std::io::Error> {
         self.oplog.lock().push(MockIoOp::ReadFile(path.to_owned()));

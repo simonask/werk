@@ -586,6 +586,7 @@ impl PathBuf {
     }
 
     #[inline]
+    #[must_use] 
     pub fn into_string(self) -> String {
         self.path
     }

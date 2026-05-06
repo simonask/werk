@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use annotate_snippets::{AnnotationKind, Snippet};
 use werk_eval::{EvalError, TaskId};
-use werk_util::{DiagnosticSourceMap, DiagnosticSpan, Level};
+use werk_util::{DiagnosticSourceMap, Level};
 
 use crate::{OwnedDependencyChain, depfile::DepfileError};
 
