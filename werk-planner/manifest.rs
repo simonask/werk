@@ -1,9 +1,10 @@
 use indexmap::IndexMap;
 use stringleton::Symbol;
-use werk_eval::{AmbiguousPatternError, ConfigVar, EvalError, LocalVariables, Value};
+use werk_eval::{ConfigVar, EvalError, LocalVariables, Value};
 use werk_fs::Absolute;
-use werk_planner::{BuildRecipe, BuildRecipeMatch, RecipeMatch, TaskRecipe};
 use werk_util::{DiagnosticMainSourceMap, DiagnosticSpan};
+
+use crate::{AmbiguousPatternError, BuildRecipe, BuildRecipeMatch, RecipeMatch, TaskRecipe};
 
 type Result<T, E = EvalError> = std::result::Result<T, E>;
 
@@ -118,7 +119,7 @@ impl Manifest {
     pub fn match_recipe_by_name<'b>(
         &'b self,
         name: &str,
-    ) -> Result<Option<RecipeMatch<'b>>, crate::Error> {
+    ) -> Result<Option<RecipeMatch<'b>>, AmbiguousPatternError> {
         let task = self.match_task_recipe(name);
 
         if let Ok(path) = werk_fs::Path::new(name) {
@@ -140,6 +141,12 @@ impl Manifest {
 
         Ok(task.map(RecipeMatch::Task))
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Edition {
+    #[default]
+    V1,
 }
 
 impl werk_util::DiagnosticSourceMap for Manifest {

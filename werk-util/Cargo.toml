@@ -10,12 +10,13 @@ path = "lib.rs"
 
 [dependencies]
 ahash.workspace = true
-hashbrown = "0.16.1"
-parking_lot.workspace = true
-serde.workspace = true
 annotate-snippets.workspace = true
+event-listener.workspace = true
 indexmap.workspace = true
+parking_lot.workspace = true
+pin-project-lite.workspace = true
 rustc-stable-hash.workspace = true
+serde.workspace = true
 
 [lints]
 workspace = true

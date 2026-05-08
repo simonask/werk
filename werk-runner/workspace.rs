@@ -4,16 +4,16 @@ use parking_lot::Mutex;
 use std::{borrow::Cow, collections::hash_map, sync::Arc};
 use stringleton::{Symbol, sym};
 use werk_eval::{
-    AmbiguousPathError, AmbiguousPatternError, BuildRecipe, DirEntry, Eval, EvalError,
-    GlobSettings, Io, Lookup, LookupValue, ResolvePathError, ResolvePathMode, TaskRecipe,
-    UsedVariable, Value, Warning,
+    AmbiguousPathError, DirEntry, Eval, EvalError, GlobSettings, Io, Lookup, LookupValue,
+    ResolvePathError, ResolvePathMode, UsedVariable, Value, Warning,
 };
-use werk_fs::{Absolute, Normalize as _, PathError};
+use werk_fs::{Absolute, Normalize as _, PathError, SymPath};
 use werk_parser::ast;
+use werk_planner::{AmbiguousPatternError, BuildRecipe, Manifest, TaskRecipe};
 use werk_util::{DiagnosticFileId, DiagnosticSpan, hash128::Hash128};
 
 use crate::{
-    Error, Manifest, Render,
+    Error, Render,
     cache::{TargetOutdatednessCache, WERK_CACHE_FILENAME, WerkCache},
 };
 
@@ -85,8 +85,8 @@ pub struct Workspace {
     pub force_color: bool,
     pub io: Arc<dyn Io>,
     pub render: Arc<dyn Render>,
-    pub(crate) runner_state: crate::runner::RunnerState,
     pub(crate) artificial_delay: Option<std::time::Duration>,
+    pub max_concurrent_jobs: usize,
 }
 
 #[derive(Default)]
@@ -156,8 +156,8 @@ impl Workspace {
             force_color: settings.force_color,
             io,
             render,
-            runner_state: crate::RunnerState::new(settings.jobs),
             artificial_delay: settings.artificial_delay,
+            max_concurrent_jobs: settings.jobs,
         };
 
         Ok(workspace)
@@ -641,17 +641,20 @@ impl Workspace {
 
     pub(crate) fn take_build_target_cache(
         &self,
-        path: &Absolute<werk_fs::Path>,
+        path: Absolute<SymPath>,
     ) -> Option<TargetOutdatednessCache> {
-        self.werk_cache.lock().build.remove(path)
+        self.werk_cache.lock().build.remove(path.as_path())
     }
 
     pub(crate) fn store_build_target_cache(
         &self,
-        path: Absolute<werk_fs::PathBuf>,
+        path: Absolute<SymPath>,
         cache: TargetOutdatednessCache,
     ) {
-        self.werk_cache.lock().build.insert(path, cache);
+        self.werk_cache
+            .lock()
+            .build
+            .insert(path.as_path().to_path_buf(), cache);
     }
 }
 
@@ -783,6 +786,13 @@ impl werk_eval::Scope for Workspace {
             ResolvePathMode::Workspace => Ok(path.resolve(self.project_root())),
             ResolvePathMode::Illegal => Err(ResolvePathError::Illegal),
         }
+    }
+
+    fn unresolve_path(
+        &self,
+        path: &Absolute<std::path::Path>,
+    ) -> Result<Absolute<werk_fs::PathBuf>, PathError> {
+        Workspace::unresolve_path(self, path)
     }
 
     fn get_input_file(&self, path: &Absolute<werk_fs::Path>) -> Option<DirEntry> {

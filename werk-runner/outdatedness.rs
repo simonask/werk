@@ -166,7 +166,7 @@ impl<'a> OutdatednessTracker<'a> {
     pub fn new(
         workspace: &'a Workspace,
         cache: Option<&'a TargetOutdatednessCache>,
-        recipe: &werk_eval::BuildRecipe,
+        recipe: &werk_planner::BuildRecipe,
         target_mtime: Option<std::time::SystemTime>,
     ) -> Self {
         let mut outdatedness = Outdatedness::unchanged();

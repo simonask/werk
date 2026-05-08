@@ -3,23 +3,35 @@
 use std::{
     pin::Pin,
     sync::{Arc, atomic::AtomicBool},
-    task::{Context, Poll, Waker},
+    task::{Context, Poll},
 };
 
-use parking_lot::Mutex;
+use event_listener::{Event, EventListener};
 
 pub struct Sender {
     state: Arc<State>,
 }
 
-#[derive(Clone)]
-pub struct Receiver {
-    state: Arc<State>,
+pin_project_lite::pin_project! {
+    pub struct Receiver {
+        state: Arc<State>,
+        #[pin]
+        listener: EventListener,
+    }
+}
+
+impl Clone for Receiver {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            listener: self.state.event.listen(),
+        }
+    }
 }
 
 struct State {
     cancelled: AtomicBool,
-    wakers: Mutex<Vec<Waker>>,
+    event: Event,
 }
 
 impl Sender {
@@ -29,7 +41,7 @@ impl Sender {
         Sender {
             state: Arc::new(State {
                 cancelled: AtomicBool::new(false),
-                wakers: Mutex::new(Vec::new()),
+                event: Event::new(),
             }),
         }
     }
@@ -39,6 +51,7 @@ impl Sender {
     pub fn receiver(&self) -> Receiver {
         Receiver {
             state: self.state.clone(),
+            listener: self.state.event.listen(),
         }
     }
 
@@ -57,11 +70,7 @@ impl Sender {
         {
             return;
         }
-
-        let mut wakers = self.state.wakers.lock();
-        for waker in wakers.drain(..) {
-            waker.wake();
-        }
+        self.state.event.notify(usize::MAX);
     }
 }
 
@@ -79,9 +88,13 @@ impl Drop for Sender {
     }
 }
 
-impl Receiver {
-    fn poll_pinned(&self, cx: &mut Context<'_>) -> Poll<()> {
-        if self
+impl Future for Receiver {
+    type Output = ();
+
+    #[inline]
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        if this
             .state
             .cancelled
             .load(std::sync::atomic::Ordering::SeqCst)
@@ -89,26 +102,7 @@ impl Receiver {
             return Poll::Ready(());
         }
 
-        let mut wakers = self.state.wakers.lock();
-        wakers.push(cx.waker().clone());
+        _ = this.listener.poll(cx);
         Poll::Pending
-    }
-}
-
-impl Future for Receiver {
-    type Output = ();
-
-    #[inline]
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.poll_pinned(cx)
-    }
-}
-
-impl Future for &Receiver {
-    type Output = ();
-
-    #[inline]
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.poll_pinned(cx)
     }
 }

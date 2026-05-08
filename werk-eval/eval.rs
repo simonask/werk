@@ -8,9 +8,9 @@ use std::sync::Arc;
 use werk_parser::ast;
 
 use crate::{
-    BuildRecipeScope, CommandLineBuilder, Env, Eval, EvalError, Lookup, LookupValue, MatchScope,
-    Pattern, PatternBuilder, RunCommand, Scope, ShellCommandLine, ShellError, StringBuilder,
-    StringFlags, StringValue, SubexprScope, TaskRecipeScope, Used, UsedVariable, Value, Warning,
+    BuildTaskScope, CommandLineBuilder, Env, Eval, EvalError, Lookup, LookupValue, MatchScope,
+    Pattern, PatternBuilder, RunCommand, Scope, ScopeMut, ShellCommandLine, ShellError,
+    StringBuilder, StringFlags, StringValue, SubexprScope, Used, UsedVariable, Value, Warning,
     dedup_recursive, flat_join,
 };
 
@@ -775,7 +775,7 @@ pub struct EvaluatedBuildRecipe {
 }
 
 pub fn eval_build_recipe_statements(
-    scope: &mut BuildRecipeScope<'_>,
+    scope: &mut dyn BuildTaskScope,
     body: &[ast::BodyStmt<ast::BuildRecipeStmt>],
     file: DiagnosticFileId,
 ) -> Result<Eval<EvaluatedBuildRecipe>, EvalError> {
@@ -791,7 +791,7 @@ pub fn eval_build_recipe_statements(
         match stmt.statement {
             ast::BuildRecipeStmt::Let(ref let_stmt) => {
                 let value = eval_chain(scope, &let_stmt.value, file)?;
-                scope.set(let_stmt.ident.ident, value);
+                scope.set_local(file.span(let_stmt.span), let_stmt.ident.ident, value);
             }
             ast::BuildRecipeStmt::From(ref expr) => {
                 let value = eval_chain(scope, &expr.param, file)?;
@@ -805,7 +805,8 @@ pub fn eval_build_recipe_statements(
                 scope.push_input_files(
                     evaluated.explicit_dependencies[offset..]
                         .iter()
-                        .map(|s| s.string.clone()),
+                        .map(|s| s.string.clone())
+                        .collect(),
                 );
             }
             ast::BuildRecipeStmt::Depfile(ref expr) => {
@@ -814,7 +815,7 @@ pub fn eval_build_recipe_statements(
                 match value.value {
                     Value::String(ref depfile) => {
                         evaluated.depfile = Some(depfile.clone());
-                        scope.set(Symbol::from("depfile"), value);
+                        scope.set_local(file.span(expr.span), Symbol::from("depfile"), value);
                     }
                     Value::List(_) => {
                         return Err(EvalError::UnexpectedList(file.span(expr.span)));
@@ -874,7 +875,7 @@ pub struct EvaluatedTaskRecipe {
 }
 
 pub fn eval_task_recipe_statements(
-    scope: &mut TaskRecipeScope<'_>,
+    scope: &mut dyn ScopeMut,
     body: &[ast::BodyStmt<ast::TaskRecipeStmt>],
     file: DiagnosticFileId,
 ) -> Result<EvaluatedTaskRecipe, EvalError> {
@@ -888,7 +889,11 @@ pub fn eval_task_recipe_statements(
         match stmt.statement {
             ast::TaskRecipeStmt::Let(ref let_stmt) => {
                 let value = eval_chain(scope, &let_stmt.value, file)?;
-                scope.set(let_stmt.ident.ident, Eval::inherent(value.value));
+                scope.set_local(
+                    file.span(let_stmt.span),
+                    let_stmt.ident.ident,
+                    Eval::inherent(value.value),
+                );
             }
             ast::TaskRecipeStmt::Build(ref expr) => {
                 let value = eval_chain(scope, &expr.param, file)?;

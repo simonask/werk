@@ -1,9 +1,10 @@
 use macro_rules_attribute::apply;
 use stringleton::sym;
-use tests::mock_io::*;
+use tests::{mock_io::*, plan_build_and_get_status};
 use werk_eval::{EvalError, ResolvePathError, TaskName, Value};
 use werk_fs::Absolute;
-use werk_runner::Runner;
+use werk_planner::{Planner, PlannerError};
+use werk_runner::Error;
 use werk_util::Annotated;
 
 stringleton::enable!(tests);
@@ -85,8 +86,8 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
 
 /// When a build recipe depends on a file with the same name, that is not
 /// representable, and should cause a circular dependency error.
-#[apply(smol_macros::test)]
-async fn test_circular_dependency() {
+#[test]
+fn test_circular_dependency() {
     static WERK: &str = r#"
 build "explicit" {
     from "explicit"
@@ -98,16 +99,16 @@ build "explicit" {
     "#;
     let mut test = Test::new(WERK).unwrap();
     let workspace = test.create_workspace().unwrap();
-    let runner = Runner::new(workspace);
-    match runner.build_or_run("explicit").await {
+    let mut planner = Planner::new(&workspace.manifest);
+    planner.add_goal_by_name("explicit").unwrap();
+    match planner.plan(workspace).map_err(Annotated::into_inner) {
         Ok(_) => panic!("expected circular dependency error"),
-        Err(Annotated {
-            error: werk_runner::Error::CircularDependency(chain),
-            ..
-        }) => {
-            let id = TaskName::try_build("/explicit").unwrap();
-            let chain = chain.into_inner();
-            assert_eq!(chain, [id, id]);
+        Err(PlannerError::CircularDependency(err)) => {
+            let chain = err.chain;
+            assert_eq!(
+                chain,
+                [String::from("/explicit"), String::from("/explicit")]
+            );
         }
         Err(err) => panic!("unexpected error: {:?}", err),
     }
@@ -138,14 +139,12 @@ task build {
     test.set_workspace_dir(&["bar"]).unwrap();
     assert!(test.io.contains_dir(test.workspace_path(["bar"])));
     let workspace = test.create_workspace().unwrap();
-    let runner = Runner::new(workspace);
-    match runner.build_or_run("build").await {
+    match plan_build_and_get_status(workspace, "build").await {
         Ok(_) => panic!("expected error"),
-        Err(Annotated {
-            error:
-                werk_runner::Error::Eval(EvalError::PathResolution(_, ResolvePathError::Ambiguous(err))),
-            ..
-        }) => {
+        Err(Error::Planner(PlannerError::Evaluation(EvalError::PathResolution(
+            _,
+            ResolvePathError::Ambiguous(err),
+        )))) => {
             assert_eq!(err.path, Absolute::try_from("/bar").unwrap());
         }
         Err(err) => panic!("unexpected error: {err}"),
@@ -165,9 +164,7 @@ build "bar" {
     let mut test = Test::new(WERK).unwrap();
     let expected_message = test.output_path_str(None::<&std::ffi::OsStr>);
     let workspace = test.create_workspace().unwrap();
-    let runner = Runner::new(workspace);
-    runner.build_or_run("bar").await.unwrap();
-    std::mem::drop(runner);
+    plan_build_and_get_status(workspace, "bar").await.unwrap();
     assert!(test.render.did_see(&MockRenderEvent::Message(
         Some(TaskName::build(Absolute::try_from("/bar").unwrap())),
         expected_message,

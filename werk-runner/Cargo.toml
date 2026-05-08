@@ -9,34 +9,35 @@ license.workspace = true
 path = "lib.rs"
 
 [dependencies]
-werk-parser.workspace = true
-werk-fs.workspace = true
-werk-planner.workspace = true
-werk-eval.workspace = true
-thiserror.workspace = true
-tracing.workspace = true
-parking_lot.workspace = true
-indexmap.workspace = true
-futures.workspace = true
-which = "8.0.0"
-globset = "0.4.15"
-walkdir = "2.5.0"
 ahash = "0.8.11"
-ignore = "0.4.23"
-regex.workspace = true
-regex-syntax.workspace = true
-anyhow = "1.0.93"
-serde.workspace = true
-toml_edit = { workspace = true, features = ["serde"] }
-rustc-stable-hash.workspace = true
-winnow.workspace = true
-smol.workspace = true
-pin-project-lite = "0.2.16"
-memchr = "2.7.4"
 annotate-snippets.workspace = true
-werk-util.workspace = true
+anyhow = "1.0.93"
 bitflags.workspace = true
+futures.workspace = true
+globset = "0.4.15"
+ignore = "0.4.23"
+indexmap.workspace = true
+memchr = "2.7.4"
+parking_lot.workspace = true
+pin-project-lite = "0.2.16"
+regex-syntax.workspace = true
+regex.workspace = true
+rustc-stable-hash.workspace = true
+serde.workspace = true
+smol.workspace = true
 stringleton.workspace = true
+thiserror.workspace = true
+toml_edit = { workspace = true, features = ["serde"] }
+tracing.workspace = true
+walkdir = "2.5.0"
+werk-depfile.workspace = true
+werk-eval.workspace = true
+werk-fs.workspace = true
+werk-parser.workspace = true
+werk-planner.workspace = true
+werk-util.workspace = true
+which = "8.0.0"
+winnow.workspace = true
 
 [lints]
 workspace = true

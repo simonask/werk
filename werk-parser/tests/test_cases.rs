@@ -39,7 +39,10 @@ macro_rules! error_case {
 
             let rendered = err
                 .with_file(werk_util::DiagnosticFileId::default())
-                .into_diagnostic_error(DiagnosticSource::new(std::path::Path::new("INPUT"), &input))
+                .into_diagnostic_error(&DiagnosticSource::new(
+                    std::path::Path::new("INPUT"),
+                    &input,
+                ))
                 .to_string();
 
             let rendered_stripped = fix_newlines(&strip_colors(&rendered));
@@ -79,7 +82,7 @@ macro_rules! success_case {
                 Err(err) => {
                     let rendered = err
                         .with_file(werk_util::DiagnosticFileId::default())
-                        .into_diagnostic_error(DiagnosticSource::new(
+                        .into_diagnostic_error(&DiagnosticSource::new(
                             std::path::Path::new("INPUT"),
                             &input,
                         ))

@@ -301,14 +301,6 @@ impl std::fmt::Display for ShellError {
     }
 }
 
-#[derive(Debug, thiserror::Error, PartialEq)]
-#[error("ambiguous pattern match: {path}")]
-pub struct AmbiguousPatternError {
-    pub pattern1: DiagnosticSpan,
-    pub pattern2: DiagnosticSpan,
-    pub path: String,
-}
-
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[error(
     "ambiguous path resolution: {path} exists in the workspace, but also matches a build recipe"

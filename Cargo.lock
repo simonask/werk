@@ -1267,6 +1267,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
+name = "literator"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66ca59e740186f914b9cbbe9f30066256379978bebbc085f79968c4a6c5d0775"
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1955,6 +1961,7 @@ dependencies = [
  "werk-eval",
  "werk-fs",
  "werk-parser",
+ "werk-planner",
  "werk-runner",
  "werk-util",
  "winnow 1.0.2",
@@ -2041,6 +2048,21 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "tinyvec"
+version = "1.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e61e67053d25a4e82c844e8424039d9745781b3fc4f32b8d55ed50f5f667ef3"
+dependencies = [
+ "tinyvec_macros",
+]
+
+[[package]]
+name = "tinyvec_macros"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "toml_datetime"
@@ -2384,9 +2406,18 @@ dependencies = [
  "werk-eval",
  "werk-fs",
  "werk-parser",
+ "werk-planner",
  "werk-runner",
  "werk-util",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "werk-depfile"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "winnow 1.0.2",
 ]
 
 [[package]]
@@ -2443,10 +2474,21 @@ dependencies = [
 name = "werk-planner"
 version = "0.1.0"
 dependencies = [
+ "ahash",
+ "annotate-snippets",
+ "globset",
+ "indexmap",
+ "literator",
  "stringleton",
+ "thiserror",
+ "tinyvec",
+ "tracing",
+ "werk-depfile",
+ "werk-eval",
  "werk-fs",
  "werk-parser",
  "werk-util",
+ "which",
 ]
 
 [[package]]
@@ -2474,6 +2516,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "walkdir",
+ "werk-depfile",
  "werk-eval",
  "werk-fs",
  "werk-parser",
@@ -2489,9 +2532,10 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "annotate-snippets",
- "hashbrown 0.16.1",
+ "event-listener",
  "indexmap",
  "parking_lot",
+ "pin-project-lite",
  "rustc-stable-hash",
  "serde",
 ]

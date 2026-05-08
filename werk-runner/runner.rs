@@ -1,44 +1,28 @@
-use std::{future::Future, sync::Arc, time::SystemTime};
+use std::{sync::Arc, time::SystemTime};
 
-use futures::{StreamExt, channel::oneshot, future};
-use indexmap::{IndexMap, map::Entry};
+use futures::{StreamExt, future, pin_mut};
 use parking_lot::Mutex;
-use stringleton::sym;
+use stringleton::Symbol;
 use werk_eval::{
-    AmbiguousPatternError, BuildRecipeMatch, BuildRecipeScope, Env, Eval, RecipeMatch, RunCommand,
-    ShellCommandLine, StringValue, TaskName, TaskRecipe, TaskRecipeScope, Value, Warning,
+    Env, Eval, EvaluatedBuildRecipe, EvaluatedTaskRecipe, RunCommand, ShellCommandLine, TaskName,
+    Warning,
 };
-use werk_fs::{Absolute, Normalize as _, Path, SymPath};
-use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, cancel};
+use werk_fs::{Absolute, Path, SymPath};
+use werk_planner::{EvaluatedTask, PlannerError, RecipeMatch, TaskGraph, TaskId, TaskSpec};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, broadcast_one, cancel};
 
 use crate::{
     ChildCaptureOutput, ChildLinesStream, Error, Outdatedness, OutdatednessTracker, Reason,
-    Workspace, WorkspaceSettings, depfile::Depfile,
+    Workspace,
 };
-
-mod dep_chain;
-mod task;
-
-pub use dep_chain::*;
-pub use task::*;
-
-/// Workspace-wide runner state.
-pub(crate) struct RunnerState {
-    concurrency_limit: smol::lock::Semaphore,
-    tasks: Mutex<IndexMap<TaskName, TaskStatus>>,
-}
-
-impl RunnerState {
-    pub fn new(jobs: usize) -> Self {
-        Self {
-            concurrency_limit: smol::lock::Semaphore::new(jobs.max(1)),
-            tasks: Mutex::new(IndexMap::default()),
-        }
-    }
-}
 
 pub struct Runner<'a> {
     inner: Arc<Inner<'a>>,
+    state: Mutex<Option<RunState>>,
+}
+
+struct RunState {
+    status_receivers: Vec<broadcast_one::Receiver<Result<BuildStatus, Error>>>,
 }
 
 struct Inner<'a> {
@@ -47,12 +31,7 @@ struct Inner<'a> {
     /// cancellation signal, or deadlocks can occur.
     executor: smol::Executor<'a>,
     cancel: cancel::Sender,
-}
-
-#[derive(Clone)]
-pub struct Settings {
-    pub glob: WorkspaceSettings,
-    pub dry_run: bool,
+    concurrency_limit: smol::lock::Semaphore,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +72,32 @@ impl BuildStatus {
             BuildStatus::Ignore(_) => None,
         }
     }
+
+    /// Given an output file modification time, return the outdatedness of the
+    /// target. If the target is up-to-date, the outdatedness will be empty. If
+    /// an output mtime is not available, returns empty outdatedness.
+    #[must_use]
+    pub(crate) fn as_outdated_reason(&self, output_mtime: Option<SystemTime>) -> Option<Reason> {
+        match self {
+            BuildStatus::Complete(task_id, outdatedness) => {
+                if outdatedness.is_outdated() {
+                    Some(Reason::Rebuilt(task_id.clone()))
+                } else {
+                    None
+                }
+            }
+            BuildStatus::Exists(path_buf, system_time) => {
+                let output_mtime = output_mtime?;
+
+                if output_mtime <= *system_time {
+                    Some(Reason::Modified(*path_buf, *system_time))
+                } else {
+                    None
+                }
+            }
+            BuildStatus::Ignore(_) => None,
+        }
+    }
 }
 
 impl<'a> Runner<'a> {
@@ -102,66 +107,74 @@ impl<'a> Runner<'a> {
                 workspace,
                 executor: smol::Executor::new(),
                 cancel: cancel::Sender::new(),
+                concurrency_limit: smol::lock::Semaphore::new(workspace.max_concurrent_jobs.max(1)),
             }),
+            state: Mutex::new(None),
         }
     }
 
-    pub async fn build_file(
-        &self,
-        target: &Path,
-    ) -> Result<BuildStatus, Annotated<Error, &'a Workspace>> {
-        let target = target
-            .absolutize(werk_fs::Path::ROOT)
-            .map_err(|err| Error::InvalidTargetPath(target.to_string(), err))
-            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))?;
-        tracing::debug!("Build: {target}");
-        let spec = self
-            .inner
-            .get_build_spec(&target)
-            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))?;
-        let inner = self.inner.clone();
-        // TODO: Run the executor with multiple threads.
-        self.inner
-            .executor
-            .run(async move { inner.run_task(spec, DepChain::Empty).await })
-            .await
-            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))
+    pub fn get_status(&self, task_id: TaskId) -> Option<Result<BuildStatus, Error>> {
+        self.state.lock().as_ref().and_then(|run_state| {
+            run_state
+                .status_receivers
+                .get(task_id.index())
+                .and_then(|receiver| {
+                    receiver.try_recv().map(|r| match r {
+                        Ok(task_result) => task_result.clone(),
+                        Err(broadcast_one::Disconnected) => Err(Error::Cancelled(TaskName::Task(
+                            Symbol::new("cancelled task"),
+                        ))),
+                    })
+                })
+        })
     }
 
-    pub async fn run_command(
-        &self,
-        target: &str,
-    ) -> Result<BuildStatus, Annotated<Error, &'a Workspace>> {
-        tracing::debug!("Run: {target}");
-        let spec = self
-            .inner
-            .get_command_spec(target)
-            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))?;
-        let inner = self.inner.clone();
-        // TODO: Run the executor with multiple threads.
-        self.inner
-            .executor
-            .run(async move { inner.run_task(spec, DepChain::Empty).await })
-            .await
-            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))
-    }
+    pub async fn run(&self, mut task_graph: TaskGraph<'a>) -> Result<(), Annotated<'a, Error>> {
+        let mut run_state = self.state.lock();
+        if run_state.is_some() {
+            panic!("Runner is already running; reset it first");
+        }
+        let mut tasks = Vec::with_capacity(task_graph.num_tasks());
+        let mut status_senders = Vec::with_capacity(task_graph.num_tasks());
+        let mut status_receivers = Vec::with_capacity(task_graph.num_tasks());
 
-    pub async fn build_or_run(
-        &self,
-        target: &str,
-    ) -> Result<BuildStatus, Annotated<Error, &'a Workspace>> {
-        tracing::debug!("Build or run: {target}");
-        let spec = self
-            .inner
-            .get_build_or_command_spec(target)
-            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))?;
-        let inner = self.inner.clone();
-        // TODO: Run the executor with multiple threads.
+        for _ in 0..task_graph.num_tasks() {
+            let (send, recv) = broadcast_one::channel();
+            status_senders.push(Some(send));
+            status_receivers.push(recv);
+        }
+
+        for index in 0..task_graph.num_tasks() {
+            let task_id = TaskId::from_index(index);
+            let evaluated_task = task_graph.take_task(task_id);
+            let task_spec = task_graph.get_task_spec(task_id).clone();
+            let result_sender = status_senders[task_id.index()].take().unwrap();
+            let wait_for_dependencies = task_graph
+                .get_task_dependencies(task_id)
+                .iter()
+                .map(|dep_id| status_receivers[dep_id.index()].clone())
+                .collect::<Vec<_>>();
+            tasks.push(self.inner.executor.spawn(self.inner.clone().run_task(
+                self.inner.cancel.receiver(),
+                task_spec,
+                evaluated_task,
+                wait_for_dependencies,
+                result_sender,
+            )));
+        }
+        *run_state = Some(RunState { status_receivers });
+        std::mem::drop(run_state);
+
         self.inner
             .executor
-            .run(async move { inner.run_task(spec, DepChain::Empty).await })
+            .run(async move {
+                for task in tasks {
+                    task.await?;
+                }
+                Ok::<(), Error>(())
+            })
             .await
-            .map_err(|err| err.into_diagnostic_error(self.inner.workspace))
+            .map_err(|err| err.into_diagnostic_error(&self.inner.workspace.manifest))
     }
 
     /// Stop long-running child processes and wait for them to finish.
@@ -188,155 +201,217 @@ impl<'a> Runner<'a> {
             self.inner.executor.tick().await;
         }
     }
+
+    pub async fn reset(&self) {
+        self.wait_for_long_running_tasks().await;
+        *self.state.lock() = None;
+    }
 }
 
 impl<'a> Inner<'a> {
-    fn get_build_spec(&self, target: &Absolute<Path>) -> Result<TaskSpec<'a>, Error> {
-        let recipe_match = self.workspace.manifest.match_build_recipe(target)?;
-        Ok(if let Some(recipe_match) = recipe_match {
-            TaskSpec::Recipe(RecipeMatch::Build(recipe_match))
-        } else {
-            TaskSpec::CheckExists(target.to_owned())
-        })
-    }
-
-    fn get_build_spec_relaxed(&self, target: &Absolute<Path>) -> Result<TaskSpec<'a>, Error> {
-        let recipe_match = self.workspace.manifest.match_build_recipe(target)?;
-        Ok(if let Some(recipe_match) = recipe_match {
-            TaskSpec::Recipe(RecipeMatch::Build(recipe_match))
-        } else {
-            TaskSpec::CheckExistsRelaxed(target.to_owned())
-        })
-    }
-
-    fn get_depfile_build_spec(&self, target: &Absolute<Path>) -> Result<DepfileSpec<'a>, Error> {
-        let Some(recipe_match) = self.workspace.manifest.match_build_recipe(target)? else {
-            return Ok(DepfileSpec::ImplicitlyGenerated(target.to_owned()));
-        };
-        Ok(DepfileSpec::Recipe(recipe_match))
-    }
-
-    fn get_command_spec(&self, target: &str) -> Result<TaskSpec<'a>, Error> {
-        let recipe_match = self
-            .workspace
-            .manifest
-            .match_task_recipe(target)
-            .ok_or_else(|| Error::NoRuleToBuildTarget(target.to_owned()))?;
-        Ok(TaskSpec::Recipe(RecipeMatch::Task(recipe_match)))
-    }
-
-    fn get_build_or_command_spec(&self, target: &str) -> Result<TaskSpec<'a>, Error> {
-        let task_recipe_match = self.workspace.manifest.match_task_recipe(target);
-
-        if let Ok(path) = werk_fs::Path::new(target) {
-            let path = path
-                .absolutize(werk_fs::Path::ROOT)
-                .map_err(|err| Error::InvalidTargetPath(path.to_string(), err))?;
-            if let Some(build_recipe_match) = self.workspace.manifest.match_build_recipe(&path)? {
-                if let Some(task_recipe) = task_recipe_match {
-                    return Err(AmbiguousPatternError {
-                        pattern1: task_recipe.span.file.span(task_recipe.ast.name.span),
-                        pattern2: build_recipe_match.recipe.pattern.span,
-                        path: path.to_string(),
-                    }
-                    .into());
-                }
-
-                return Ok(TaskSpec::Recipe(RecipeMatch::Build(build_recipe_match)));
-            } else if task_recipe_match.is_none() {
-                return Ok(TaskSpec::CheckExists(path.into_owned()));
-            }
-        }
-
-        match task_recipe_match {
-            Some(task_recipe_match) => Ok(TaskSpec::Recipe(RecipeMatch::Task(task_recipe_match))),
-            None => Err(Error::NoRuleToBuildTarget(target.to_owned())),
-        }
-    }
-
-    /// Build the task, coordinating dependencies and rebuilds. The `invoker`
-    /// is the chain of dependencies that triggered this build, not including
-    /// this task.
+    /// Build the task, waiting for dependencies and signaling dependents.
     async fn run_task(
         self: Arc<Self>,
+        cancel: cancel::Receiver,
         spec: TaskSpec<'a>,
-        dep_chain: DepChain<'_>,
-    ) -> Result<BuildStatus, Error> {
-        enum Scheduling<'a> {
-            Done(Result<BuildStatus, Error>),
-            Pending(oneshot::Receiver<Result<BuildStatus, Error>>),
-            BuildNow(TaskSpec<'a>),
-        }
-
-        fn schedule<'a>(this: &RunnerState, spec: TaskSpec<'a>) -> Scheduling<'a> {
-            match this.tasks.lock().entry(spec.to_task_id()) {
-                Entry::Occupied(mut entry) => match entry.get_mut() {
-                    TaskStatus::Built(result) => Scheduling::Done(result.clone()),
-                    TaskStatus::Pending(waiters) => {
-                        let (send, recv) = oneshot::channel();
-                        waiters.push(send);
-                        Scheduling::Pending(recv)
+        task: EvaluatedTask,
+        wait_for_dependencies: Vec<broadcast_one::Receiver<Result<BuildStatus, Error>>>,
+        result_sender: broadcast_one::Sender<Result<BuildStatus, Error>>,
+    ) -> Result<(), Error> {
+        match task {
+            EvaluatedTask::Build(recipe) => {
+                match self
+                    .execute_build_recipe(spec, recipe, wait_for_dependencies, cancel)
+                    .await
+                {
+                    Ok(status) => {
+                        result_sender.send(Ok(status));
+                        Ok(())
                     }
-                },
-                Entry::Vacant(entry) => {
-                    entry.insert(TaskStatus::Pending(Vec::new()));
-                    Scheduling::BuildNow(spec)
+                    Err(err) => {
+                        result_sender.send(Err(err.clone()));
+                        Err(err)
+                    }
+                }
+            }
+            EvaluatedTask::Task(recipe) => {
+                match self
+                    .execute_task_recipe(spec, recipe, wait_for_dependencies, cancel)
+                    .await
+                {
+                    Ok(status) => {
+                        result_sender.send(Ok(status));
+                        Ok(())
+                    }
+                    Err(err) => {
+                        result_sender.send(Err(err.clone()));
+                        Err(err)
+                    }
+                }
+            }
+            EvaluatedTask::CheckExists => {
+                debug_assert!(wait_for_dependencies.is_empty());
+                match spec {
+                    TaskSpec::Recipe(_) => unreachable!(),
+                    TaskSpec::CheckExists(path) => {
+                        let result = self.check_exists(path.as_path())?;
+                        result_sender.send(Ok(result.clone()));
+                        return Ok(());
+                    }
+                    TaskSpec::CheckExistsRelaxed(path) => {
+                        let result = self.check_exists_relaxed(path.as_path());
+                        result_sender.send(Ok(result.clone()));
+                        return Ok(());
+                    }
                 }
             }
         }
+    }
 
-        fn finish_built(
-            this: &RunnerState,
-            task_id: TaskName,
-            result: &Result<BuildStatus, Error>,
-        ) {
-            // Notify dependents
-            let mut tasks = this.tasks.lock();
-            let status = tasks.get_mut(&task_id).expect("task not registered");
-            // Set the task status as complete.
-            let TaskStatus::Pending(waiters) =
-                std::mem::replace(status, TaskStatus::Built(result.clone()))
-            else {
-                panic!("Task built multiple times: {task_id}");
-            };
-            std::mem::drop(tasks);
+    async fn execute_task_recipe(
+        self: Arc<Self>,
+        spec: TaskSpec<'a>,
+        recipe: EvaluatedTaskRecipe,
+        wait_for_dependencies: Vec<broadcast_one::Receiver<Result<BuildStatus, Error>>>,
+        cancel: cancel::Receiver,
+    ) -> Result<BuildStatus, Error> {
+        let TaskSpec::Recipe(RecipeMatch::Task(recipe_match)) = spec else {
+            unreachable!()
+        };
+        let task_name = TaskName::Task(recipe_match.name);
 
-            // Notify dependents that the task completed.
-            for waiter in waiters {
-                _ = waiter.send(result.clone());
+        // Wait for dependencies.
+        for dep_status in wait_for_dependencies {
+            match dep_status.recv().await {
+                Ok(Ok(_)) => {}
+                Ok(Err(err)) => {
+                    return Err(Error::DependencyFailed(task_name, Arc::new(err.clone())));
+                }
+                Err(broadcast_one::Disconnected) => return Err(Error::Cancelled(task_name)),
             }
         }
 
-        let task_id = spec.to_task_id();
+        let outdated = Outdatedness::outdated(Reason::Rebuilt(task_name));
+        self.workspace
+            .render
+            .will_build(task_name, recipe.commands.len(), &outdated);
 
-        // Perform the circular dependency check regardless of how the task was
-        // triggered. Otherwise the check would depend on scheduling, which is
-        // nondeterministic.
-        if dep_chain.contains(task_id) {
-            let dep_chain = dep_chain.push(task_id);
-            return Err(Error::CircularDependency(dep_chain.collect()));
+        let result = if outdated.is_outdated() {
+            tracing::debug!("Rebuilding");
+            tracing::trace!("Reasons: {:?}", outdated);
+            self.execute_recipe_commands(
+                task_name,
+                cancel,
+                recipe.commands,
+                recipe.env,
+                true,
+                false,
+            )
+            .await
+            .map(|()| BuildStatus::Complete(task_name, outdated))
+        } else {
+            tracing::debug!("Up to date");
+            Ok(BuildStatus::Complete(task_name, outdated))
+        };
+
+        self.workspace.render.did_build(task_name, &result);
+        result
+    }
+
+    async fn execute_build_recipe(
+        self: Arc<Self>,
+        spec: TaskSpec<'a>,
+        recipe: Eval<EvaluatedBuildRecipe>,
+        wait_for_dependencies: Vec<broadcast_one::Receiver<Result<BuildStatus, Error>>>,
+        cancel: cancel::Receiver,
+    ) -> Result<BuildStatus, Error> {
+        let TaskSpec::Recipe(RecipeMatch::Build(recipe_match)) = spec else {
+            unreachable!()
+        };
+        let task_name = TaskName::Build(recipe_match.target_file);
+        let cache = self
+            .workspace
+            .take_build_target_cache(recipe_match.target_file);
+        let out_mtime = self
+            .workspace
+            .get_existing_output_file(recipe_match.target_file.as_path())?
+            .map(|entry| entry.metadata.mtime);
+
+        let mut outdatedness = OutdatednessTracker::new(
+            self.workspace,
+            cache.as_ref(),
+            recipe_match.recipe,
+            out_mtime,
+        );
+
+        // Include changes to the recipe or config variables as reasons for outdatedness.
+        outdatedness.did_use(recipe.used);
+
+        // Rebuild if the target does not exist.
+        if let Some(mtime) = out_mtime {
+            tracing::debug!("Output exists, mtime: {mtime:?}");
+        } else {
+            tracing::debug!("Output file missing, target is outdated");
+            outdatedness.missing(recipe_match.target_file);
         }
 
-        match schedule(&self.workspace.runner_state, spec) {
-            Scheduling::Done(result) => result,
-            Scheduling::Pending(receiver) => {
-                receiver.await.map_err(|_| Error::Cancelled(task_id))?
-            }
-            Scheduling::BuildNow(task_spec) => {
-                let cancel = self.cancel.receiver();
-                let result = self
-                    .clone()
-                    .rebuild_spec(task_id, task_spec, &cancel, dep_chain)
-                    .await;
-                finish_built(&self.workspace.runner_state, task_id, &result);
-                result
+        // Wait for dependencies.
+        let mut reasons = Vec::with_capacity(wait_for_dependencies.len());
+        for dep_status in wait_for_dependencies {
+            match dep_status.recv().await {
+                Ok(Ok(dep_status)) => {
+                    reasons.extend(dep_status.as_outdated_reason(out_mtime));
+                }
+                Ok(Err(err)) => {
+                    return Err(Error::DependencyFailed(task_name, Arc::new(err.clone())));
+                }
+                Err(broadcast_one::Disconnected) => return Err(Error::Cancelled(task_name)),
             }
         }
+
+        // Consider this target outdated if any of the dependencies were rebuilt.
+        outdatedness.add_reasons(reasons);
+
+        // Create the parent directory for the target file if it doesn't exist.
+        self.workspace
+            .create_output_parent_dirs(recipe_match.target_file.as_path())?;
+
+        let (outdated, new_cache) = outdatedness.finish();
+        self.workspace
+            .store_build_target_cache(recipe_match.target_file, new_cache);
+
+        let evaluated = recipe.value;
+        self.workspace
+            .render
+            .will_build(task_name, evaluated.commands.len(), &outdated);
+
+        let result = if outdated.is_outdated() {
+            tracing::debug!("Rebuilding");
+            tracing::trace!("Reasons: {:?}", outdated);
+            self.execute_recipe_commands(
+                task_name,
+                cancel,
+                evaluated.commands,
+                evaluated.env,
+                true,
+                false,
+            )
+            .await
+            .map(|()| BuildStatus::Complete(task_name, outdated))
+        } else {
+            tracing::debug!("Up to date");
+            Ok(BuildStatus::Complete(task_name, outdated))
+        };
+
+        self.workspace.render.did_build(task_name, &result);
+        result
     }
 
     fn check_exists(&self, path: &Absolute<werk_fs::Path>) -> Result<BuildStatus, Error> {
         let Some(entry) = self.workspace.get_project_file(path) else {
-            return Err(Error::NoRuleToBuildTarget(path.to_string()));
+            return Err(Error::Planner(PlannerError::NoRuleToBuildTarget(
+                path.to_string(),
+            )));
         };
         let mtime = entry.metadata.mtime;
         tracing::debug!("Check file mtime `{path}`: {mtime:?}");
@@ -368,272 +443,10 @@ impl<'a> Inner<'a> {
         }
     }
 
-    #[tracing::instrument(level = "debug", skip_all, fields(target_file))]
-    #[allow(clippy::too_many_lines)]
-    async fn execute_build_recipe(
-        self: &Arc<Self>,
-        task_id: TaskName,
-        recipe_match: BuildRecipeMatch<'_>,
-        cancel: &cancel::Receiver,
-        dep_chain: DepChainEntry<'_>,
-    ) -> Result<BuildStatus, Error> {
-        let mut scope = BuildRecipeScope::new(self.workspace, task_id, &recipe_match);
-        scope.set(
-            sym!("out"),
-            Eval::inherent(Value::from(recipe_match.target_file.to_string())),
-        );
-
-        let cache = self
-            .workspace
-            .take_build_target_cache(&recipe_match.target_file);
-        // Check the target's mtime.
-        let out_mtime = self
-            .workspace
-            .get_existing_output_file(&recipe_match.target_file)?
-            .map(|entry| entry.metadata.mtime);
-
-        let mut outdatedness = OutdatednessTracker::new(
-            self.workspace,
-            cache.as_ref(),
-            recipe_match.recipe,
-            out_mtime,
-        );
-
-        // Evaluate recipe body (`out` is available and in scope).
-        let evaluated = werk_eval::eval_build_recipe_statements(
-            &mut scope,
-            &recipe_match.recipe.ast.body.statements,
-            recipe_match.recipe.span.file,
-        )?;
-        outdatedness.did_use(evaluated.used);
-        let evaluated = evaluated.value;
-
-        let mut explicit_dependency_specs = evaluated
-            .explicit_dependencies
-            .iter()
-            .map(|s| self.get_build_or_command_spec(s))
-            .collect::<Result<Vec<_>, Error>>()?;
-
-        // Rebuild if the target does not exist.
-        if let Some(mtime) = out_mtime {
-            tracing::debug!("Output exists, mtime: {mtime:?}");
-        } else {
-            tracing::debug!("Output file missing, target is outdated");
-            outdatedness.missing(Absolute::symbolicate(&recipe_match.target_file));
-        }
-
-        let mut check_implicit_depfile_was_generated = None;
-        if let Some(depfile) = evaluated.depfile {
-            check_implicit_depfile_was_generated = self
-                .build_or_check_depfile(
-                    &mut scope,
-                    &depfile,
-                    &mut explicit_dependency_specs,
-                    dep_chain,
-                    out_mtime,
-                    &mut outdatedness,
-                )
-                .await?;
-        }
-
-        // Build dependencies!
-        let dep_reasons = self
-            .build_dependencies(explicit_dependency_specs, dep_chain, out_mtime)
-            .await?;
-        outdatedness.add_reasons(dep_reasons);
-
-        // Create the parent directory for the target file if it doesn't exist.
-        self.workspace
-            .create_output_parent_dirs(&recipe_match.target_file)?;
-
-        let (outdated, new_cache) = outdatedness.finish();
-        self.workspace
-            .store_build_target_cache(recipe_match.target_file.to_path_buf(), new_cache);
-
-        self.workspace
-            .render
-            .will_build(task_id, evaluated.commands.len(), &outdated);
-
-        let result = if outdated.is_outdated() {
-            tracing::debug!("Rebuilding");
-            tracing::trace!("Reasons: {:?}", outdated);
-            self.execute_recipe_commands(
-                task_id,
-                cancel,
-                evaluated.commands,
-                evaluated.env,
-                true,
-                false,
-            )
-            .await
-            .map(|()| BuildStatus::Complete(task_id, outdated))
-        } else {
-            tracing::debug!("Up to date");
-            Ok(BuildStatus::Complete(task_id, outdated))
-        };
-
-        // Check if the implicit depfile was actually generated, and emit a warning if not.
-        if let Some(ref implicit_depfile_path) = check_implicit_depfile_was_generated {
-            if !self.workspace.io.is_dry_run() {
-                if let Ok(None) | Err(_) = self
-                    .workspace
-                    .get_existing_output_file(implicit_depfile_path)
-                {
-                    self.workspace.render.warning(
-                        Some(task_id),
-                        &Warning::DepfileNotGenerated(
-                            recipe_match.recipe.pattern.span,
-                            self.workspace
-                                .get_output_file_path(implicit_depfile_path)
-                                .unwrap(),
-                        ),
-                    );
-                }
-            }
-        }
-
-        self.workspace.render.did_build(task_id, &result);
-        result
-    }
-
-    async fn build_or_check_depfile(
-        self: &Arc<Self>,
-        scope: &mut BuildRecipeScope<'_>,
-        depfile: &StringValue,
-        explicit_dependency_specs: &mut Vec<TaskSpec<'a>>,
-        dep_chain: DepChainEntry<'_>,
-        out_mtime: Option<SystemTime>,
-        outdatedness: &mut OutdatednessTracker<'_>,
-    ) -> Result<Option<Absolute<werk_fs::PathBuf>>, Error> {
-        let mut check_implicit_depfile_was_generated = None;
-
-        let depfile_path = werk_fs::Path::new(depfile)
-            .and_then(|p| p.absolutize(werk_fs::Path::ROOT))
-            .map_err(|err| Error::InvalidTargetPath(depfile.string.clone(), err))?;
-        let dep = self.get_depfile_build_spec(&depfile_path)?;
-
-        // Make the `depfile` variable available to the recipe body.
-        scope.set(
-            sym!("depfile"),
-            Eval::inherent(Value::String(depfile.clone())),
-        );
-
-        match dep {
-            DepfileSpec::Recipe(depfile_recipe_match_data) => {
-                tracing::debug!(
-                    "Building depfile with recipe: {}",
-                    depfile_recipe_match_data.recipe.pattern
-                );
-                // Depfile is explicitly generated by a recipe - build it.
-                let dep_reasons = self
-                    .clone()
-                    .build_dependencies(
-                        vec![TaskSpec::Recipe(RecipeMatch::Build(
-                            depfile_recipe_match_data,
-                        ))],
-                        dep_chain,
-                        out_mtime,
-                    )
-                    .await?;
-                outdatedness.add_reasons(dep_reasons);
-            }
-            DepfileSpec::ImplicitlyGenerated(path_buf) => {
-                tracing::debug!("Assuming implicitly generated depfile");
-                check_implicit_depfile_was_generated = Some(path_buf);
-            }
-        }
-        let is_implicit_depfile = check_implicit_depfile_was_generated.is_some();
-
-        if let Some(depfile_entry) = self.workspace.get_existing_output_file(&depfile_path)? {
-            // The depfile was generated, either by a build recipe or by a
-            // previous run of this recipe. Parse it and add its
-            // dependencies!
-            tracing::debug!("Parsing depfile: {}", depfile_entry.path.display());
-            let depfile_contents = self.workspace.io.read_file(&depfile_entry.path)?;
-            let depfile = Depfile::parse(&depfile_contents)?;
-            for dep in &depfile.deps {
-                // Translate the filesystem path produced by the compiler into an
-                // abstract path within the workspace. Normally this will be a file
-                // inside the output directory.
-                let dep = dep.as_path().normalize()?;
-                let abstract_path = self
-                    .workspace
-                    .unresolve_path(&dep)
-                    .map_err(|err| Error::InvalidPathInDepfile(dep.display().to_string(), err))?;
-                tracing::debug!("Discovered depfile dependency: {abstract_path}");
-                explicit_dependency_specs.push(self.get_build_spec_relaxed(&abstract_path)?);
-            }
-        } else if is_implicit_depfile {
-            // The implicit depfile was not generated yet, in this run
-            // or a previous run. Add that as a reason to rebuild the
-            // main recipe. Note that this causes the main recipe to
-            // always be outdated if it fails to generate the depfile!
-            outdatedness.add_reason(Reason::Missing(Absolute::symbolicate(depfile_path)));
-        } else {
-            // If the depfile is generated by a rule, it is an error if that
-            // rule did not generate the depfile. If it is implicit, it's
-            // fine if it doesn't exist yet.
-            if !self.workspace.io.is_dry_run() {
-                return Err(Error::DepfileNotFound(
-                    depfile_path.into_owned().into_inner(),
-                ));
-            }
-        }
-
-        Ok(check_implicit_depfile_was_generated)
-    }
-
-    async fn execute_task_recipe(
-        self: &Arc<Self>,
-        task_id: TaskName,
-        recipe: &TaskRecipe,
-        cancel: &cancel::Receiver,
-        dep_chain: DepChainEntry<'_>,
-    ) -> Result<BuildStatus, Error> {
-        let mut scope = TaskRecipeScope::new(self.workspace, task_id);
-
-        // Evaluate dependencies (`out` is not available in commands).
-
-        let evaluated = werk_eval::eval_task_recipe_statements(
-            &mut scope,
-            &recipe.ast.body.statements,
-            recipe.span.file,
-        )?;
-        let dependency_specs = evaluated
-            .build
-            .iter()
-            .map(|s| self.get_build_or_command_spec(s))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        // Note: We don't care about the status of dependencies.
-        self.build_dependencies(dependency_specs, dep_chain, None)
-            .await?;
-
-        let outdated = Outdatedness::outdated(Reason::Rebuilt(task_id));
-        self.workspace
-            .render
-            .will_build(task_id, evaluated.commands.len(), &outdated);
-
-        let result = self
-            .execute_recipe_commands(
-                task_id,
-                cancel,
-                evaluated.commands,
-                evaluated.env,
-                false,
-                true,
-            )
-            .await
-            .map(|()| BuildStatus::Complete(task_id, outdated));
-
-        self.workspace.render.did_build(task_id, &result);
-        result
-    }
-
     async fn execute_recipe_commands(
         &self,
         task_id: TaskName,
-        cancel: &cancel::Receiver,
+        cancel: cancel::Receiver,
         run_commands: Vec<RunCommand>,
         mut env: Env,
         silent_by_default: bool,
@@ -645,12 +458,7 @@ impl<'a> Inner<'a> {
         }
 
         // Ensure that only the desired number of jobs are running.
-        let _limit_concurrency = self
-            .workspace
-            .runner_state
-            .concurrency_limit
-            .acquire()
-            .await;
+        let _limit_concurrency = self.concurrency_limit.acquire().await;
 
         if self.workspace.force_color {
             env.set_force_color();
@@ -675,7 +483,7 @@ impl<'a> Inner<'a> {
                         step,
                         num_steps,
                         forward_stdout,
-                        cancel,
+                        cancel.clone(),
                     )
                     .await?;
                 }
@@ -688,7 +496,7 @@ impl<'a> Inner<'a> {
                         step,
                         num_steps,
                         forward_stdout,
-                        cancel,
+                        cancel.clone(),
                     )?;
                 }
                 RunCommand::Write(path_buf, vec) => {
@@ -732,7 +540,7 @@ impl<'a> Inner<'a> {
             }
 
             if let Some(delay) = self.workspace.artificial_delay {
-                future::select(cancel, smol::Timer::after(delay)).await;
+                future::select(cancel.clone(), smol::Timer::after(delay)).await;
             }
         }
 
@@ -749,8 +557,10 @@ impl<'a> Inner<'a> {
         step: usize,
         num_steps: usize,
         forward_stdout: bool,
-        cancel: &cancel::Receiver,
+        cancel: cancel::Receiver,
     ) -> Result<(), Error> {
+        pin_mut!(cancel);
+
         self.workspace
             .render
             .will_execute(task_id, command_line, step, num_steps);
@@ -766,7 +576,7 @@ impl<'a> Inner<'a> {
         let mut reader = ChildLinesStream::new(&mut *child, true);
         let result = loop {
             let next = reader.next();
-            match future::select(cancel, next).await {
+            match future::select(cancel.as_mut(), next).await {
                 future::Either::Left((_canceled, _)) => {
                     _ = child.kill();
                     _ = reader.wait().await;
@@ -817,7 +627,7 @@ impl<'a> Inner<'a> {
         step: usize,
         num_steps: usize,
         forward_stdout: bool,
-        cancel: &cancel::Receiver,
+        cancel: cancel::Receiver,
     ) -> Result<(), Error> {
         self.workspace
             .render
@@ -831,14 +641,14 @@ impl<'a> Inner<'a> {
 
         let render = self.workspace.render.clone();
         let command_line = command_line.clone();
-        let cancel = cancel.clone();
 
         self.executor
             .spawn(async move {
+                pin_mut!(cancel);
                 let mut reader = ChildLinesStream::new(&mut *child, true);
                 let result = loop {
                     let next = reader.next();
-                    match future::select(&cancel, next).await {
+                    match future::select(cancel.as_mut(), next).await {
                         future::Either::Left((_canceled, _)) => {
                             render.message(
                                 Some(task_id),
@@ -929,111 +739,5 @@ impl<'a> Inner<'a> {
         }
 
         Ok(())
-    }
-
-    async fn build_dependencies(
-        self: &Arc<Self>,
-        mut dependencies: Vec<TaskSpec<'a>>,
-        dependent: DepChainEntry<'_>,
-        output_mtime: Option<SystemTime>,
-    ) -> Result<Vec<Reason>, Error> {
-        // Can't use raw `async fn` because of https://github.com/rust-lang/rust/issues/134101.
-        #[expect(clippy::manual_async_fn)]
-        fn build_multiple<'a>(
-            this: Arc<Inner<'a>>,
-            dependencies: Vec<TaskSpec<'a>>,
-            dependent: OwnedDependencyChain,
-            output_mtime: Option<SystemTime>,
-        ) -> impl Future<Output = Result<Vec<Reason>, Error>> + Send + 'a {
-            async move {
-                let mut tasks = Vec::with_capacity(dependencies.len());
-                for dep in dependencies {
-                    let parent = dependent.clone();
-                    let this2 = this.clone();
-                    let task = this
-                        .executor
-                        .spawn(async move { this2.run_task(dep, DepChain::Owned(&parent)).await });
-                    tasks.push(task);
-                }
-
-                let mut reasons = Vec::new();
-                let mut first_error = None;
-                for task in tasks.drain(..) {
-                    match task.await {
-                        Ok(status) => {
-                            if let Some(reason) = status.into_outdated_reason(output_mtime) {
-                                reasons.push(reason);
-                            }
-                        }
-                        Err(err) => {
-                            // Don't interrupt other tasks if one fails.
-                            first_error.get_or_insert(err);
-                        }
-                    }
-                }
-                if let Some(first_error) = first_error {
-                    Err(first_error)
-                } else {
-                    Ok(reasons)
-                }
-            }
-        }
-
-        if dependencies.len() == 1 {
-            let dependency = dependencies.pop().unwrap();
-            let this = self.clone();
-            // Boxing because of recursion.
-            Box::pin(async move {
-                this.run_task(dependency, DepChain::Ref(&dependent))
-                    .await
-                    .map(|status| {
-                        status
-                            .into_outdated_reason(output_mtime)
-                            .into_iter()
-                            .collect()
-                    })
-            })
-            .await
-        } else if !dependencies.is_empty() {
-            let parent = dependent.collect();
-            let this = self.clone();
-
-            // Boxing for recursion.
-            Box::pin(build_multiple(
-                this.clone(),
-                dependencies,
-                parent,
-                output_mtime,
-            ))
-            .await
-        } else {
-            Ok(vec![])
-        }
-    }
-
-    /// Unconditionally run the task if it is outdated.
-    async fn rebuild_spec(
-        self: &Arc<Self>,
-        task_id: TaskName,
-        spec: TaskSpec<'a>,
-        cancel: &cancel::Receiver,
-        dep_chain: DepChain<'_>,
-    ) -> Result<BuildStatus, Error> {
-        let dep_chain_entry = dep_chain.push(task_id);
-
-        match spec {
-            TaskSpec::Recipe(recipe) => match recipe {
-                RecipeMatch::Task(recipe) => {
-                    self.execute_task_recipe(task_id, recipe, cancel, dep_chain_entry)
-                        .await
-                }
-                RecipeMatch::Build(recipe_match) => {
-                    self.execute_build_recipe(task_id, recipe_match, cancel, dep_chain_entry)
-                        .await
-                }
-            },
-            TaskSpec::CheckExists(path) => self.check_exists(&path),
-            TaskSpec::CheckExistsRelaxed(path) => Ok(self.check_exists_relaxed(&path)),
-        }
     }
 }

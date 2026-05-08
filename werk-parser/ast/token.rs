@@ -7,7 +7,7 @@ use crate::{
     parser::{Input, PResult, Parse, Parser as _},
 };
 
-#[derive(Clone, Copy, Default, PartialEq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Token<const CHAR: char>(pub Offset);
 impl<const CHAR: char> Token<CHAR> {
     #[inline]

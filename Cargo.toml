@@ -1,7 +1,7 @@
 [workspace]
 members = [
     "tests",
-    "werk-cli",
+    "werk-cli", "werk-depfile",
     "werk-eval",
     "werk-fs",
     "werk-parser",
@@ -19,31 +19,36 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 ahash = "0.8.11"
+annotate-snippets = "0.12.10"
+anstream = "0.6.18"
+bitflags = "2.8.0"
+event-listener = "5.4.1"
+futures = "0.3.31"
+globset = "0.4.15"
+ignore = "0.4.23"
+indexmap = { version = "2.6.0", features = ["serde"] }
+literator = "0.3.0"
+parking_lot = "0.12.3"
+pin-project-lite = "0.2.17"
+regex = "1.11.1"
+regex-syntax = "0.8.5"
+rustc-stable-hash = "0.1.0"
+serde = { version = "1.0.215", features = ["derive"] }
+smol = "2.0.2"
+stringleton = { version = "0.2.1", features = ["serde"] }
+thiserror = "2.0"
+tinyvec = { version =  "1.11.0", features = ["alloc"] }
+toml_edit = "0.23.9"
+tracing = "0.1.40"
+werk-depfile.path = "werk-depfile"
+werk-eval.path = "werk-eval"
 werk-fs.path = "werk-fs"
 werk-parser.path = "werk-parser"
 werk-planner.path = "werk-planner"
 werk-runner.path = "werk-runner"
 werk-util.path = "werk-util"
-werk-eval.path = "werk-eval"
-winnow = "1.0.2"
-thiserror = "2.0"
-tracing = "0.1.40"
-indexmap = { version = "2.6.0", features = ["serde"] }
-parking_lot = "0.12.3"
-regex = "1.11.1"
-regex-syntax = "0.8.5"
-serde = { version = "1.0.215", features = ["derive"] }
-smol = "2.0.2"
-toml_edit = "0.23.9"
-futures = "0.3.31"
-annotate-snippets = "0.12.10"
-anstream = "0.6.18"
-stringleton = { version = "0.2.1", features = ["serde"] }
-bitflags = "2.8.0"
-rustc-stable-hash = "0.1.0"
-globset = "0.4.15"
 which = "8.0.0"
-ignore = "0.4.23"
+winnow = "1.0.2"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

@@ -1,9 +1,7 @@
 mod cache;
 mod defaults;
-pub mod depfile;
 mod error;
 mod io;
-mod manifest;
 mod outdatedness;
 mod render;
 mod runner;
@@ -12,7 +10,6 @@ mod workspace;
 pub use defaults::*;
 pub use error::*;
 pub use io::*;
-pub use manifest::*;
 pub use outdatedness::*;
 pub use render::*;
 pub use runner::*;
@@ -24,3 +21,9 @@ pub use which::Error as WhichError;
 pub use globset;
 
 stringleton::enable!(werk_eval);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Edition {
+    #[default]
+    V1,
+}

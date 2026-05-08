@@ -11,6 +11,7 @@ werk-runner.workspace = true
 werk-parser.workspace = true
 werk-fs.workspace = true
 werk-eval.workspace = true
+werk-planner.workspace = true
 anyhow = "1"
 parking_lot.workspace = true
 ahash.workspace = true

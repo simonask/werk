@@ -10,6 +10,7 @@ use std::{
 use parking_lot::Mutex;
 use werk_eval::{DirEntry, EvalError, Io as _, Metadata, ShellCommandLine, TaskName, Warning};
 use werk_fs::Absolute;
+use werk_planner::PlannerError;
 use werk_runner::{
     BuildStatus, Error, Outdatedness, WhichError, Workspace, WorkspaceSettings, globset,
 };
@@ -237,16 +238,16 @@ impl<'a> Test<'a> {
         TestBuilder::default().werkfile(source).build()
     }
 
-    pub fn create_workspace(
-        &mut self,
-    ) -> Result<&mut Workspace, Annotated<werk_runner::Error, &dyn DiagnosticSourceMap>> {
+    pub fn create_workspace(&mut self) -> Result<&mut Workspace, Annotated<werk_runner::Error>> {
         let ast = match werk_parser::parse_werk(self.source) {
             Ok(ast) => ast,
             Err(err) => {
-                return Err(Error::Eval(EvalError::Parse(werk_parser::ErrorInFile {
-                    file: DiagnosticFileId(0),
-                    error: err,
-                }))
+                return Err(Error::Planner(PlannerError::Evaluation(EvalError::Parse(
+                    werk_parser::ErrorInFile {
+                        file: DiagnosticFileId(0),
+                        error: err,
+                    },
+                )))
                 .into_diagnostic_error(&*self as _));
             }
         };
@@ -274,18 +275,19 @@ impl<'a> Test<'a> {
         ) {
             Ok(_) => (),
             Err(err) => {
-                return Err(Error::Eval(err).into_diagnostic_error(&workspace.manifest as _));
+                return Err(Error::Planner(PlannerError::Evaluation(err))
+                    .into_diagnostic_error(&workspace.manifest as _));
             }
         }
 
         Ok(workspace)
     }
 
-    pub fn reload(
-        &mut self,
+    pub fn reload<'w>(
+        &'w mut self,
         source: &'a str,
         defines: &[(&str, &str)],
-    ) -> Result<&mut Workspace, werk_util::Annotated<Error, &dyn DiagnosticSourceMap>> {
+    ) -> Result<&'w mut Workspace, werk_util::Annotated<'w, Error>> {
         self.source = source;
         self.defines = defines
             .iter()

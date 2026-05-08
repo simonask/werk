@@ -1,4 +1,4 @@
-use std::hash::Hash as _;
+use std::hash::Hash;
 
 use werk_util::{SemanticHash, Span, Spanned, hash_is_semantic};
 
@@ -13,7 +13,7 @@ use stringleton::Symbol;
 
 /// Whitespace and comments within statements and expressions (not doc
 /// comments).
-#[derive(Default, PartialEq, Clone, Copy)]
+#[derive(Default, PartialEq, Clone, Copy, Eq, Hash)]
 #[must_use]
 pub struct Whitespace(pub Span);
 
@@ -34,19 +34,27 @@ pub struct Trailing<T> {
     pub token: Option<T>,
 }
 
-impl<const CHAR: char> PartialEq for Trailing<token::Token<CHAR>> {
+impl<T: PartialEq + Spanned> PartialEq for Trailing<T> {
     fn eq(&self, other: &Self) -> bool {
         self.ws == other.ws
-            && match (self.token, other.token) {
+            && match (self.token.as_ref(), other.token.as_ref()) {
                 (None, None) => true,
                 // If the left-hand side does not have a token, but the
                 // whitespace is ignored, consider self.token as ignored also.
-                (None, Some(rhs)) => self.ws.0.is_ignored() || rhs.0.is_ignored(),
+                (None, Some(rhs)) => self.ws.0.is_ignored() || rhs.span().is_ignored(),
                 // If the right-hand side does not have a token, but the
                 // whitespace is ignored, consider other.token as ignored also.
-                (Some(lhs), None) => other.ws.0.is_ignored() || lhs.0.is_ignored(),
+                (Some(lhs), None) => other.ws.0.is_ignored() || lhs.span().is_ignored(),
                 (Some(lhs), Some(rhs)) => lhs == rhs,
             }
+    }
+}
+
+impl<T: Eq + Spanned> Eq for Trailing<T> {}
+
+impl<T: Hash> Hash for Trailing<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.token.hash(state);
     }
 }
 
@@ -229,7 +237,7 @@ impl Spanned for ConfigBool {
     }
 }
 
-#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct Ident {
     #[serde(skip, default)]
@@ -338,7 +346,7 @@ impl SemanticHash for BuildRecipe {
 }
 
 /// A `{...}` block.
-#[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct Body<T> {
     #[serde(skip, default)]
@@ -363,7 +371,7 @@ impl<T: SemanticHash> SemanticHash for Body<T> {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct BodyStmt<T> {
     #[serde(skip, default)]

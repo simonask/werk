@@ -1,6 +1,7 @@
 use tests::mock_io::*;
 use werk_eval::{EvalError, ShellCommandLine};
 use werk_parser::parser::{Input, parse};
+use werk_planner::PlannerError;
 use werk_runner::Error;
 use werk_util::DiagnosticFileId;
 use winnow::Parser as _;
@@ -134,7 +135,7 @@ let baz = "<bar>"
     let mut test = Test::new(WERK).unwrap();
     match test.create_workspace().map_err(|err| err.error) {
         Ok(_) => panic!("expected error"),
-        Err(Error::Eval(EvalError::DoubleResolvePath(_))) => {}
+        Err(Error::Planner(PlannerError::Evaluation(EvalError::DoubleResolvePath(_)))) => {}
         Err(err) => panic!("unexpected error: {err}"),
     }
 }

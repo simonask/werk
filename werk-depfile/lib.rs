@@ -1,3 +1,5 @@
+//! Depfile parser for Werk
+
 use std::{path::PathBuf, sync::Arc};
 
 use winnow::{

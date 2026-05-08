@@ -34,7 +34,7 @@ fn end_of_keyword(input: &mut Input) -> PResult<()> {
 macro_rules! def_keyword {
     ($t:ident, $s:literal) => {
         #[doc = concat!("`", $s, "`")]
-        #[derive(Clone, Copy, Default, PartialEq)]
+        #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
         pub struct $t(pub Offset);
         impl Keyword for $t {
             const TOKEN: &'static str = $s;

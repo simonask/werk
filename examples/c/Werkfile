@@ -18,6 +18,7 @@ build "{profile}/%.o" {
     from "%.c"
     depfile "/{profile}/%.c.d"
     run "{cc} -c {cflags*} -o <out> <in>"
+    info "Built {out}"
 }
 
 # Build the depfile for an object file.
@@ -53,4 +54,3 @@ task clean {
         delete executable
     }
 }
-

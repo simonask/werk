@@ -1,4 +1,5 @@
 use annotate_snippets::{AnnotationKind, Snippet};
+use stringleton::Symbol;
 use werk_fs::Absolute;
 use werk_util::{DiagnosticSourceMap, DiagnosticSpan, Level};
 
@@ -26,9 +27,17 @@ pub enum Warning {
     OutputDirectoryChanged(Absolute<std::path::PathBuf>, Absolute<std::path::PathBuf>),
     #[error("one or more child processes did not stop when asked, and may be left as zombies")]
     ZombieChild,
+    #[error("shadowing global constant: `{1}`")]
+    ShadowingGlobalConstant(DiagnosticSpan, Symbol),
+    #[error("{1}")]
+    Custom(Option<DiagnosticSpan>, String),
 }
 
 impl Warning {
+    pub fn custom(span: Option<DiagnosticSpan>, message: impl ToString) -> Self {
+        Warning::Custom(span, message.to_string())
+    }
+
     #[must_use]
     pub fn id(&self) -> &'static str {
         match self {
@@ -43,6 +52,8 @@ impl Warning {
             Warning::UnusedDefine(_) => "W1000",
             Warning::OutputDirectoryChanged(..) => "W1001",
             Warning::ZombieChild => "W1002",
+            Warning::ShadowingGlobalConstant(..) => "W1003",
+            Warning::Custom(..) => "W9999",
         }
     }
 
@@ -56,7 +67,9 @@ impl Warning {
             | Warning::IgnoringPathOutsideOutputDirectory(span, _)
             | Warning::IgnoringFileNotFound(span, _)
             | Warning::DepfileNotGenerated(span, _)
-            | Warning::WarningExpression(span, _) => Some(*span),
+            | Warning::WarningExpression(span, _)
+            | Warning::ShadowingGlobalConstant(span, _) => Some(*span),
+            Warning::Custom(span, _) => *span,
             Warning::UnusedDefine(_)
             | Warning::OutputDirectoryChanged(..)
             | Warning::ZombieChild => None,
@@ -105,7 +118,7 @@ impl werk_util::AsDiagnostic for Warning {
                     .element(Level::HELP.message("maybe a `let` statement should be changed to a `config` statement?"))
             }
 
-            Warning::OutputDirectoryChanged(..) | Warning::ZombieChild => annotate_snippets::Group::with_title(title),
+            Warning::OutputDirectoryChanged(..) | Warning::ZombieChild | Warning::ShadowingGlobalConstant(..) | Warning::Custom(..) => annotate_snippets::Group::with_title(title),
         };
 
         vec![group]

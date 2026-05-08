@@ -1,5 +1,5 @@
 use macro_rules_attribute::apply;
-use tests::mock_io;
+use tests::{mock_io, plan_build_and_get_status};
 
 use mock_io::*;
 use stringleton::Symbol;
@@ -75,24 +75,18 @@ async fn test_outdated_env() -> anyhow::Result<()> {
     _ = tracing_subscriber::fmt::try_init();
 
     let mut test = Test::new(WERK)?;
-    let workspace = test.create_workspace().map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
-
-    let status = runner
-        .build_file(Path::new("env-dep")?)
-        .await
-        .map_err(anyhow_msg)?;
-
-    assert_eq!(
-        status,
-        BuildStatus::Complete(
-            TaskName::try_build("/env-dep").unwrap(),
-            Outdatedness::missing(Absolute::try_from("/env-dep")?)
-        )
-    );
-    // Write .werk-cache.
-    workspace.finalize().await.unwrap();
-    std::mem::drop(runner);
+    {
+        let workspace = test.create_workspace().map_err(anyhow_msg)?;
+        assert_eq!(
+            plan_build_and_get_status(workspace, "env-dep").await,
+            Ok(BuildStatus::Complete(
+                TaskName::try_build("/env-dep").unwrap(),
+                Outdatedness::missing(Absolute::try_from("/env-dep")?)
+            ))
+        );
+        // Write .werk-cache.
+        workspace.finalize().await.unwrap();
+    }
 
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert!(test.did_read_env("PROFILE"));
@@ -122,19 +116,13 @@ async fn test_outdated_env() -> anyhow::Result<()> {
 
     // Initialize a new workspace.
     let workspace = test.create_workspace().map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
-
-    let status = runner
-        .build_file(Path::new("env-dep")?)
-        .await
-        .map_err(anyhow_msg)?;
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert_eq!(
-        status,
-        BuildStatus::Complete(
+        plan_build_and_get_status(workspace, "env-dep").await,
+        Ok(BuildStatus::Complete(
             TaskName::try_build("/env-dep").unwrap(),
             Outdatedness::new([Reason::Env(Symbol::from("PROFILE")),])
-        )
+        ))
     );
 
     Ok(())
@@ -146,23 +134,15 @@ async fn test_outdated_which() -> anyhow::Result<()> {
 
     let mut test = Test::new(WERK)?;
     let workspace = test.create_workspace().map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
-
-    let status = runner
-        .build_file(Path::new("which-dep")?)
-        .await
-        .map_err(anyhow_msg)?;
-
     assert_eq!(
-        status,
-        BuildStatus::Complete(
+        plan_build_and_get_status(workspace, "which-dep").await,
+        Ok(BuildStatus::Complete(
             TaskName::try_build("/which-dep").unwrap(),
             Outdatedness::missing(Absolute::try_from("/which-dep")?)
-        )
+        ))
     );
     // Write .werk-cache.
     workspace.finalize().await.unwrap();
-    std::mem::drop(runner);
 
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert!(test.did_which("clang"));
@@ -192,13 +172,7 @@ async fn test_outdated_which() -> anyhow::Result<()> {
 
     // Initialize a new workspace.
     let workspace = test.create_workspace().map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
-
-    let status = runner
-        .build_file(Path::new("which-dep")?)
-        .await
-        .map_err(anyhow_msg)?;
-    std::mem::drop(runner);
+    let status = plan_build_and_get_status(workspace, "which-dep").await;
 
     assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("path/to/clang"),
@@ -208,13 +182,13 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert_eq!(
         status,
-        BuildStatus::Complete(
+        Ok(BuildStatus::Complete(
             TaskName::try_build("/which-dep").unwrap(),
             Outdatedness::new([
                 Reason::missing(Absolute::try_from("/which-dep")?),
                 Reason::Which(Symbol::from("clang"))
             ])
-        )
+        ))
     );
 
     Ok(())
@@ -226,23 +200,15 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
 
     let mut test = Test::new(WERK)?;
     let workspace = test.create_workspace().map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
-
-    let status = runner
-        .build_file(Path::new("which-dep")?)
-        .await
-        .map_err(anyhow_msg)?;
-
     assert_eq!(
-        status,
-        BuildStatus::Complete(
+        plan_build_and_get_status(workspace, "which-dep").await,
+        Ok(BuildStatus::Complete(
             TaskName::try_build("/which-dep").unwrap(),
             Outdatedness::new([Reason::missing(Absolute::try_from("/which-dep")?),])
-        )
+        ))
     );
     // Write .werk-cache.
     workspace.finalize().await.unwrap();
-    std::mem::drop(runner);
 
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert!(test.did_which("clang"));
@@ -264,13 +230,7 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     // Initialize a new workspace.
     test.reload(WERK_RECIPE_CHANGED, &[]).map_err(anyhow_msg)?;
     let workspace = test.create_workspace().map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
-
-    let status = runner
-        .build_file(Path::new("which-dep")?)
-        .await
-        .map_err(anyhow_msg)?;
-    std::mem::drop(runner);
+    let status = plan_build_and_get_status(workspace, "which-dep").await;
 
     assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
@@ -283,13 +243,13 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert_eq!(
         status,
-        BuildStatus::Complete(
+        Ok(BuildStatus::Complete(
             TaskName::try_build("/which-dep").unwrap(),
             Outdatedness::new([
                 Reason::missing(Absolute::try_from("/which-dep")?),
                 Reason::RecipeChanged
             ])
-        )
+        ))
     );
 
     Ok(())
@@ -304,23 +264,18 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     test.set_workspace_file(&["b.c"], "int main() { return 0; }\n")
         .unwrap();
     let workspace = test.create_workspace().map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
 
-    let status = runner
-        .build_file(Path::new("glob-dep")?)
-        .await
-        .map_err(anyhow_msg)?;
+    let status = plan_build_and_get_status(workspace, "glob-dep").await;
 
     assert_eq!(
         status,
-        BuildStatus::Complete(
+        Ok(BuildStatus::Complete(
             TaskName::try_build("/glob-dep").unwrap(),
             Outdatedness::new([Reason::missing(Absolute::try_from("/glob-dep")?),])
-        )
+        ))
     );
     // Write .werk-cache.
     workspace.finalize().await.unwrap();
-    std::mem::drop(runner);
 
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert!(test.did_which("clang"));
@@ -343,13 +298,7 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
 
     // Initialize a new workspace.
     let workspace = test.create_workspace().map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
-
-    let status = runner
-        .build_file(Path::new("glob-dep")?)
-        .await
-        .map_err(anyhow_msg)?;
-    std::mem::drop(runner);
+    let status = plan_build_and_get_status(workspace, "glob-dep").await;
 
     assert!(test.did_run_during_build(&ShellCommandLine {
         program: program_path("clang"),
@@ -359,13 +308,13 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert_eq!(
         status,
-        BuildStatus::Complete(
+        Ok(BuildStatus::Complete(
             TaskName::try_build("/glob-dep").unwrap(),
             Outdatedness::new([
                 Reason::missing(Absolute::try_from("/glob-dep")?),
                 Reason::Glob(Symbol::from("/*.c"))
             ])
-        )
+        ))
     );
 
     Ok(())
@@ -377,23 +326,17 @@ async fn test_outdated_define() -> anyhow::Result<()> {
 
     let mut test = Test::new(WERK)?;
     let workspace = test.create_workspace().map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
-
-    let status = runner
-        .build_file(Path::new("env-dep")?)
-        .await
-        .map_err(anyhow_msg)?;
+    let status = plan_build_and_get_status(workspace, "env-dep").await;
 
     assert_eq!(
         status,
-        BuildStatus::Complete(
+        Ok(BuildStatus::Complete(
             TaskName::try_build("/env-dep").unwrap(),
             Outdatedness::new([Reason::missing(Absolute::try_from("/env-dep")?),])
-        )
+        ))
     );
     // Write .werk-cache.
     workspace.finalize().await.unwrap();
-    std::mem::drop(runner);
 
     // println!("oplog = {:#?}", &*io.oplog.lock());
     assert!(test.did_read_env("PROFILE"));
@@ -423,21 +366,16 @@ async fn test_outdated_define() -> anyhow::Result<()> {
     let workspace = test
         .reload(WERK, &[("profile", "release")])
         .map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
-    let status = runner
-        .build_file(Path::new("env-dep")?)
-        .await
-        .map_err(anyhow_msg)?;
+    let status = plan_build_and_get_status(workspace, "env-dep").await;
     assert_eq!(
         status,
-        BuildStatus::Complete(
+        Ok(BuildStatus::Complete(
             TaskName::build(Absolute::try_from("/env-dep").unwrap()),
             Outdatedness::new([Reason::Define(Symbol::from("profile")),])
-        )
+        ))
     );
     // Write .werk-cache.
     workspace.finalize().await.unwrap();
-    std::mem::drop(runner);
 
     // Because the variable was overridden, the expression should not be evaluated.
     assert!(!test.did_read_env("PROFILE"));
@@ -447,17 +385,13 @@ async fn test_outdated_define() -> anyhow::Result<()> {
     let workspace = test
         .reload(WERK, &[("profile", "release")])
         .map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
-    let status = runner
-        .build_file(Path::new("env-dep")?)
-        .await
-        .map_err(anyhow_msg)?;
+    let status = plan_build_and_get_status(workspace, "env-dep").await;
     assert_eq!(
         status,
-        BuildStatus::Complete(
+        Ok(BuildStatus::Complete(
             TaskName::build(Absolute::try_from("/env-dep").unwrap()),
             Outdatedness::unchanged()
-        )
+        ))
     );
 
     Ok(())
@@ -469,41 +403,32 @@ async fn test_outdated_global_constant() -> anyhow::Result<()> {
 
     let mut test = Test::new(WERK_GLOBAL)?;
     let workspace = test.create_workspace().map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
-    let status = runner
-        .build_file(Path::new("output")?)
-        .await
-        .map_err(anyhow_msg)?;
+    let status = plan_build_and_get_status(workspace, "output").await;
 
     assert_eq!(
         status,
-        BuildStatus::Complete(
+        Ok(BuildStatus::Complete(
             TaskName::build(Absolute::try_from("/output").unwrap()),
             Outdatedness::new([Reason::Missing(Absolute::symbolicate(Absolute::try_from(
                 "/output"
             )?)),])
-        )
+        ))
     );
     workspace.finalize().await?;
-    std::mem::drop(runner);
 
     test.reload(WERK_GLOBAL_CHANGED, &[]).map_err(anyhow_msg)?;
     let workspace = test.create_workspace().map_err(anyhow_msg)?;
-    let runner = werk_runner::Runner::new(workspace);
-    let status = runner
-        .build_file(Path::new("output")?)
-        .await
-        .map_err(anyhow_msg)?;
+    let status = plan_build_and_get_status(workspace, "output").await;
 
     assert_eq!(
         status,
-        BuildStatus::Complete(
+        Ok(BuildStatus::Complete(
             TaskName::build(Absolute::try_from("/output").unwrap()),
             Outdatedness::new([
                 Reason::GlobalChanged(Symbol::from("arg")),
                 Reason::GlobalChanged(Symbol::from("args"))
             ])
-        )
+        ))
     );
 
     Ok(())
@@ -536,12 +461,8 @@ build "binary" {
     test.set_output_file(&["depfile.d"], &depfile).unwrap();
 
     let workspace = test.create_workspace().unwrap();
-    let runner = werk_runner::Runner::new(workspace);
-    let status = runner
-        .build_file(werk_fs::Path::new("binary").unwrap())
-        .await
-        .unwrap();
-    match status {
+    let status = plan_build_and_get_status(workspace, "binary").await;
+    match status.unwrap() {
         BuildStatus::Complete(_task_id, outdatedness) => {
             assert!(
                 outdatedness.is_unchanged(),
@@ -567,11 +488,8 @@ build "binary" {
     let mut test = Test::new(WERK_DEPFILE).unwrap();
     let mtime = test.io.tick();
     let workspace = test.create_workspace().unwrap();
-    let runner = werk_runner::Runner::new(workspace);
-    runner
-        .build_file(werk_fs::Path::new("binary").unwrap())
+    plan_build_and_get_status(workspace, "binary")
         .await
         .unwrap();
-    std::mem::drop(runner);
     test.did_touch(test.output_path(["binary"]), mtime);
 }
