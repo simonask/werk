@@ -4,6 +4,7 @@ use ahash::{HashMap, HashSet};
 use literator::Literator as _;
 use tinyvec::TinyVec;
 use werk_eval::{Eval, EvaluatedBuildRecipe, EvaluatedTaskRecipe};
+use werk_util::ellipsize::{self, ellipsize};
 
 use crate::{CircularDependencyError, TaskId, TaskSpec};
 
@@ -64,7 +65,7 @@ impl std::fmt::Display for EvaluatedTask {
 }
 
 impl<'a> TaskGraph<'a> {
-    #[must_use] 
+    #[must_use]
     pub fn num_tasks(&self) -> usize {
         self.task_specs.len()
     }
@@ -93,17 +94,17 @@ impl<'a> TaskGraph<'a> {
         insert_ordered(&mut self.dependents_lists[depends_on.index()], task);
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn get_task_spec(&self, task_id: TaskId) -> &TaskSpec<'a> {
         &self.task_specs[task_id.index()]
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn get_task_dependencies(&self, task_id: TaskId) -> &[TaskId] {
         &self.dependency_lists[task_id.index()]
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_evaluated(&self, task_id: TaskId) -> bool {
         self.evaluated[task_id.index()].is_some()
     }
@@ -200,11 +201,30 @@ impl<'a> TaskGraph<'a> {
 
         // Write nodes
         for (index, task) in self.task_specs.iter().enumerate() {
+            let commands = match self.evaluated[index].as_ref().unwrap() {
+                EvaluatedTask::Build(Eval {
+                    value: EvaluatedBuildRecipe { commands, .. },
+                    ..
+                })
+                | EvaluatedTask::Task(EvaluatedTaskRecipe { commands, .. }) => commands
+                    .iter()
+                    .format_each_with(|item, w| {
+                        ellipsize(
+                            w,
+                            &item.to_string(),
+                            ellipsize::StringBreakMode::GraphemeCluster,
+                            60,
+                        )
+                    })
+                    .suffix_each("<br align=\"left\"/>")
+                    .to_string(),
+                EvaluatedTask::CheckExists => String::from("check-exists"),
+            };
+
             writeln!(
                 out,
-                "Task{index} [labeljust=l label=<{{{}|<font point-size=\"10\">{}</font>}}> shape=record]",
-                task.name(),
-                self.evaluated[index].as_ref().unwrap()
+                "Task{index} [labeljust=l label=<{{{}|<font point-size=\"10\">{commands}</font>}}> shape=record]",
+                task.name()
             )?;
         }
 

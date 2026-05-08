@@ -1,6 +1,7 @@
 pub mod broadcast_one;
 pub mod cancel;
 mod diagnostic;
+pub mod ellipsize;
 pub mod hash128;
 mod io_error;
 mod os_str;

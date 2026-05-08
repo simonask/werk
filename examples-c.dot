@@ -4,13 +4,13 @@ rankdir="TB"
 node [fontname="Helvetica" labeljust=l nojustify=true]
 edge [fontname="Helvetica"]
 Task0 [labeljust=l label=<{build|<font point-size="10">info "Build done for profile \'debug\'"<br align="left"/></font>}> shape=record]
-Task1 [labeljust=l label=<{/debug/example|<font point-size="10">/usr/bin/clang -o /home/simon/code/werk/target/examples/c/debug/example /home/simon/code/werk/target/examples/c/debug/foo.o /home/simon/code/werk/target/examples/c/debug/main.o<br align="left"/></font>}> shape=record]
-Task2 [labeljust=l label=<{/debug/foo.o|<font point-size="10">/usr/bin/clang -c -g -O0 -fdiagnostics-color=always -fcolor-diagnostics -fansi-escape-codes -o /home/simon/code/werk/target/examples/c/debug/foo.o /home/simon/code/werk/examples/c/foo.c<br align="left"/>info "Built /debug/foo.o"<br align="left"/></font>}> shape=record]
-Task3 [labeljust=l label=<{/debug/main.o|<font point-size="10">/usr/bin/clang -c -g -O0 -fdiagnostics-color=always -fcolor-diagnostics -fansi-escape-codes -o /home/simon/code/werk/target/examples/c/debug/main.o /home/simon/code/werk/examples/c/main.c<br align="left"/>info "Built /debug/main.o"<br align="left"/></font>}> shape=record]
+Task1 [labeljust=l label=<{/debug/example|<font point-size="10">/usr/bin/clang -o /home/simon/code/werk/target/examples/c/d…<br align="left"/></font>}> shape=record]
+Task2 [labeljust=l label=<{/debug/foo.o|<font point-size="10">/usr/bin/clang -c -g -O0 -fdiagnostics-color=always -fcolor…<br align="left"/>info "Built /debug/foo.o"<br align="left"/></font>}> shape=record]
+Task3 [labeljust=l label=<{/debug/main.o|<font point-size="10">/usr/bin/clang -c -g -O0 -fdiagnostics-color=always -fcolor…<br align="left"/>info "Built /debug/main.o"<br align="left"/></font>}> shape=record]
 Task4 [labeljust=l label=<{/main.c|<font point-size="10">check-exists</font>}> shape=record]
-Task5 [labeljust=l label=<{/debug/main.c.d|<font point-size="10">/usr/bin/clang -MM -MT /home/simon/code/werk/examples/c/main.c -MF /home/simon/code/werk/target/examples/c/debug/main.c.d /home/simon/code/werk/examples/c/main.c<br align="left"/></font>}> shape=record]
+Task5 [labeljust=l label=<{/debug/main.c.d|<font point-size="10">/usr/bin/clang -MM -MT /home/simon/code/werk/examples/c/mai…<br align="left"/></font>}> shape=record]
 Task6 [labeljust=l label=<{/foo.c|<font point-size="10">check-exists</font>}> shape=record]
-Task7 [labeljust=l label=<{/debug/foo.c.d|<font point-size="10">/usr/bin/clang -MM -MT /home/simon/code/werk/examples/c/foo.c -MF /home/simon/code/werk/target/examples/c/debug/foo.c.d /home/simon/code/werk/examples/c/foo.c<br align="left"/></font>}> shape=record]
+Task7 [labeljust=l label=<{/debug/foo.c.d|<font point-size="10">/usr/bin/clang -MM -MT /home/simon/code/werk/examples/c/foo…<br align="left"/></font>}> shape=record]
 Task1 -> Task0
 Task2 -> Task1
 Task3 -> Task1

@@ -27,7 +27,7 @@ futures = "0.3.31"
 globset = "0.4.15"
 ignore = "0.4.23"
 indexmap = { version = "2.6.0", features = ["serde"] }
-literator = "0.3.0"
+literator = "0.4.0"
 parking_lot = "0.12.3"
 pin-project-lite = "0.2.17"
 regex = "1.11.1"

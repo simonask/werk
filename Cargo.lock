@@ -1268,9 +1268,9 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "literator"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66ca59e740186f914b9cbbe9f30066256379978bebbc085f79968c4a6c5d0775"
+checksum = "2d06dd66c5769aeb40ce5ad0240920146283f50c6fa72e3b62643106af7656fb"
 
 [[package]]
 name = "lock_api"
@@ -2197,6 +2197,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
+name = "unicode-segmentation"
+version = "1.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9629274872b2bfaf8d66f5f15725007f635594914870f65218920345aa11aa8c"
+
+[[package]]
 name = "unicode-width"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2538,6 +2544,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-stable-hash",
  "serde",
+ "unicode-segmentation",
 ]
 
 [[package]]

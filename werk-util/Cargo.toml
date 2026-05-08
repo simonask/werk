@@ -17,6 +17,7 @@ parking_lot.workspace = true
 pin-project-lite.workspace = true
 rustc-stable-hash.workspace = true
 serde.workspace = true
+unicode-segmentation = "1.13.2"
 
 [lints]
 workspace = true
