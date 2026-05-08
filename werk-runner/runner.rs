@@ -7,7 +7,7 @@ use werk_eval::{
     Env, Eval, EvaluatedBuildRecipe, EvaluatedTaskRecipe, RunCommand, ShellCommandLine, TaskName,
     Warning,
 };
-use werk_fs::{Absolute, Path, SymPath};
+use werk_fs::{Absolute, SymPath};
 use werk_planner::{EvaluatedTask, PlannerError, RecipeMatch, TaskGraph, TaskId, TaskSpec};
 use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, broadcast_one, cancel};
 
@@ -81,7 +81,7 @@ impl BuildStatus {
         match self {
             BuildStatus::Complete(task_id, outdatedness) => {
                 if outdatedness.is_outdated() {
-                    Some(Reason::Rebuilt(task_id.clone()))
+                    Some(Reason::Rebuilt(*task_id))
                 } else {
                     None
                 }
@@ -131,9 +131,7 @@ impl<'a> Runner<'a> {
 
     pub async fn run(&self, mut task_graph: TaskGraph<'a>) -> Result<(), Annotated<'a, Error>> {
         let mut run_state = self.state.lock();
-        if run_state.is_some() {
-            panic!("Runner is already running; reset it first");
-        }
+        assert!(!run_state.is_some(), "Runner is already running; reset it first");
         let mut tasks = Vec::with_capacity(task_graph.num_tasks());
         let mut status_senders = Vec::with_capacity(task_graph.num_tasks());
         let mut status_receivers = Vec::with_capacity(task_graph.num_tasks());
@@ -256,12 +254,12 @@ impl<'a> Inner<'a> {
                     TaskSpec::CheckExists(path) => {
                         let result = self.check_exists(path.as_path())?;
                         result_sender.send(Ok(result.clone()));
-                        return Ok(());
+                        Ok(())
                     }
                     TaskSpec::CheckExistsRelaxed(path) => {
                         let result = self.check_exists_relaxed(path.as_path());
                         result_sender.send(Ok(result.clone()));
-                        return Ok(());
+                        Ok(())
                     }
                 }
             }

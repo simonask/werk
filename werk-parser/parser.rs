@@ -99,10 +99,10 @@ pub fn parse_werk(source_code: &str) -> Result<ast::Root, Error> {
         .map_err(winnow::error::ParseError::into_inner)
 }
 
-pub fn parse_werk_with_diagnostics<'s>(
+pub fn parse_werk_with_diagnostics(
     file_id: DiagnosticFileId,
-    source_map: &'s dyn DiagnosticSourceMap,
-) -> Result<ast::Root, werk_util::Annotated<'s, crate::ErrorInFile<Error>>> {
+    source_map: &dyn DiagnosticSourceMap,
+) -> Result<ast::Root, werk_util::Annotated<'_, crate::ErrorInFile<Error>>> {
     let source = source_map
         .get_source(file_id)
         .expect("file ID not found in source map");

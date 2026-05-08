@@ -10,7 +10,7 @@ pub enum RecipeMatch<'a> {
     Build(BuildRecipeMatch<'a>),
 }
 
-impl<'a> PartialEq for RecipeMatch<'a> {
+impl PartialEq for RecipeMatch<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Task(l0), Self::Task(r0)) => std::ptr::eq(l0, r0),
@@ -20,13 +20,13 @@ impl<'a> PartialEq for RecipeMatch<'a> {
     }
 }
 
-impl<'a> Eq for RecipeMatch<'a> {}
+impl Eq for RecipeMatch<'_> {}
 
-impl<'a> std::hash::Hash for RecipeMatch<'a> {
+impl std::hash::Hash for RecipeMatch<'_> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         core::mem::discriminant(self).hash(state);
         match self {
-            RecipeMatch::Task(task_recipe) => (*task_recipe as *const TaskRecipe).hash(state),
+            RecipeMatch::Task(task_recipe) => std::ptr::from_ref::<TaskRecipe>(*task_recipe).hash(state),
             RecipeMatch::Build(build_recipe_match) => build_recipe_match.hash(state),
         }
     }
@@ -39,7 +39,7 @@ pub struct BuildRecipeMatch<'a> {
     pub target_file: Absolute<SymPath>,
 }
 
-impl<'a> PartialEq for BuildRecipeMatch<'a> {
+impl PartialEq for BuildRecipeMatch<'_> {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self.recipe, other.recipe)
             && self.match_data == other.match_data
@@ -47,11 +47,11 @@ impl<'a> PartialEq for BuildRecipeMatch<'a> {
     }
 }
 
-impl<'a> Eq for BuildRecipeMatch<'a> {}
+impl Eq for BuildRecipeMatch<'_> {}
 
-impl<'a> std::hash::Hash for BuildRecipeMatch<'a> {
+impl std::hash::Hash for BuildRecipeMatch<'_> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.recipe as *const BuildRecipe).hash(state);
+        std::ptr::from_ref::<BuildRecipe>(self.recipe).hash(state);
         self.match_data.hash(state);
         self.target_file.hash(state);
     }

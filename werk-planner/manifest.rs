@@ -130,8 +130,7 @@ impl Manifest {
                             pattern1: build_recipe_match.recipe.pattern.span,
                             pattern2: task.ast.name.span.with_file(task.span.file),
                             path: name.to_owned(),
-                        }
-                        .into());
+                        });
                     }
 
                     return Ok(Some(RecipeMatch::Build(build_recipe_match)));

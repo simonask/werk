@@ -64,6 +64,7 @@ impl std::fmt::Display for EvaluatedTask {
 }
 
 impl<'a> TaskGraph<'a> {
+    #[must_use] 
     pub fn num_tasks(&self) -> usize {
         self.task_specs.len()
     }
@@ -92,14 +93,17 @@ impl<'a> TaskGraph<'a> {
         insert_ordered(&mut self.dependents_lists[depends_on.index()], task);
     }
 
+    #[must_use] 
     pub fn get_task_spec(&self, task_id: TaskId) -> &TaskSpec<'a> {
         &self.task_specs[task_id.index()]
     }
 
+    #[must_use] 
     pub fn get_task_dependencies(&self, task_id: TaskId) -> &[TaskId] {
         &self.dependency_lists[task_id.index()]
     }
 
+    #[must_use] 
     pub fn is_evaluated(&self, task_id: TaskId) -> bool {
         self.evaluated[task_id.index()].is_some()
     }
@@ -141,7 +145,7 @@ impl<'a> TaskGraph<'a> {
         for (index, dependencies) in self.dependency_lists.iter().enumerate() {
             let task_id = TaskId::from_index(index);
             stack.push(task_id);
-            self.check_circular_dependency(task_id, &dependencies, &mut stack, &mut checked)?;
+            self.check_circular_dependency(task_id, dependencies, &mut stack, &mut checked)?;
             stack.pop();
         }
 

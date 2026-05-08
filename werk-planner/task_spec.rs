@@ -18,7 +18,8 @@ pub enum TaskSpec<'a> {
     CheckExistsRelaxed(Absolute<werk_fs::SymPath>),
 }
 
-impl<'a> TaskSpec<'a> {
+impl TaskSpec<'_> {
+    #[must_use] 
     pub fn name(&self) -> TaskName {
         match self {
             TaskSpec::Recipe(recipe_match) => match recipe_match {

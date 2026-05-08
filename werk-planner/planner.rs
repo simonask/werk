@@ -21,6 +21,7 @@ pub struct Planner<'a> {
 }
 
 impl<'a> Planner<'a> {
+    #[must_use] 
     pub fn new(manifest: &'a Manifest) -> Self {
         Self {
             graph: TaskGraph::default(),
@@ -111,14 +112,14 @@ impl<'a> Planner<'a> {
 
         let mut tentative_dependency_scratch = HashSet::default();
         for (task_id, potential_dependency) in self.tentative_dependencies.drain(..) {
-            if !self.graph.would_cause_circular_dependency(
+            if self.graph.would_cause_circular_dependency(
                 task_id,
                 potential_dependency,
                 &mut tentative_dependency_scratch,
             ) {
-                self.graph.add_dependency(task_id, potential_dependency);
-            } else {
                 global_scope.warning(&Warning::custom(None, format_args!("Ignoring dependency discovered via depfile, because it would cause a circular dependency: {} -> {}", self.graph.get_task_spec(task_id).name(), self.graph.get_task_spec(potential_dependency).name())));
+            } else {
+                self.graph.add_dependency(task_id, potential_dependency);
             }
         }
 
@@ -193,7 +194,7 @@ impl<'a> Planner<'a> {
             self.evaluate_build_recipe_depfile(
                 task_id,
                 depfile_span.with_file(build_recipe_match.recipe.span.file),
-                &depfile,
+                depfile,
                 &scope,
             )?;
         }
@@ -324,7 +325,7 @@ impl<'a> Planner<'a> {
                     Some(span),
                     format_args!("ambiguous dependency '{dep_path}' in depfile: {err}; ignoring"),
                 )),
-            };
+            }
         }
         Ok(())
     }

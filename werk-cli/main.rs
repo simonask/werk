@@ -13,9 +13,9 @@ use owo_colors::OwoColorize as _;
 use render::{AutoStream, ColorOutputKind};
 use werk_eval::Warning;
 use werk_fs::{Absolute, Normalize as _, PathError};
-use werk_planner::{Manifest, Planner, TaskGraph};
-use werk_runner::{BuildStatus, Runner, Workspace, WorkspaceSettings};
-use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticSource, DiagnosticSourceMap};
+use werk_planner::{Planner, TaskGraph};
+use werk_runner::{Runner, Workspace, WorkspaceSettings};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticSource};
 
 shadow_rs::shadow!(build);
 

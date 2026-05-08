@@ -47,6 +47,7 @@ impl Error {
         Self::Custom(Arc::new(anyhow::Error::new(err)))
     }
 
+    #[must_use] 
     pub fn eval(err: werk_eval::EvalError) -> Self {
         Self::Planner(PlannerError::Evaluation(err))
     }

@@ -16,6 +16,7 @@ impl std::fmt::Display for Disconnected {
 }
 impl std::error::Error for Disconnected {}
 
+#[must_use] 
 pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
     let shared = Arc::new(Shared {
         event: Event::new(),
@@ -25,7 +26,7 @@ pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
         Sender {
             shared: ManuallyDrop::new(Arc::clone(&shared)),
         },
-        Receiver { shared: shared },
+        Receiver { shared },
     )
 }
 
@@ -36,9 +37,10 @@ pub struct Sender<T> {
 impl<T> Sender<T> {
     pub fn send(mut self, value: T) {
         self.finish(Ok(value));
-        std::mem::forget(self)
+        std::mem::forget(self);
     }
 
+    #[must_use] 
     pub fn receiver(&self) -> Receiver<T> {
         Receiver {
             shared: Arc::clone(&self.shared),
@@ -78,6 +80,7 @@ impl<T> Clone for Receiver<T> {
 }
 
 impl<T> Receiver<T> {
+    #[must_use] 
     pub fn recv(&self) -> RecvFut<'_, T> {
         RecvFut {
             shared: &self.shared,
@@ -85,6 +88,7 @@ impl<T> Receiver<T> {
         }
     }
 
+    #[must_use] 
     pub fn try_recv(&self) -> Option<Result<&T, Disconnected>> {
         self.shared.data.get().map(|result| match result {
             Ok(data) => Ok(data),
@@ -114,7 +118,7 @@ impl<'a, T> Future for RecvFut<'a, T> {
 
         let this = self.project();
         match this.listener.poll(cx) {
-            Poll::Ready(_) => match this.shared.data.get() {
+            Poll::Ready(()) => match this.shared.data.get() {
                 Some(Ok(data)) => Poll::Ready(Ok(data)),
                 Some(Err(Disconnected)) => Poll::Ready(Err(Disconnected)),
                 None => unreachable!(),
