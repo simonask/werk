@@ -189,10 +189,15 @@ impl<'a> TaskGraph<'a> {
         Ok(())
     }
 
-    pub fn to_dot<W: std::fmt::Write>(&self, out: &mut W) -> std::fmt::Result {
+    pub fn to_dot<W: std::fmt::Write>(
+        &self,
+        out: &mut W,
+        settings: &TaskGraphToDotSettings,
+    ) -> std::fmt::Result {
         writeln!(out, "digraph {{")?;
         writeln!(out, "label=\"Werk Plan\"")?;
         writeln!(out, r#"rankdir="TB""#)?;
+        writeln!(out, "graph [overlap=false]")?;
         writeln!(
             out,
             r#"node [fontname="Helvetica" labeljust=l nojustify=true]"#
@@ -218,7 +223,18 @@ impl<'a> TaskGraph<'a> {
                     })
                     .suffix_each("<br align=\"left\"/>")
                     .to_string(),
-                EvaluatedTask::CheckExists => String::from("check-exists"),
+                EvaluatedTask::CheckExists => {
+                    if settings.all_files {
+                        String::from("check-exists")
+                    } else {
+                        continue;
+                    }
+                }
+            };
+            let commands = if commands.is_empty() {
+                String::from("(no commands)")
+            } else {
+                commands
             };
 
             writeln!(
@@ -230,11 +246,32 @@ impl<'a> TaskGraph<'a> {
 
         // Write edges
         for (index, dependencies) in self.dependency_lists.iter().enumerate() {
+            if !settings.all_files
+                && self.evaluated[index]
+                    .as_ref()
+                    .map_or(false, |t| matches!(t, EvaluatedTask::CheckExists))
+            {
+                continue;
+            }
+
             for &dep in dependencies {
+                if !settings.all_files
+                    && self.evaluated[dep.index()]
+                        .as_ref()
+                        .map_or(false, |dep| matches!(dep, EvaluatedTask::CheckExists))
+                {
+                    continue;
+                }
                 writeln!(out, "Task{} -> Task{}", dep.index(), index)?;
             }
         }
 
         writeln!(out, "}}")
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TaskGraphToDotSettings {
+    /// When true, includes "check-exists" tasks in the output.
+    pub all_files: bool,
 }

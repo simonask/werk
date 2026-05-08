@@ -13,7 +13,7 @@ use owo_colors::OwoColorize as _;
 use render::{AutoStream, ColorOutputKind};
 use werk_eval::Warning;
 use werk_fs::{Absolute, Normalize as _, PathError};
-use werk_planner::{Planner, TaskGraph};
+use werk_planner::{Planner, TaskGraph, TaskGraphToDotSettings};
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
 use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticSource};
 
@@ -69,6 +69,11 @@ pub struct OutputArgs {
     /// with `--dry-run` to inspect the plan without executing commands.
     #[clap(long)]
     pub dot: Option<std::path::PathBuf>,
+
+    /// Include input file targets in the DOT output (files whose existence is
+    /// checked). Warning: This can produce a very large graph.
+    #[clap(long)]
+    pub dot_include_all_files: bool,
 
     /// Enable debug logging to stdout.
     ///
@@ -304,7 +309,14 @@ async fn try_main(args: Args) -> Result<(), Error> {
 
         if let Some(dot) = args.output.dot.as_deref() {
             let mut dot_source = String::new();
-            task_graph.to_dot(&mut dot_source).unwrap();
+            task_graph
+                .to_dot(
+                    &mut dot_source,
+                    &TaskGraphToDotSettings {
+                        all_files: args.output.dot_include_all_files,
+                    },
+                )
+                .unwrap();
             let mut dot_file = std::fs::File::create(dot)?;
             dot_file.write_all(dot_source.as_bytes())?;
         }
