@@ -1,7 +1,6 @@
 use tests::mock_io::*;
 use werk_planner::Planner;
 use werk_runner::Runner;
-use werk_util::AsDiagnostic;
 
 fn strip_colors(s: &str) -> String {
     use std::io::Write as _;

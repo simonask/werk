@@ -238,7 +238,9 @@ impl<'a> Test<'a> {
         TestBuilder::default().werkfile(source).build()
     }
 
-    pub fn create_workspace(&mut self) -> Result<&mut Workspace, Annotated<'_, werk_runner::Error>> {
+    pub fn create_workspace<'b>(
+        &'b mut self,
+    ) -> Result<&'b mut Workspace, Annotated<'b, werk_runner::Error>> {
         let ast = match werk_parser::parse_werk(self.source) {
             Ok(ast) => ast,
             Err(err) => {

@@ -4,7 +4,7 @@ use tests::{mock_io, plan_build_and_get_status};
 use mock_io::*;
 use stringleton::Symbol;
 use werk_eval::{ShellCommandLine, TaskName};
-use werk_fs::{Absolute, Path};
+use werk_fs::Absolute;
 use werk_runner::{BuildStatus, Outdatedness, Reason};
 
 static WERK: &str = r#"
