@@ -46,6 +46,14 @@ Rust and Cargo installed.
        point it to the path to the `werk-vscode` directory within this
        repository.
 
+### Language Support for Zed
+
+* Clone this repository
+* Install the extension from `zed-werk`:
+  * From within Zed: Run "zed: install dev extension" and
+       point it to the path to the `zed-werk` directory within this
+       repository.
+
 ## Features and limitations
 
 See [Features and limitations](https://simonask.github.io/werk/features.html).
@@ -55,10 +63,10 @@ See [Features and limitations](https://simonask.github.io/werk/features.html).
 * `werk` will probably never be fastest.
     1. User friendliness is always higher priority.
     2. Reporting "no changes" quickly is specifically not a goal. Use Ninja if
-    this is important to you. Typically, `werk` is invoked when the user has
-    actually made changes.
+       this is important to you. Typically, `werk` is invoked when the user has
+       actually made changes.
     3. That said, `werk` does try to be reasonably fast, and is implemented in
-    Rust using best practices.
+       Rust using best practices.
 * `werk` will probably never support all use cases.
     1. It is designed to support the use cases that are important to me, the
        author.
