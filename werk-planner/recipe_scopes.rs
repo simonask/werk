@@ -1,7 +1,7 @@
 use stringleton::{Symbol, sym};
 use werk_eval::{
-    DirEntry, Eval, Io, LocalVariables, Lookup, LookupValue, Messenger, ResolvePathError,
-    ResolvePathMode, Scope, ScopeMut, TaskName, Value, Warning, default_global_constants,
+    Eval, GlobError, Io, LocalVariables, Lookup, LookupValue, Messenger, Scope, ScopeMut, TaskName,
+    Value, Warning, default_global_constants,
 };
 use werk_fs::{Absolute, PathError};
 
@@ -103,12 +103,8 @@ impl Scope for BuildRecipeScope<'_> {
         self.global_scope.env(variable_name)
     }
 
-    fn resolve_path(
-        &self,
-        path: &Absolute<werk_fs::Path>,
-        mode: ResolvePathMode,
-    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError> {
-        self.global_scope.resolve_path(path, mode)
+    fn resolve_path(&self, path: &Absolute<werk_fs::Path>) -> Absolute<std::path::PathBuf> {
+        self.global_scope.resolve_path(path)
     }
 
     fn unresolve_path(
@@ -118,14 +114,10 @@ impl Scope for BuildRecipeScope<'_> {
         self.global_scope.unresolve_path(path)
     }
 
-    fn get_input_file(&self, path: &Absolute<werk_fs::Path>) -> Option<DirEntry> {
-        self.global_scope.get_input_file(path)
-    }
-
     fn glob_workspace_files(
         &self,
         pattern_string: &str,
-    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, globset::Error> {
+    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, GlobError> {
         self.global_scope.glob_workspace_files(pattern_string)
     }
 
@@ -215,12 +207,8 @@ impl Scope for TaskRecipeScope<'_> {
         self.global_scope.env(variable_name)
     }
 
-    fn resolve_path(
-        &self,
-        path: &Absolute<werk_fs::Path>,
-        mode: ResolvePathMode,
-    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError> {
-        self.global_scope.resolve_path(path, mode)
+    fn resolve_path(&self, path: &Absolute<werk_fs::Path>) -> Absolute<std::path::PathBuf> {
+        self.global_scope.resolve_path(path)
     }
 
     fn unresolve_path(
@@ -230,14 +218,10 @@ impl Scope for TaskRecipeScope<'_> {
         self.global_scope.unresolve_path(path)
     }
 
-    fn get_input_file(&self, path: &Absolute<werk_fs::Path>) -> Option<DirEntry> {
-        self.global_scope.get_input_file(path)
-    }
-
     fn glob_workspace_files(
         &self,
         pattern_string: &str,
-    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, globset::Error> {
+    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, GlobError> {
         self.global_scope.glob_workspace_files(pattern_string)
     }
 

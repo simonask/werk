@@ -3,7 +3,7 @@ use std::collections::VecDeque;
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Clone, Copy, Debug, Default)]
-pub enum StringBreakMode {
+pub enum StringBreakMode<'a> {
     /// Breaks on sentence boundaries using unicode segmentation.
     Sentence,
     /// Breaks on word boundaries using unicode segmentation.
@@ -11,13 +11,16 @@ pub enum StringBreakMode {
     /// Breaks on grapheme cluster boundaries using unicode segmentation.
     #[default]
     GraphemeCluster,
+    /// Splits the string into substrings using the given pattern (calling
+    /// [`std::str::split`]).
+    SplitPattern(&'a str),
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub enum ListBreakMode {
+pub enum ListBreakMode<'a> {
     #[default]
     BetweenItems,
-    InsideItems(StringBreakMode),
+    InsideItems(StringBreakMode<'a>),
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -80,6 +83,7 @@ where
         StringBreakMode::Sentence => input.unicode_sentences().collect(),
         StringBreakMode::Word => input.unicode_words().collect(),
         StringBreakMode::GraphemeCluster => input.graphemes(true).collect(),
+        StringBreakMode::SplitPattern(pattern) => input.split(pattern).collect(),
     };
     let mut current_width = input.graphemes(true).count();
 
@@ -164,6 +168,151 @@ where
         UNICODE_ELLIPSIS,
         Location::End,
     )
+}
+
+/// Concatenates a list of items into a single string, with an ellipsis if the
+/// total width exceeds `max_length`.
+///
+/// The mode controls how sequences of graphemes are removed from the output.
+pub fn ellipsize_list<W, E>(
+    output: &mut W,
+    input: impl ExactSizeIterator<Item: std::fmt::Display>,
+    mode: ListBreakMode,
+    max_length: usize,
+    ellipsis: E,
+    location: Location,
+    joiner: &str,
+) -> std::fmt::Result
+where
+    W: std::fmt::Write,
+    E: Ellipsis,
+{
+    let joiner_width = joiner.graphemes(true).count();
+    let item_count = input.len();
+
+    if item_count == 0 || max_length == 0 {
+        return Ok(());
+    }
+
+    let items: Vec<String> = input.map(|item| item.to_string()).collect();
+
+    match mode {
+        ListBreakMode::BetweenItems => {
+            let widths: Vec<usize> = items.iter().map(|s| s.graphemes(true).count()).collect();
+            let mut item_widths_sum: usize = widths.iter().sum();
+
+            // Fast path: everything fits without truncation.
+            let no_ellipsis_width = item_widths_sum + joiner_width * (item_count - 1);
+            if no_ellipsis_width <= max_length {
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        output.write_str(joiner)?;
+                    }
+                    output.write_str(item)?;
+                }
+                return Ok(());
+            }
+
+            // Drop items (from the requested location) until the kept items plus
+            // the ellipsis — treated as an extra list element with a joiner on
+            // each side that has a neighbour — fit within max_length.
+            //
+            // Width formula: item_widths_sum + kept * joiner_width + e_width
+            //   kept == 0  →  just e_width (no joiners)
+            let mut indices: VecDeque<usize> = (0..item_count).collect();
+            let mut num_removed = 0usize;
+
+            while !indices.is_empty() {
+                let kept = indices.len();
+                let e_width = ellipsis.width_for_remaining_items(num_removed);
+                let total = item_widths_sum + kept * joiner_width + e_width;
+                if total <= max_length {
+                    break;
+                }
+                let removed_idx = match location {
+                    Location::Start => indices.pop_front().unwrap(),
+                    Location::Middle => {
+                        let mid = indices.len() / 2;
+                        indices.remove(mid).unwrap()
+                    }
+                    Location::End => indices.pop_back().unwrap(),
+                };
+                item_widths_sum -= widths[removed_idx];
+                num_removed += 1;
+            }
+
+            // Guard: the ellipsis alone won't fit either.
+            if ellipsis.width_for_remaining_items(num_removed) > max_length {
+                return Ok(());
+            }
+
+            // Write kept items with the ellipsis inserted at the right edge.
+            // The ellipsis is separated from its neighbours by the joiner, just
+            // like any other list element.
+            match location {
+                Location::Start => {
+                    ellipsis.write_ellipsis(output, num_removed)?;
+                    for &idx in &indices {
+                        output.write_str(joiner)?;
+                        output.write_str(&items[idx])?;
+                    }
+                }
+                Location::Middle => {
+                    if indices.is_empty() {
+                        ellipsis.write_ellipsis(output, num_removed)?;
+                    } else {
+                        let mid = indices.len() / 2;
+                        for (i, &idx) in indices.iter().enumerate() {
+                            if i > 0 {
+                                output.write_str(joiner)?;
+                            }
+                            if i == mid {
+                                ellipsis.write_ellipsis(output, num_removed)?;
+                                output.write_str(joiner)?;
+                            }
+                            output.write_str(&items[idx])?;
+                        }
+                    }
+                }
+                Location::End => {
+                    for (i, &idx) in indices.iter().enumerate() {
+                        if i > 0 {
+                            output.write_str(joiner)?;
+                        }
+                        output.write_str(&items[idx])?;
+                    }
+                    if !indices.is_empty() {
+                        output.write_str(joiner)?;
+                    }
+                    ellipsis.write_ellipsis(output, num_removed)?;
+                }
+            }
+            Ok(())
+        }
+        ListBreakMode::InsideItems(string_break_mode) => {
+            // Keep all items visible but truncate long ones individually.
+            // Budget the available width evenly across items after reserving
+            // space for the joiners between them.
+            let joiner_total = joiner_width * (item_count - 1);
+            let available = max_length.saturating_sub(joiner_total);
+            let budget_per_item = available / item_count;
+
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    output.write_str(joiner)?;
+                }
+                ellipsize_with(
+                    output,
+                    item,
+                    string_break_mode,
+                    budget_per_item,
+                    UNICODE_ELLIPSIS,
+                    location,
+                )?;
+            }
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -462,6 +611,186 @@ mod tests {
                 "abcdef".contains(grapheme),
                 "unknown grapheme {grapheme:?} in {out:?}",
             );
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // ellipsize_list — BetweenItems mode
+    // -------------------------------------------------------------------------
+
+    fn run_list<E>(
+        items: &[&str],
+        mode: ListBreakMode,
+        max_width: usize,
+        ellipsis: E,
+        location: Location,
+        joiner: &str,
+    ) -> String
+    where
+        E: Ellipsis,
+    {
+        let mut out = String::new();
+        ellipsize_list(
+            &mut out,
+            items.iter().copied(),
+            mode,
+            max_width,
+            ellipsis,
+            location,
+            joiner,
+        )
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn list_all_items_fit_written_verbatim() {
+        let out = run_list(
+            &["apple", "banana", "cherry"],
+            ListBreakMode::BetweenItems,
+            30,
+            UNICODE_ELLIPSIS,
+            Location::End,
+            ", ",
+        );
+        assert_eq!(out, "apple, banana, cherry");
+    }
+
+    #[test]
+    fn list_end_truncation_drops_trailing_items() {
+        // "apple, banana, cherry" = 21 graphemes; max=15 forces truncation.
+        let out = run_list(
+            &["apple", "banana", "cherry"],
+            ListBreakMode::BetweenItems,
+            15,
+            UNICODE_ELLIPSIS,
+            Location::End,
+            ", ",
+        );
+        assert!(graphemes_in(&out) <= 15, "{out:?} too wide");
+        assert!(out.ends_with(UNICODE_ELLIPSIS), "{out:?} missing ellipsis");
+        assert!(out.starts_with("apple"), "{out:?} wrong prefix");
+    }
+
+    #[test]
+    fn list_end_truncation_never_exceeds_max_width() {
+        let items = ["one", "two", "three", "four", "five"];
+        for max in 0..=40 {
+            let out = run_list(
+                &items,
+                ListBreakMode::BetweenItems,
+                max,
+                UNICODE_ELLIPSIS,
+                Location::End,
+                ", ",
+            );
+            assert!(
+                graphemes_in(&out) <= max,
+                "max={max}: {out:?} ({} graphemes)",
+                graphemes_in(&out)
+            );
+        }
+    }
+
+    #[test]
+    fn list_start_truncation_drops_leading_items() {
+        let out = run_list(
+            &["apple", "banana", "cherry"],
+            ListBreakMode::BetweenItems,
+            15,
+            UNICODE_ELLIPSIS,
+            Location::Start,
+            ", ",
+        );
+        assert!(graphemes_in(&out) <= 15, "{out:?} too wide");
+        assert!(
+            out.starts_with(UNICODE_ELLIPSIS),
+            "{out:?} missing leading ellipsis"
+        );
+        assert!(out.ends_with("cherry"), "{out:?} wrong suffix");
+    }
+
+    #[test]
+    fn list_middle_truncation_keeps_prefix_and_suffix() {
+        let out = run_list(
+            &["a", "b", "c", "d", "e"],
+            ListBreakMode::BetweenItems,
+            10,
+            UNICODE_ELLIPSIS,
+            Location::Middle,
+            ", ",
+        );
+        assert!(graphemes_in(&out) <= 10, "{out:?} too wide");
+        assert!(out.contains(UNICODE_ELLIPSIS), "{out:?} missing ellipsis");
+        assert!(out.starts_with('a'), "{out:?} missing prefix");
+        assert!(out.ends_with('e'), "{out:?} missing suffix");
+    }
+
+    #[test]
+    fn list_empty_input_yields_empty() {
+        let out = run_list(
+            &[],
+            ListBreakMode::BetweenItems,
+            20,
+            UNICODE_ELLIPSIS,
+            Location::End,
+            ", ",
+        );
+        assert_eq!(out, "");
+    }
+
+    #[test]
+    fn list_and_more_ellipsis_end() {
+        let items = ["alpha", "beta", "gamma", "delta", "epsilon"];
+        let out = run_list(
+            &items,
+            ListBreakMode::BetweenItems,
+            25,
+            AndMoreEllipsis,
+            Location::End,
+            ", ",
+        );
+        assert!(graphemes_in(&out) <= 25, "{out:?} too wide");
+        assert!(
+            out.contains("(and ") && out.contains(" more)"),
+            "{out:?} bad ellipsis"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // ellipsize_list — InsideItems mode
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn list_inside_items_all_short_unchanged() {
+        // Items are short enough that no per-item truncation is needed.
+        let out = run_list(
+            &["hi", "yo", "ok"],
+            ListBreakMode::InsideItems(StringBreakMode::GraphemeCluster),
+            30,
+            UNICODE_ELLIPSIS,
+            Location::End,
+            ", ",
+        );
+        assert_eq!(out, "hi, yo, ok");
+    }
+
+    #[test]
+    fn list_inside_items_truncates_individually() {
+        // 3 items, joiner ", " (2 graphemes), max=15.
+        // Available = 15 - 2*2 = 11, budget per item = 11/3 = 3.
+        let out = run_list(
+            &["abcdef", "ghijkl", "mnopqr"],
+            ListBreakMode::InsideItems(StringBreakMode::GraphemeCluster),
+            15,
+            UNICODE_ELLIPSIS,
+            Location::End,
+            ", ",
+        );
+        assert!(graphemes_in(&out) <= 15, "{out:?} too wide");
+        // Each segment must contain at least the ellipsis.
+        for part in out.split(", ") {
+            assert!(!part.is_empty(), "empty segment in {out:?}");
         }
     }
 }

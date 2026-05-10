@@ -6,6 +6,7 @@ use std::{
 
 use futures::{AsyncRead, AsyncWrite};
 use werk_fs::Absolute;
+use werk_util::IoError;
 
 use crate::{Env, GlobError, GlobSettings, ShellCommandLine};
 
@@ -26,7 +27,7 @@ pub trait Io: Send + Sync + 'static {
         working_dir: &Absolute<Path>,
         env: &Env,
         forward_stdout: bool,
-    ) -> Result<Box<dyn Child>, std::io::Error>;
+    ) -> Result<Box<dyn Child>, IoError>;
 
     /// Run a command as part of evaluating the contents of a Werkfile. This
     /// might still do something in dry-run mode.
@@ -35,7 +36,7 @@ pub trait Io: Send + Sync + 'static {
         command_line: &ShellCommandLine,
         working_dir: &Absolute<Path>,
         env: &Env,
-    ) -> Result<std::process::Output, std::io::Error>;
+    ) -> Result<std::process::Output, IoError>;
 
     /// Determine the absolute filesystem path to a program.
     fn which(&self, command: &str) -> Result<Absolute<PathBuf>, which::Error>;
@@ -44,33 +45,34 @@ pub trait Io: Send + Sync + 'static {
     ///
     /// If this function produces a path to a `.werk-cache` file, the
     /// `Workspace` constructor will fail.
-    fn glob_workspace(
+    fn walk_directory(
         &self,
         path: &Absolute<Path>,
-        settings: &GlobSettings,
-    ) -> Result<Vec<DirEntry>, GlobError>;
+        settings: GlobSettings,
+        visit: &(dyn Fn(&Absolute<Path>) + Send + Sync),
+    ) -> Result<(), GlobError>;
 
     /// Query the metadata of a filesystem path.
-    fn metadata(&self, path: &Absolute<Path>) -> Result<Metadata, std::io::Error>;
+    fn metadata(&self, path: &Absolute<Path>) -> Result<Metadata, IoError>;
 
     /// Read a file from the filesystem.
-    fn read_file(&self, path: &Absolute<Path>) -> Result<Vec<u8>, std::io::Error>;
+    fn read_file(&self, path: &Absolute<Path>) -> Result<Vec<u8>, IoError>;
 
     /// Write a file to the filesystem.
-    fn write_file(&self, path: &Absolute<Path>, data: &[u8]) -> Result<(), std::io::Error>;
+    fn write_file(&self, path: &Absolute<Path>, data: &[u8]) -> Result<(), IoError>;
 
     /// Copy one file to another on the file system. Must do nothing in dry-run.
     /// May do nothing if the paths are equal.
-    fn copy_file(&self, from: &Absolute<Path>, to: &Absolute<Path>) -> Result<(), std::io::Error>;
+    fn copy_file(&self, from: &Absolute<Path>, to: &Absolute<Path>) -> Result<(), IoError>;
 
     /// Delete a file from the filesystem. Must do nothing in dry-run.
-    fn delete_file(&self, path: &Absolute<Path>) -> Result<(), std::io::Error>;
+    fn delete_file(&self, path: &Absolute<Path>) -> Result<(), IoError>;
 
     /// Create a file, or update an existing file's mtime. (Equivalent to UNIX `touch`.)
-    fn touch(&self, path: &Absolute<Path>) -> Result<(), std::io::Error>;
+    fn touch(&self, path: &Absolute<Path>) -> Result<(), IoError>;
 
     /// Create the parent directories of `path`, recursively.
-    fn create_parent_dirs(&self, path: &Absolute<Path>) -> Result<(), std::io::Error>;
+    fn create_parent_dirs(&self, path: &Absolute<Path>) -> Result<(), IoError>;
 
     /// Read environment variable.
     fn read_env(&self, name: &str) -> Option<String>;

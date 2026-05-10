@@ -30,10 +30,8 @@ impl Default for GlobSettings {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum GlobError {
     #[error(transparent)]
     Glob(#[from] globset::Error),
-    #[error(transparent)]
-    Ignore(#[from] ignore::Error),
 }

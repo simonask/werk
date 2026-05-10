@@ -509,11 +509,7 @@ pub fn eval_run_exprs(
                 let dest_path = werk_fs::Path::new(&dest_path)
                     .and_then(|path| path.absolutize(werk_fs::Path::ROOT))
                     .map_err(|err| EvalError::Path(file.span(expr.span), err))
-                    .and_then(|path| {
-                        scope
-                            .get_output_file_path(&path)
-                            .map_err(|err| EvalError::PathResolution(file.span(expr.span), err))
-                    })?;
+                    .map(|path| scope.resolve_path(&path))?;
                 let data = eval(scope, &expr.value, file)?;
                 let write_used = destination.used | data.used;
                 let Value::String(data) = data.value else {
@@ -535,11 +531,7 @@ pub fn eval_run_exprs(
                 let to_path = werk_fs::Path::new(&to)
                     .and_then(|path| path.absolutize(werk_fs::Path::ROOT))
                     .map_err(|err| EvalError::Path(file.span(expr.dest.span), err))
-                    .and_then(|path| {
-                        scope.get_output_file_path(&path).map_err(|err| {
-                            EvalError::PathResolution(file.span(expr.dest.span), err)
-                        })
-                    })?;
+                    .map(|path| scope.resolve_path(&path))?;
                 let copy_used = from.used | to.used;
                 *used |= copy_used;
                 commands.push(RunCommand::Copy(from_path, to_path));
@@ -707,26 +699,19 @@ pub fn eval_read(
 
     let path = werk_fs::Path::new(&path).map_err(path_err)?;
     let path = path.absolutize(werk_fs::Path::ROOT).map_err(path_err)?;
-    let Some(fs_entry) = scope.get_input_file(&path) else {
-        return Err(EvalError::Io(
-            file.span(expr.span),
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("file not found during `read`: {path}"),
-            )
-            .into(),
-        ));
-    };
+    let fs_entry = scope
+        .stat_file(&path)
+        .map_err(|err| EvalError::Io(file.span(expr.span), err.into()))?;
 
     let contents = scope
         .io()
         .read_file(&fs_entry.path)
-        .map_err(|err| EvalError::Io(file.span(expr.span), err.into()))?;
+        .map_err(|err| EvalError::Io(file.span(expr.span), err))?;
 
     let Ok(string) = String::from_utf8(contents) else {
         return Err(EvalError::NonUtf8Read(
             file.span(expr.span),
-            fs_entry.path.clone().into_inner(),
+            fs_entry.path.into_inner(),
         ));
     };
 

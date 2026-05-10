@@ -1,11 +1,8 @@
 use stringleton::Symbol;
 use werk_fs::{Absolute, PathError};
-use werk_util::DiagnosticSpan;
+use werk_util::{DiagnosticSpan, IoError};
 
-use crate::{
-    DirEntry, Eval, Io, Messenger, PatternMatchData, ResolvePathError, ResolvePathMode, Used,
-    Value, Warning,
-};
+use crate::{DirEntry, Eval, GlobError, Io, Messenger, PatternMatchData, Used, Value, Warning};
 
 pub type LocalVariables = indexmap::IndexMap<Symbol, Eval<Value>>;
 
@@ -28,29 +25,40 @@ pub trait Scope: Send + Sync {
     fn which(&self, program_name: &str)
     -> Result<Eval<Absolute<std::path::PathBuf>>, which::Error>;
     fn env(&self, variable_name: &str) -> Eval<Option<String>>;
-    fn resolve_path(
-        &self,
-        path: &Absolute<werk_fs::Path>,
-        mode: ResolvePathMode,
-    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError>;
+    fn resolve_path(&self, path: &Absolute<werk_fs::Path>) -> Absolute<std::path::PathBuf>;
     fn unresolve_path(
         &self,
         path: &Absolute<std::path::Path>,
     ) -> Result<Absolute<werk_fs::PathBuf>, PathError>;
 
-    fn get_output_file_path(
-        &self,
-        path: &Absolute<werk_fs::Path>,
-    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError> {
-        self.resolve_path(path, ResolvePathMode::OutDir)
-    }
-
-    fn get_input_file(&self, path: &Absolute<werk_fs::Path>) -> Option<DirEntry>;
     fn glob_workspace_files(
         &self,
         pattern_string: &str,
-    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, globset::Error>;
+    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, GlobError>;
     fn current_working_directory(&self) -> &Absolute<std::path::Path>;
+
+    fn stat_file_if_exists(
+        &self,
+        path: &Absolute<werk_fs::Path>,
+    ) -> Result<Option<DirEntry>, IoError> {
+        match self.stat_file(path) {
+            Ok(metadata) => Ok(Some(metadata)),
+            Err(err) if err.error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn stat_file(&self, path: &Absolute<werk_fs::Path>) -> Result<DirEntry, IoError> {
+        let os_path = self.resolve_path(path);
+        self.io().metadata(&os_path).map(|metadata| DirEntry {
+            path: os_path,
+            metadata: crate::Metadata {
+                mtime: metadata.mtime,
+                is_file: metadata.is_file,
+                is_symlink: metadata.is_symlink,
+            },
+        })
+    }
 }
 
 pub trait ScopeMut: Scope {
@@ -216,12 +224,8 @@ impl Scope for SubexprScope<'_> {
         self.parent.env(variable_name)
     }
 
-    fn resolve_path(
-        &self,
-        path: &Absolute<werk_fs::Path>,
-        mode: ResolvePathMode,
-    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError> {
-        self.parent.resolve_path(path, mode)
+    fn resolve_path(&self, path: &Absolute<werk_fs::Path>) -> Absolute<std::path::PathBuf> {
+        self.parent.resolve_path(path)
     }
 
     fn unresolve_path(
@@ -231,14 +235,10 @@ impl Scope for SubexprScope<'_> {
         self.parent.unresolve_path(path)
     }
 
-    fn get_input_file(&self, path: &Absolute<werk_fs::Path>) -> Option<DirEntry> {
-        self.parent.get_input_file(path)
-    }
-
     fn glob_workspace_files(
         &self,
         pattern_string: &str,
-    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, globset::Error> {
+    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, GlobError> {
         self.parent.glob_workspace_files(pattern_string)
     }
 
@@ -291,12 +291,8 @@ impl Scope for MatchScope<'_> {
         self.parent.env(variable_name)
     }
 
-    fn resolve_path(
-        &self,
-        path: &Absolute<werk_fs::Path>,
-        mode: ResolvePathMode,
-    ) -> Result<Absolute<std::path::PathBuf>, ResolvePathError> {
-        self.parent.resolve_path(path, mode)
+    fn resolve_path(&self, path: &Absolute<werk_fs::Path>) -> Absolute<std::path::PathBuf> {
+        self.parent.resolve_path(path)
     }
 
     fn unresolve_path(
@@ -306,14 +302,10 @@ impl Scope for MatchScope<'_> {
         self.parent.unresolve_path(path)
     }
 
-    fn get_input_file(&self, path: &Absolute<werk_fs::Path>) -> Option<DirEntry> {
-        self.parent.get_input_file(path)
-    }
-
     fn glob_workspace_files(
         &self,
         pattern_string: &str,
-    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, globset::Error> {
+    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, GlobError> {
         self.parent.glob_workspace_files(pattern_string)
     }
 

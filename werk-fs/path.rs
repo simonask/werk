@@ -82,7 +82,7 @@ pub enum PathError {
     #[error("path would contain too many parents (would go above the root)")]
     TooManyParents,
     #[error("path is outside the workspace")]
-    UnresolveBeyondRoot,
+    UnresolveBeyondRoot(std::path::PathBuf),
     #[error("illegal character in path: {0}")]
     IllegalChar(char),
     #[error("illegal filename stem (reserved on Windows): {0}")]

@@ -4,9 +4,9 @@ File and directory paths in Werk are not normal paths as understood by the
 operating system. This is because one of the primary goals of Werk is to work on
 all platforms, and especially equal treatment of poor, maligned Windows.
 
-Paths in Werk are always relative to the workspace root or the output directory.
-Files outside of the workspace cannot be treated as inputs to or outputs of
-build recipes. Werk is designed to only write to the output directory.
+Paths in Werk are always relative to the workspace root, and always use the
+Unix-style `/` separator. Files outside of the workspace cannot be treated as
+inputs to or outputs of build recipes.
 
 However, invoking external commands often requires passing native OS paths.
 Using the [special string interpolation
@@ -14,19 +14,8 @@ syntax](./language/strings.md#string-interpolation) `"<var>"`, the abstract path
 stored in `var` will be converted to a native absolute path within the
 workspace.
 
-[Native path resolution](./language/path_resolution.md) may resolve to either an
-input file in the workspace or a generated file in the output directory. This
-check is based on existence: If the file is found in the workspace, it resolves
-to the file inside the workspace. Otherwise, it is assumed that a build recipe
-will generate the file in the output directory, and it resolves to an absolute
-path inside the output directory, mirroring the directory structure of the
-workspace.
-
-In general, build recipes should take care to not clobber the workspace and only
-generate files with paths that coincide with paths in the workspace.
-
-Logically, the workspace is an "overlay" of the output directory - it always
-takes precedence when a file exists, and the output directory is a "fallback".
+[Native path resolution](./language/path_resolution.md) converts a
+workspace-relative path to a native absolute path.
 
 Consider this directory structure:
 
@@ -48,12 +37,9 @@ Path resolution will then work like this:
   workspace.
 - `/foo.c` will resolve to `c:\workspace\main.c` because it exists in the
   workspace.
-- `/main.o` will resolve to `c:\workspace\output\main.o` because it does not
-  exist in the workspace.
-- `/foo.o` will resolve to `c:\workspace\output\foo.o` because it does not exist
-  in the workspace.
-- `/other.c` will resolve to `c:\workspace\output\other.c` because it does not
-  exist in the workspace.
+- `/output/main.o` will resolve to `c:\workspace\output\main.o`.
+- `/output/foo.o` will resolve to `c:\workspace\output\foo.o`.
+- `/output/generated.c` will resolve to `c:\workspace\output\generated.c`.
 
 ## Virtual path rules
 
@@ -76,12 +62,12 @@ Path resolution will then work like this:
 
 ## Illegal characters
 
-The following characters are illegal in abstract paths paths, and it is a
-superset of disallowed paths on Unix-like systems and Windows:
+The following characters are illegal in abstract paths, and it is a superset of
+disallowed paths on Unix-like systems and Windows:
 
 - Shell operators: `<` and `>` and `|`
 - Quotation marks: `"` and `'`
-- Slashes: `/` and `\`
+- Backslash: `\`
 - Special punctuation characters: `:` and `?` and `*`
 
 ## Windows rules

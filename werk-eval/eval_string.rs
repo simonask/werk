@@ -13,18 +13,6 @@ use crate::{
 
 use super::Used;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ResolvePathMode {
-    /// Infer from whether or not the path exists in the workspace.
-    Infer,
-    /// The `:out-dir` operation was present.
-    OutDir,
-    /// The `:workspace` operation was present.
-    Workspace,
-    /// Cannot resolve paths here (e.g., in patterns)
-    Illegal,
-}
-
 /// Normal string builder, not sensitive to argument quoting.
 pub(crate) struct StringBuilder<'a> {
     scope: &'a dyn Scope,
@@ -65,7 +53,7 @@ impl<'a> StringBuilder<'a> {
                     self.scope,
                     span,
                     interp,
-                    ResolvePathMode::Infer,
+                    true, // allow path resolution
                     &mut self.string,
                     &mut self.used,
                 )?;
@@ -181,7 +169,7 @@ impl<'a> PatternBuilder<'a> {
                     self.scope,
                     self.span,
                     interp,
-                    ResolvePathMode::Illegal,
+                    false, // disallow path resolution in patterns
                     buf,
                     &mut self.used,
                 )?;
@@ -433,7 +421,7 @@ impl<'a> CommandLineBuilder<'a> {
                         self.scope,
                         self.span,
                         interp,
-                        ResolvePathMode::Infer,
+                        true, // allow path resolution
                         buf,
                         &mut self.used,
                     )?;
@@ -449,7 +437,6 @@ impl<'a> CommandLineBuilder<'a> {
                         value.into_value(),
                         interp.options.as_deref().map_or(&[], |ops| &*ops.ops),
                         self.scope,
-                        ResolvePathMode::Infer,
                     )?;
 
                     // If we just saw an unquoted space that started a new argument,
@@ -515,7 +502,7 @@ fn eval_string_interpolation(
     scope: &dyn Scope,
     span: DiagnosticSpan,
     interp: &ast::Interpolation,
-    resolve_mode: ResolvePathMode,
+    allow_path_resolution: bool,
     buf: &mut String,
     used: &mut Used,
 ) -> Result<StringFlags, EvalError> {
@@ -530,7 +517,6 @@ fn eval_string_interpolation(
                 buf,
                 options,
                 scope,
-                resolve_mode,
             );
         }
     }
@@ -560,7 +546,7 @@ fn eval_string_interpolation(
     let (s, flags) = find_first_string(value);
     buf.push_str(s);
 
-    if flags.contains(StringFlags::CONTAINS_PATHS) && resolve_mode == ResolvePathMode::Illegal {
+    if flags.contains(StringFlags::CONTAINS_PATHS) && !allow_path_resolution {
         return Err(EvalError::PathResolution(span, ResolvePathError::Illegal));
     }
 
@@ -599,9 +585,8 @@ fn eval_string_interpolation_ops_and_join(
     buf: &mut String,
     options: &ast::InterpolationOptions,
     scope: &dyn Scope,
-    default_resolve_mode: ResolvePathMode,
 ) -> Result<StringFlags, EvalError> {
-    value = eval_string_interpolation_ops(span, value, &options.ops, scope, default_resolve_mode)?;
+    value = eval_string_interpolation_ops(span, value, &options.ops, scope)?;
 
     if let (Value::List(_), Some(sep)) = (&value, options.join.as_deref()) {
         Ok(recursive_join_push(&value, sep, buf))
@@ -617,10 +602,7 @@ fn eval_string_interpolation_ops(
     mut value: Value,
     options: &[ast::InterpolationOp],
     scope: &dyn Scope,
-    default_resolve_mode: ResolvePathMode,
 ) -> Result<Value, EvalError> {
-    let mut resolve_mode = default_resolve_mode;
-
     for op in options {
         match op {
             ast::InterpolationOp::Dedup => {
@@ -643,14 +625,8 @@ fn eval_string_interpolation_ops(
             ast::InterpolationOp::RegexReplace(r) => {
                 recursive_regex_replace(&mut value, &r.regex, &r.replacer);
             }
-            ast::InterpolationOp::ResolveOsPath => {
-                recursive_resolve_path(span, &mut value, werk_fs::Path::ROOT, scope, resolve_mode)?;
-            }
-            ast::InterpolationOp::ResolveOutDir => {
-                resolve_mode = ResolvePathMode::OutDir;
-            }
-            ast::InterpolationOp::ResolveWorkspace => {
-                resolve_mode = ResolvePathMode::Workspace;
+            ast::InterpolationOp::Resolve => {
+                recursive_resolve_path(span, &mut value, werk_fs::Path::ROOT, scope)?;
             }
         }
     }
@@ -709,7 +685,6 @@ fn recursive_resolve_path(
     value: &mut Value,
     working_dir: &Absolute<werk_fs::Path>,
     scope: &dyn Scope,
-    resolve_mode: ResolvePathMode,
 ) -> Result<(), EvalError> {
     value.try_visit_mut(&mut |string: &mut StringValue| -> Result<(), EvalError> {
         if string.flags.contains(StringFlags::CONTAINS_PATHS) {
@@ -717,10 +692,12 @@ fn recursive_resolve_path(
         }
 
         let path = werk_fs::Path::new(string).map_err(|err| EvalError::Path(span, err))?;
-        let path = path.absolutize(working_dir).map_err(|err| EvalError::Path(span, err))?;
-        let resolved = scope.resolve_path(&path, resolve_mode).map_err(|err| EvalError::PathResolution(span, err))?;
+        let path = path
+            .absolutize(working_dir)
+            .map_err(|err| EvalError::Path(span, err))?;
+        let resolved = scope.resolve_path(&path);
         let Some(path) = resolved.to_str() else {
-            panic!("Path resolution produced a non-UTF8 path; probably the project root path is non-UTF8")
+            return Err(EvalError::NonUtf8Path(span, resolved.into_inner()));
         };
 
         path.clone_into(&mut string.string);

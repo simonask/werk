@@ -82,7 +82,7 @@ where
 }
 
 impl<P: ?Sized> Absolute<P> {
-    pub(crate) const fn new_ref_unchecked(path: &P) -> &Self {
+    pub const fn new_ref_unchecked(path: &P) -> &Self {
         unsafe {
             // SAFETY: #[repr(transparent)]
             &*(std::ptr::from_ref(path) as *const Self)
@@ -430,7 +430,9 @@ impl Absolute<std::path::Path> {
         root: &Absolute<std::path::Path>,
     ) -> Result<Absolute<crate::PathBuf>, crate::PathError> {
         let Ok(tail) = self.path.strip_prefix(root) else {
-            return Err(crate::PathError::UnresolveBeyondRoot);
+            return Err(crate::PathError::UnresolveBeyondRoot(
+                self.as_inner().to_owned(),
+            ));
         };
 
         let mut buf = crate::Path::ROOT.to_owned();

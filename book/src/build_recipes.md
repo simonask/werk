@@ -19,10 +19,6 @@ When a target is outdated, it and all of its dependents will be rebuilt. See the
 [outdatedness](./outdatedness.md) chapter for the detailed rules governing when
 targets are rebuilt.
 
-Build recipes should always place their output in the output directory. This can
-be achieved by using [path interpolation](./language/strings.md#paths)
-(`"<...>"`) when passing files as arguments to external commands.
-
 ## Reference
 
 This example builds an `.o` object file from a `.c` source file. See

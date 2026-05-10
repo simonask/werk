@@ -86,8 +86,8 @@ default <key> = <value>
 Example:
 
 ```werk
-# Set the output directory for the workspace.
-default out-dir = "path/to/output/directory"
+# Set the cache directory for the workspace.
+default cache-dir = "path/to/output/directory"
 
 # Set the recipe to run when `werk` is run without arguments.
 default target = "build"

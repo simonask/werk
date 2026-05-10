@@ -5,7 +5,7 @@ tools, enabling many cases that would traditionally require a full rebuild to be
 selectively rebuilt instead.
 
 This is made possible by placing a [`.werk-cache`](./werk_cache.md) file in the
-project's [output directory](./workspace.md#output-directory) that tracks
+project's [cache directory](./workspace.md#cache-directory) that tracks
 outdatedness information between builds.
 
 `werk` tracks outdatedness in extremely high detail. Any variable or expression

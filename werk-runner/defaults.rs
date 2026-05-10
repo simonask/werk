@@ -6,7 +6,8 @@ use crate::Edition;
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Defaults {
-    pub output_directory: Option<String>,
+    pub cache_dir: Option<String>,
+    pub deprecated_output_directory: Option<String>,
     pub print_commands: Option<bool>,
     pub print_fresh: Option<bool>,
     pub quiet: Option<bool>,
@@ -28,8 +29,11 @@ impl Defaults {
 
             match stmt {
                 ast::DefaultStmt::Target(_) => {} // Evaluated on workspace creation.
-                ast::DefaultStmt::OutDir(entry) => {
-                    defaults.output_directory = Some(entry.value.1.clone());
+                ast::DefaultStmt::CacheDir(entry) => {
+                    defaults.cache_dir = Some(entry.value.1.clone());
+                }
+                ast::DefaultStmt::DeprecatedOutDir(entry) => {
+                    defaults.deprecated_output_directory = Some(entry.value.1.clone());
                 }
                 ast::DefaultStmt::PrintCommands(entry) => {
                     defaults.print_commands = Some(entry.value.1);

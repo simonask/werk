@@ -7,6 +7,7 @@ Create a `Werkfile` in a directory with the following contents:
 
 ```werk
 default target = "hello"
+default cache-dir = "target"
 
 task hello {
     info "Hello, World!"

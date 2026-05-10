@@ -21,7 +21,7 @@ pub struct Planner<'a> {
 }
 
 impl<'a> Planner<'a> {
-    #[must_use] 
+    #[must_use]
     pub fn new(manifest: &'a Manifest) -> Self {
         Self {
             graph: TaskGraph::default(),
@@ -245,22 +245,11 @@ impl<'a> Planner<'a> {
             }
         }
 
-        let depfile_os_path = match scope
-            .resolve_path(&depfile_path, werk_eval::ResolvePathMode::OutDir)
-        {
-            Ok(depfile_os_path) => depfile_os_path,
-            Err(err) => {
-                scope.warning(&Warning::custom(
-                    Some(span),
-                    format_args!("error resolving depfile path '{depfile_path}': {err}; ignoring"),
-                ));
-                return Ok(());
-            }
-        };
+        let depfile_os_path = scope.resolve_path(&depfile_path);
 
         let depfile_contents = match scope.io().read_file(&depfile_os_path) {
             Ok(depfile_contents) => depfile_contents,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) if err.error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(err) => {
                 scope.warning(&Warning::custom(
                     Some(span),

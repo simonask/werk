@@ -149,7 +149,8 @@ def_keyword!(Tail, "tail");
 
 // `default` keys (CLI flag defaults)
 def_keyword!(Target, "target");
-def_keyword!(OutDir, "out-dir");
+def_keyword!(CacheDir, "cache-dir");
+def_keyword!(OutDir, "out-dir"); // deprecated
 def_keyword!(PrintCommands, "print-commands");
 def_keyword!(PrintFresh, "print-fresh");
 def_keyword!(Quiet, "quiet");

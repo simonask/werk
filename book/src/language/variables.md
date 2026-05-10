@@ -25,14 +25,15 @@ let bar = foo   # == "b"
 
 ## Global variables are public
 
-Variables defined at the global scope (i.e., outside of any recipe) are public,
-and will appear in the output of `werk --list`. They can be overridden by
-passing `-Dkey=value` on the command-line. Comments immediately preceding a
-global variable will appear in the output as documentation for that variable.
+Variables defined with the `config` keyword instead of `let` at the global scope
+(i.e., outside of any recipe) are public, and will appear in the output of `werk
+--list`. They can be overridden by passing `-Dkey=value` on the command-line.
+Comments immediately preceding a global variable will appear in the output as
+documentation for that variable.
 
 ```werk
 # Set the build profile.
-let profile = "debug"
+config profile = "debug"
 ```
 
 ```sh

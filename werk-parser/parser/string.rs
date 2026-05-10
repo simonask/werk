@@ -347,7 +347,7 @@ fn path_interpolation(input: &mut Input) -> PResult<ast::Interpolation> {
         .options
         .get_or_insert_default()
         .ops
-        .push(ast::InterpolationOp::ResolveOsPath);
+        .push(ast::InterpolationOp::Resolve);
 
     Ok(interp)
 }
@@ -431,7 +431,7 @@ fn interpolation_op(input: &mut Input) -> PResult<ast::InterpolationOp> {
             to: to.to_owned(),
         }),
         interpolation_op_regex_replace.map(ast::InterpolationOp::RegexReplace),
-        interpolation_op_kw,
+        interpolation_op_kw.or_fail(Failure::InvalidInterpolationOp),
     ))
     .parse_next(input)
 }
@@ -444,8 +444,6 @@ fn interpolation_op_kw(input: &mut Input) -> PResult<ast::InterpolationOp> {
         "filename" => Ok(ast::InterpolationOp::Filename),
         "dir" => Ok(ast::InterpolationOp::Dirname),
         "ext" => Ok(ast::InterpolationOp::Ext),
-        "out-dir" => Ok(ast::InterpolationOp::ResolveOutDir),
-        "workspace" => Ok(ast::InterpolationOp::ResolveWorkspace),
         _ => Err(ModalErr::Error(Error::new(
             Offset(location as u32),
             Failure::InvalidInterpolationOp,
@@ -566,7 +564,7 @@ mod tests {
                                 from: ".ext1".into(),
                                 to: ".ext2".into(),
                             },
-                            ast::InterpolationOp::ResolveOsPath,
+                            ast::InterpolationOp::Resolve,
                         ],
                         join: None,
                     })),

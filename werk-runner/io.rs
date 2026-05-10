@@ -1,12 +1,12 @@
 use std::path::{Path, PathBuf};
 
 pub use ignore::WalkState;
-use parking_lot::Mutex;
-use werk_eval::{Child, DirEntry, Env, GlobSettings, Metadata, ShellCommandLine};
+use werk_eval::{Child, Env, GlobSettings, Metadata, ShellCommandLine};
 use werk_fs::{Absolute, Normalize as _};
 
 mod child;
 pub use child::*;
+use werk_util::IoError;
 
 #[derive(Default)]
 pub struct RealSystem(());
@@ -26,7 +26,7 @@ impl werk_eval::Io for RealSystem {
         working_dir: &Absolute<Path>,
         env: &Env,
         forward_stdout: bool,
-    ) -> Result<Box<dyn Child>, std::io::Error> {
+    ) -> Result<Box<dyn Child>, IoError> {
         let mut command = smol::process::Command::new(&command_line.program);
         command
             .args(
@@ -53,7 +53,9 @@ impl werk_eval::Io for RealSystem {
         command.envs(&env.env);
 
         tracing::trace!("spawning {command:?}");
-        let child = command.spawn()?;
+        let child = command
+            .spawn()
+            .map_err(|err| IoError::new(&command_line.program, err))?;
         Ok(Box::new(ChildProcess(child)))
     }
 
@@ -62,7 +64,7 @@ impl werk_eval::Io for RealSystem {
         command_line: &ShellCommandLine,
         working_dir: &Absolute<Path>,
         env: &Env,
-    ) -> Result<std::process::Output, std::io::Error> {
+    ) -> Result<std::process::Output, IoError> {
         let mut command = std::process::Command::new(&*command_line.program);
         command
             .args(
@@ -83,8 +85,12 @@ impl werk_eval::Io for RealSystem {
         command.envs(&env.env);
 
         tracing::trace!("spawning {command:?}");
-        let child = command.spawn()?;
-        let output = child.wait_with_output()?;
+        let child = command
+            .spawn()
+            .map_err(|err| IoError::new(&command_line.program, err))?;
+        let output = child
+            .wait_with_output()
+            .map_err(|err| IoError::new(&command_line.program, err))?;
         Ok(output)
     }
 
@@ -94,117 +100,87 @@ impl werk_eval::Io for RealSystem {
         Ok(normalized)
     }
 
-    fn glob_workspace(
+    fn walk_directory(
         &self,
         path: &Absolute<Path>,
-        settings: &GlobSettings,
-    ) -> Result<Vec<DirEntry>, werk_eval::GlobError> {
-        struct Builder<'s>(&'s Mutex<Result<Vec<DirEntry>, werk_eval::GlobError>>);
+        settings: GlobSettings,
+        visit: &(dyn Fn(&Absolute<Path>) + Send + Sync),
+    ) -> Result<(), werk_eval::GlobError> {
+        struct Builder<'s>(&'s (dyn Fn(&Absolute<Path>) + Send + Sync));
         impl<'s> ignore::ParallelVisitorBuilder<'s> for Builder<'s> {
             fn build(&mut self) -> Box<dyn ignore::ParallelVisitor + 's> {
-                Box::new(Visitor(Ok(Vec::new()), self.0))
+                Box::new(Visitor(self.0))
             }
         }
 
-        struct Visitor<'s>(
-            Result<Vec<DirEntry>, werk_eval::GlobError>,
-            &'s Mutex<Result<Vec<DirEntry>, werk_eval::GlobError>>,
-        );
+        struct Visitor<'s>(&'s (dyn Fn(&Absolute<Path>) + Send + Sync));
         impl ignore::ParallelVisitor for Visitor<'_> {
             fn visit(&mut self, entry: Result<ignore::DirEntry, ignore::Error>) -> WalkState {
-                let Ok(ref mut entries) = self.0 else {
-                    // Already errored.
-                    return WalkState::Quit;
-                };
-
-                match entry.and_then(TryInto::try_into) {
+                match entry {
                     Ok(entry) => {
-                        entries.push(entry);
+                        (self.0)(Absolute::new_ref_unchecked(entry.path()));
                         WalkState::Continue
                     }
-                    Err(err) => {
-                        self.0 = Err(err.into());
-                        WalkState::Quit
-                    }
+                    Err(_) => WalkState::Continue,
                 }
             }
         }
-        impl Drop for Visitor<'_> {
-            fn drop(&mut self) {
-                let mut results = self.1.lock();
-                let Ok(entries) = &mut *results else {
-                    // Already errored.
-                    return;
-                };
-
-                match std::mem::replace(&mut self.0, Ok(Vec::new())) {
-                    Ok(new_entries) => entries.extend(new_entries),
-                    Err(err) => *results = Err(err),
-                }
-            }
-        }
-
-        let GlobSettings {
-            git_ignore,
-            git_ignore_global,
-            git_ignore_exclude,
-            git_ignore_from_parents,
-            dot_ignore,
-            ignore_explicitly,
-        } = settings.clone();
 
         let mut walker = ignore::WalkBuilder::new(path);
         walker
-            .git_ignore(git_ignore)
-            .git_global(git_ignore_global)
-            .git_exclude(git_ignore_exclude)
-            .ignore(dot_ignore)
-            .parents(git_ignore_from_parents);
+            .git_ignore(settings.git_ignore)
+            .git_global(settings.git_ignore_global)
+            .git_exclude(settings.git_ignore_exclude)
+            .ignore(settings.dot_ignore)
+            .parents(settings.git_ignore_from_parents);
 
-        walker.filter_entry(move |entry| !ignore_explicitly.is_match(entry.path()));
-
+        walker.filter_entry(move |entry| !settings.ignore_explicitly.is_match(entry.path()));
         let walker = walker.build_parallel();
-
-        let results = Mutex::new(Ok(Vec::new()));
-        walker.visit(&mut Builder(&results));
-        results.into_inner()
+        walker.visit(&mut Builder(visit));
+        Ok(())
     }
 
-    fn metadata(&self, path: &Absolute<Path>) -> Result<Metadata, std::io::Error> {
-        path.metadata()?.try_into()
+    fn metadata(&self, path: &Absolute<Path>) -> Result<Metadata, IoError> {
+        path.metadata()
+            .and_then(Metadata::try_from)
+            .map_err(|err| IoError::new(path, err))
     }
 
-    fn read_file(&self, path: &Absolute<Path>) -> Result<Vec<u8>, std::io::Error> {
-        std::fs::read(path)
+    fn read_file(&self, path: &Absolute<Path>) -> Result<Vec<u8>, IoError> {
+        std::fs::read(path).map_err(|err| IoError::new(path, err))
     }
 
-    fn write_file(&self, path: &Absolute<Path>, data: &[u8]) -> Result<(), std::io::Error> {
-        std::fs::write(path, data)
+    fn write_file(&self, path: &Absolute<Path>, data: &[u8]) -> Result<(), IoError> {
+        std::fs::write(path, data).map_err(|err| IoError::new(path, err))
     }
 
-    fn copy_file(&self, from: &Absolute<Path>, to: &Absolute<Path>) -> Result<(), std::io::Error> {
-        std::fs::copy(from, to).map(|_| ())
+    fn copy_file(&self, from: &Absolute<Path>, to: &Absolute<Path>) -> Result<(), IoError> {
+        std::fs::copy(from, to)
+            .map(|_| ())
+            .map_err(|err| IoError::new(from, err))
     }
 
-    fn delete_file(&self, path: &Absolute<Path>) -> Result<(), std::io::Error> {
-        std::fs::remove_file(path)
+    fn delete_file(&self, path: &Absolute<Path>) -> Result<(), IoError> {
+        std::fs::remove_file(path).map_err(|err| IoError::new(path, err))
     }
 
-    fn touch(&self, path: &Absolute<Path>) -> Result<(), std::io::Error> {
+    fn touch(&self, path: &Absolute<Path>) -> Result<(), IoError> {
         let file = std::fs::OpenOptions::new()
             // Ensure that we can write to the file.
             .append(true)
             // Create the file if it does not exist.
             .create(true)
-            .open(path)?;
+            .open(path)
+            .map_err(|err| IoError::new(path, err))?;
         let now = std::time::SystemTime::now();
         file.set_modified(now)
+            .map_err(|err| IoError::new(path, err))
     }
 
-    fn create_parent_dirs(&self, path: &Absolute<Path>) -> Result<(), std::io::Error> {
+    fn create_parent_dirs(&self, path: &Absolute<Path>) -> Result<(), IoError> {
         let parent = path.parent().unwrap();
         let did_exist = parent.is_dir();
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent).map_err(|err| IoError::new(path, err))?;
         if !did_exist {
             tracing::info!("Created directory: {}", parent.display());
         }

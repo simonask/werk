@@ -1949,6 +1949,7 @@ dependencies = [
  "criterion",
  "futures",
  "iai",
+ "literator",
  "macro_rules_attribute",
  "parking_lot",
  "regex",

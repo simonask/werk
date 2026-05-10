@@ -11,7 +11,7 @@ use futures::future::{self, Either};
 use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
 use render::{AutoStream, ColorOutputKind};
-use werk_eval::Warning;
+use werk_eval::{Scope, Warning};
 use werk_fs::{Absolute, Normalize as _, PathError};
 use werk_planner::{Planner, TaskGraph, TaskGraphToDotSettings};
 use werk_runner::{Runner, Workspace, WorkspaceSettings};
@@ -121,9 +121,13 @@ pub struct Args {
     #[clap(long)]
     pub workspace_dir: Option<std::path::PathBuf>,
 
-    /// Use the output directory instead of the default.
+    /// Deprecated: Migrate to `--cache-dir`.
     #[clap(long)]
     pub output_dir: Option<std::path::PathBuf>,
+
+    /// The directory in which to place the `.werk-cache` file.
+    #[clap(long)]
+    pub cache_dir: Option<std::path::PathBuf>,
 
     /// Override global variable. This takes the form `name=value`.
     #[clap(long, short = 'D', add = ArgValueCandidates::new(complete::defines))]
@@ -167,8 +171,12 @@ pub enum Error {
     Runner,
     #[error("Invalid workspace directory '{0}': {1}")]
     WorkspaceDirectory(String, std::io::Error),
-    #[error("Invalid output directory '{0}': {1}")]
-    OutputDirectory(String, PathError),
+    #[error(
+        "No cache directory specified. Pass `--cache-dir`, or set `config cache-dir=\"...\"` in the Werkfile"
+    )]
+    NoCacheDirectory,
+    #[error("Invalid cache directory '{0}': {1}")]
+    CacheDirectory(String, PathError),
     #[error("Werkfile not found in this directory or any parent directory")]
     NoWerkfile,
     #[error("Invalid define (must take the form `key=value`): {0}")]
@@ -238,10 +246,27 @@ async fn try_main(args: Args) -> Result<(), Error> {
         print_eval_error(err.into_diagnostic_error(&DiagnosticSource::new(&werkfile, &source_code)))
     })?;
 
+    if args.output_dir.is_some() || defaults.deprecated_output_directory.is_some() {
+        anstream::eprintln!(
+            "{} {}",
+            "FATAL:".bright_red().bold(),
+            if args.output_dir.is_some() {
+                "The `--output-dir` option is deprecated. Migrate to `--cache-dir`."
+            } else {
+                "The `out-dir` config option is deprecated. Migrate to `cache-dir`."
+            }
+        );
+        anstream::eprintln!(
+            "{} Please consult https://simonask.github.io/werk/migrating_v0_2.html for more information.",
+            "MIGRATION:".bright_yellow().bold()
+        );
+        std::process::exit(1);
+    }
+
     let settings = get_workspace_settings(&defaults, &args, &workspace_dir, color_stdout)?;
 
     tracing::info!("Project directory: {}", workspace_dir.display());
-    tracing::info!("Output directory: {}", settings.output_directory.display());
+    tracing::info!("Cache directory: {}", settings.cache_dir.display());
 
     let io: Arc<dyn werk_eval::Io> = if args.dry_run || args.list {
         Arc::new(dry_run::DryRun::new())
@@ -376,13 +401,6 @@ async fn autowatch_loop(
 
     let watch_manifest = HashSet::from_iter([werkfile.clone()]);
     let mut watch_set = watch_manifest.clone();
-    watch_set.extend(workspace.workspace_files().filter_map(|(_, entry)| {
-        if entry.metadata.is_file {
-            Some(entry.path.clone())
-        } else {
-            None
-        }
-    }));
     let workspace_dir = workspace.project_root().to_path_buf();
 
     let mut settings = settings.clone();
@@ -397,7 +415,7 @@ async fn autowatch_loop(
             watch_set = watch_manifest.clone();
         }
 
-        // Start the notifier.
+        // Start the notifier before running the graph.
         let notifier = make_notifier_for_files(&watch_set, notification_sender.clone(), timeout)?;
         let notification_recv = notification_receiver.recv();
 
@@ -405,6 +423,11 @@ async fn autowatch_loop(
         let result = if let Some(target) = target.as_ref() {
             match build_task_graph(&workspace, &[target]) {
                 Ok(task_graph) => {
+                    watch_set.extend(
+                        task_graph
+                            .get_input_files()
+                            .map(|p| workspace.resolve_path(p.as_path())),
+                    );
                     let runner = Runner::new(&workspace);
                     let result = runner.run(task_graph).await;
                     (Some(runner), result)
@@ -500,28 +523,25 @@ async fn autowatch_loop(
             }
         };
 
-        let out_dir = match find_output_directory(
+        let cache_dir = match find_cache_directory(
             &workspace_dir,
             output_directory_from_args,
-            defaults.output_directory.as_deref(),
+            defaults.cache_dir.as_deref(),
         ) {
-            Ok(out_dir) => out_dir,
+            Ok(cache_dir) => cache_dir,
             Err(err) => {
-                render.runner_message(&format!("Error finding output directory: {err}"));
+                render.runner_message(&format!("Error finding cache directory: {err}"));
                 watch_set = watch_manifest.clone();
                 continue;
             }
         };
 
-        if out_dir != settings.output_directory {
+        if cache_dir != settings.cache_dir {
             render.warning(
                 None,
-                &Warning::OutputDirectoryChanged(
-                    settings.output_directory.clone(),
-                    out_dir.clone(),
-                ),
+                &Warning::CacheDirectoryChanged(settings.cache_dir.clone(), cache_dir.clone()),
             );
-            settings.output_directory = out_dir;
+            settings.cache_dir = cache_dir;
         }
 
         workspace =
@@ -554,13 +574,6 @@ async fn autowatch_loop(
         // Update the watchset.
         watch_set.clear();
         watch_set.extend(watch_manifest.iter().cloned());
-        watch_set.extend(workspace.workspace_files().filter_map(|(_, entry)| {
-            if entry.metadata.is_file {
-                Some(entry.path.clone())
-            } else {
-                None
-            }
-        }));
     }
 }
 
@@ -763,15 +776,15 @@ pub fn get_workspace_settings(
     workspace_dir: &Absolute<std::path::Path>,
     color_stdout: ColorOutputKind,
 ) -> Result<WorkspaceSettings, Error> {
-    let out_dir = find_output_directory(
+    let cache_dir = find_cache_directory(
         workspace_dir,
         args.output_dir.as_deref(),
-        defaults.output_directory.as_deref(),
+        defaults.cache_dir.as_deref(),
     )?;
 
     let mut settings = WorkspaceSettings::new(workspace_dir.to_owned());
     settings.jobs = args.jobs.or(defaults.jobs).unwrap_or_else(num_cpus::get);
-    settings.output_directory = out_dir;
+    settings.cache_dir = cache_dir;
     for def in &args.define {
         let Some((key, value)) = def.split_once('=') else {
             return Err(Error::InvalidDefineArg(def.clone()));
@@ -788,7 +801,7 @@ pub fn get_workspace_settings(
     Ok(settings)
 }
 
-fn find_output_directory(
+fn find_cache_directory(
     workspace_dir: &Absolute<std::path::Path>,
     from_args: Option<&std::path::Path>,
     from_config: Option<&str>,
@@ -796,13 +809,13 @@ fn find_output_directory(
     if let Some(from_args) = from_args {
         workspace_dir
             .join(from_args)
-            .map_err(|err| Error::OutputDirectory(from_args.display().to_string(), err.into()))
+            .map_err(|err| Error::CacheDirectory(from_args.display().to_string(), err.into()))
     } else if let Some(from_config) = from_config {
         workspace_dir
             .join(from_config)
-            .map_err(|err| Error::OutputDirectory(from_config.to_owned(), err.into()))
+            .map_err(|err| Error::CacheDirectory(from_config.to_owned(), err.into()))
     } else {
-        Ok(workspace_dir.join("target").unwrap())
+        Err(Error::NoCacheDirectory)
     }
 }
 

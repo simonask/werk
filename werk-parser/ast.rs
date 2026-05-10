@@ -135,7 +135,8 @@ pub type IncludeStmt = KwExpr<keyword::Include, ExprChain>;
 #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DefaultStmt {
     Target(DefaultStmtEntry<keyword::Target, StringExpr>),
-    OutDir(DefaultStmtEntry<keyword::OutDir, ConfigString>),
+    CacheDir(DefaultStmtEntry<keyword::CacheDir, ConfigString>),
+    DeprecatedOutDir(DefaultStmtEntry<keyword::OutDir, ConfigString>),
     PrintCommands(DefaultStmtEntry<keyword::PrintCommands, ConfigBool>),
     PrintFresh(DefaultStmtEntry<keyword::PrintFresh, ConfigBool>),
     Quiet(DefaultStmtEntry<keyword::Quiet, ConfigBool>),
@@ -152,7 +153,8 @@ impl Spanned for DefaultStmt {
     fn span(&self) -> Span {
         match self {
             DefaultStmt::Target(stmt) => stmt.span,
-            DefaultStmt::OutDir(stmt) => stmt.span,
+            DefaultStmt::CacheDir(stmt) => stmt.span,
+            DefaultStmt::DeprecatedOutDir(stmt) => stmt.span,
             DefaultStmt::PrintCommands(stmt) => stmt.span,
             DefaultStmt::PrintFresh(stmt) => stmt.span,
             DefaultStmt::Quiet(stmt) => stmt.span,

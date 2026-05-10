@@ -3,13 +3,14 @@ use std::sync::Arc;
 /// Clonable `std::io::Error`
 #[derive(Clone)]
 pub struct IoError {
+    pub path: std::path::PathBuf,
     pub error: Arc<std::io::Error>,
 }
 
-impl From<std::io::Error> for IoError {
-    #[inline]
-    fn from(error: std::io::Error) -> Self {
+impl IoError {
+    pub fn new(path: impl AsRef<std::path::Path>, error: std::io::Error) -> Self {
         Self {
+            path: path.as_ref().to_path_buf(),
             error: Arc::new(error),
         }
     }
@@ -25,14 +26,15 @@ impl std::fmt::Debug for IoError {
 impl std::fmt::Display for IoError {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&*self.error, f)
+        write!(f, "{}: {}", self.path.display(), self.error)
     }
 }
 
 impl PartialEq for IoError {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.error, &other.error) || self.error.kind() == other.error.kind()
+        self.path == other.path
+            && (Arc::ptr_eq(&self.error, &other.error) || self.error.kind() == other.error.kind())
     }
 }
 

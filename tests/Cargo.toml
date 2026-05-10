@@ -28,6 +28,7 @@ anstream.workspace = true
 # Hijacking winnow for the Offset trait
 winnow.workspace = true
 stringleton.workspace = true
+literator.workspace = true
 
 [dev-dependencies]
 criterion = "0.8.1"

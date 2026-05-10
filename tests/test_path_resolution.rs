@@ -1,10 +1,9 @@
 use macro_rules_attribute::apply;
 use stringleton::sym;
 use tests::{mock_io::*, plan_build_and_get_status};
-use werk_eval::{EvalError, ResolvePathError, TaskName, Value};
+use werk_eval::{TaskName, Value};
 use werk_fs::Absolute;
 use werk_planner::{Planner, PlannerError};
-use werk_runner::Error;
 use werk_util::Annotated;
 
 stringleton::enable!(tests);
@@ -16,12 +15,7 @@ let exists = "foo";
 let exists-not = "bar";
 
 let exists-resolved = "<exists>"
-let exists-explicit-out-dir = "<exists:out-dir>"
-let exists-explicit-workspace = "<exists:workspace>"
-
 let exists-not-resolved = "<exists-not>"
-let exists-not-explicit-out-dir = "<exists-not:out-dir>"
-let exists-not-explicit-workspace = "<exists-not:workspace>"
 "#;
 
     _ = tracing_subscriber::fmt::try_init();
@@ -36,9 +30,7 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
     test.set_workspace_file(&["foo"], "foo").unwrap();
 
     let foo_workspace = test.workspace_path_str(["foo"]);
-    let foo_output = test.output_path_str(["foo"]);
-    let bar_workspace = test.workspace_path_str(["bar"]);
-    let bar_output = test.output_path_str(["bar"]);
+    let bar_output = test.workspace_path_str(["bar"]);
 
     let workspace = match test.create_workspace() {
         Ok(workspace) => workspace,
@@ -52,35 +44,10 @@ let exists-not-explicit-workspace = "<exists-not:workspace>"
         globals.get(&sym!("exists-resolved")).unwrap().value,
         Value::from(foo_workspace.clone())
     );
-    assert_eq!(
-        globals.get(&sym!("exists-explicit-out-dir")).unwrap().value,
-        Value::from(foo_output)
-    );
-    assert_eq!(
-        globals
-            .get(&sym!("exists-explicit-workspace"))
-            .unwrap()
-            .value,
-        Value::from(foo_workspace.clone())
-    );
 
     assert_eq!(
         globals.get(&sym!("exists-not-resolved")).unwrap().value,
         Value::from(bar_output.clone())
-    );
-    assert_eq!(
-        globals
-            .get(&sym!("exists-not-explicit-out-dir"))
-            .unwrap()
-            .value,
-        Value::from(bar_output.clone())
-    );
-    assert_eq!(
-        globals
-            .get(&sym!("exists-not-explicit-workspace"))
-            .unwrap()
-            .value,
-        Value::from(bar_workspace)
     );
 }
 
@@ -114,59 +81,22 @@ build "explicit" {
     }
 }
 
-/// When a directory in the workspace has the same name as the target of a build
-/// recipe, werk should not report a circular dependency
-#[apply(smol_macros::test)]
-async fn test_directory_name_collision() {
-    static WERK: &str = r#"
-# Directories should not participate in the lookup that happens as part
-# of build recipe matching.
-build "bar" {
-    info "<out>"
-}
-build "foo" {
-    info "<out>"
-}
-
-task build {
-    build ["foo", "bar"]
-}
-"#;
-
-    _ = tracing_subscriber::fmt::try_init();
-
-    let mut test = Test::new(WERK).unwrap();
-    test.set_workspace_dir(&["bar"]).unwrap();
-    assert!(test.io.contains_dir(test.workspace_path(["bar"])));
-    let workspace = test.create_workspace().unwrap();
-    match plan_build_and_get_status(workspace, "build").await {
-        Ok(_) => panic!("expected error"),
-        Err(Error::Planner(PlannerError::Evaluation(EvalError::PathResolution(
-            _,
-            ResolvePathError::Ambiguous(err),
-        )))) => {
-            assert_eq!(err.path, Absolute::try_from("/bar").unwrap());
-        }
-        Err(err) => panic!("unexpected error: {err}"),
-    }
-}
-
 #[apply(smol_macros::test)]
 async fn test_empty_out_dir() {
     static WERK: &str = r#"
 build "bar" {
-    info "<out:dir>"
+    info "<out>"
 }
     "#;
 
     _ = tracing_subscriber::fmt::try_init();
 
     let mut test = Test::new(WERK).unwrap();
-    let expected_message = test.output_path_str(None::<&std::ffi::OsStr>);
+    let expected_message = test.workspace_path_str(["bar"]);
     let workspace = test.create_workspace().unwrap();
     plan_build_and_get_status(workspace, "bar").await.unwrap();
-    assert!(test.render.did_see(&MockRenderEvent::Message(
+    test.render.assert_did_see(&MockRenderEvent::Message(
         Some(TaskName::build(Absolute::try_from("/bar").unwrap())),
         expected_message,
-    )));
+    ));
 }

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 use werk_eval::TaskName;
 use werk_planner::PlannerError;
-use werk_util::{DiagnosticSourceMap, Level};
+use werk_util::{DiagnosticSourceMap, DiagnosticSpan, IoError, Level};
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
-    Io(#[from] Arc<std::io::Error>),
+    Io(#[from] IoError),
     #[error(transparent)]
     Planner(#[from] PlannerError),
     #[error("command not found: {0}: {1}")]
@@ -34,10 +34,24 @@ pub enum Error {
     OutputDirectoryNotAvailable,
     #[error(".werk-cache file found in workspace; please add its directory to .gitignore")]
     ClobberedWorkspace(std::path::PathBuf),
+    #[error("cannot {op} because the path is protected: {}", path.display())]
+    ProtectedPath {
+        span: Option<DiagnosticSpan>,
+        op: &'static str,
+        path: std::path::PathBuf,
+    },
+    #[error("cannot {op} beyond the root of the workspace: {}", path.display())]
+    WriteBeyondRoot {
+        span: Option<DiagnosticSpan>,
+        op: &'static str,
+        path: std::path::PathBuf,
+    },
     #[error("invalid target path `{0}`: {1}")]
     InvalidTargetPath(String, werk_fs::PathError),
     #[error("invalid path in depfile `{0}`: {1}")]
     InvalidPathInDepfile(String, werk_fs::PathError),
+    #[error("{0}")]
+    MustMigrate(String),
     #[error(transparent)]
     Custom(Arc<anyhow::Error>),
 }
@@ -47,7 +61,7 @@ impl Error {
         Self::Custom(Arc::new(anyhow::Error::new(err)))
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn eval(err: werk_eval::EvalError) -> Self {
         Self::Planner(PlannerError::Evaluation(err))
     }
@@ -71,6 +85,9 @@ impl Error {
             | Error::ClobberedWorkspace(_)
             | Error::InvalidTargetPath(..)
             | Error::InvalidPathInDepfile(..)
+            | Error::MustMigrate(..)
+            | Error::ProtectedPath { .. }
+            | Error::WriteBeyondRoot { .. }
             | Error::Custom(_) => false,
         }
     }
@@ -79,7 +96,7 @@ impl Error {
 impl PartialEq for Error {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Io(l0), Self::Io(r0)) => l0.kind() == r0.kind(),
+            (Self::Io(l0), Self::Io(r0)) => l0 == r0,
             (Self::Planner(l0), Self::Planner(r0)) => l0 == r0,
             (Self::CommandNotFound(l0, l1), Self::CommandNotFound(r0, r1)) => l0 == r0 && l1 == r1,
             (Self::DependencyFailed(l0, l1), Self::DependencyFailed(r0, r1)) => {
@@ -102,13 +119,6 @@ impl From<anyhow::Error> for Error {
     #[inline]
     fn from(err: anyhow::Error) -> Self {
         Self::Custom(Arc::new(err))
-    }
-}
-
-impl From<std::io::Error> for Error {
-    #[inline]
-    fn from(err: std::io::Error) -> Self {
-        Self::Io(Arc::new(err))
     }
 }
 
@@ -137,7 +147,6 @@ impl From<werk_eval::GlobError> for Error {
     fn from(value: werk_eval::GlobError) -> Self {
         match value {
             werk_eval::GlobError::Glob(error) => error.into(),
-            werk_eval::GlobError::Ignore(error) => error.into(),
         }
     }
 }
@@ -163,6 +172,9 @@ impl werk_util::AsDiagnostic for Error {
             Error::InvalidTargetPath(..) => "R0017",
             Error::InvalidPathInDepfile(..) => "R0018",
             Error::Custom(..) => "R9999",
+            Error::MustMigrate(_) => "R9999",
+            Error::ProtectedPath { .. } => "R0050",
+            Error::WriteBeyondRoot { .. } => "R0051",
         };
 
         // Use the Display impl from thiserror.

@@ -272,14 +272,15 @@ impl Parse for ast::DefaultStmt {
 
         alt((
             entry(token, ws_1).map(ast::DefaultStmt::Target),
-            entry(token, ws_1).map(ast::DefaultStmt::OutDir),
+            entry(token, ws_1).map(ast::DefaultStmt::CacheDir),
+            entry(token, ws_1).map(ast::DefaultStmt::DeprecatedOutDir),
             entry(token, ws_1).map(ast::DefaultStmt::PrintCommands),
             entry(token, ws_1).map(ast::DefaultStmt::PrintFresh),
             entry(token, ws_1).map(ast::DefaultStmt::Quiet),
             entry(token, ws_1).map(ast::DefaultStmt::Loud),
             entry(token, ws_1).map(ast::DefaultStmt::Explain),
-            entry(token, ws_1).map(ast::DefaultStmt::Verbose),
             alt((
+                entry(token, ws_1).map(ast::DefaultStmt::Verbose),
                 entry(token, ws_1).map(ast::DefaultStmt::WatchDelay),
                 entry(token, ws_1).map(ast::DefaultStmt::Jobs),
                 entry(token, ws_1).map(ast::DefaultStmt::Edition),
@@ -1203,7 +1204,7 @@ mod tests {
                 statements: vec![
                     ast::BodyStmt {
                         ws_pre: ws_ignore(),
-                        statement: ast::RootStmt::Default(ast::DefaultStmt::OutDir(
+                        statement: ast::RootStmt::Default(ast::DefaultStmt::DeprecatedOutDir(
                             ast::DefaultStmtEntry {
                                 span: span(0..29),
                                 token: keyword::Default(Offset(0)),

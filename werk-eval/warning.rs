@@ -23,8 +23,8 @@ pub enum Warning {
     WarningExpression(DiagnosticSpan, String),
     #[error("unused define `{0}`")]
     UnusedDefine(String),
-    #[error("output directory changed; was `{0}`, is now `{1}`")]
-    OutputDirectoryChanged(Absolute<std::path::PathBuf>, Absolute<std::path::PathBuf>),
+    #[error("cache directory changed; was `{0}`, is now `{1}`")]
+    CacheDirectoryChanged(Absolute<std::path::PathBuf>, Absolute<std::path::PathBuf>),
     #[error("one or more child processes did not stop when asked, and may be left as zombies")]
     ZombieChild,
     #[error("shadowing global constant: `{1}`")]
@@ -50,7 +50,7 @@ impl Warning {
             Warning::DepfileNotGenerated(_, _) => "W0030",
             Warning::WarningExpression(_, _) => "W9999",
             Warning::UnusedDefine(_) => "W1000",
-            Warning::OutputDirectoryChanged(..) => "W1001",
+            Warning::CacheDirectoryChanged(..) => "W1001",
             Warning::ZombieChild => "W1002",
             Warning::ShadowingGlobalConstant(..) => "W1003",
             Warning::Custom(..) => "W9999",
@@ -71,7 +71,7 @@ impl Warning {
             | Warning::ShadowingGlobalConstant(span, _) => Some(*span),
             Warning::Custom(span, _) => *span,
             Warning::UnusedDefine(_)
-            | Warning::OutputDirectoryChanged(..)
+            | Warning::CacheDirectoryChanged(..)
             | Warning::ZombieChild => None,
         }
     }
@@ -118,7 +118,7 @@ impl werk_util::AsDiagnostic for Warning {
                     .element(Level::HELP.message("maybe a `let` statement should be changed to a `config` statement?"))
             }
 
-            Warning::OutputDirectoryChanged(..) | Warning::ZombieChild | Warning::ShadowingGlobalConstant(..) | Warning::Custom(..) => annotate_snippets::Group::with_title(title),
+            Warning::CacheDirectoryChanged(..) | Warning::ZombieChild | Warning::ShadowingGlobalConstant(..) | Warning::Custom(..) => annotate_snippets::Group::with_title(title),
         };
 
         vec![group]

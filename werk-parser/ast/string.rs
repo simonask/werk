@@ -188,7 +188,7 @@ impl Interpolation {
             if options
                 .ops
                 .iter()
-                .any(|op| matches!(&op, InterpolationOp::ResolveOsPath))
+                .any(|op| matches!(&op, InterpolationOp::Resolve))
             {
                 return true;
             }
@@ -247,7 +247,7 @@ impl std::fmt::Display for Interpolation {
             let mut has_colon = false;
             let mut is_first = true;
             for op in &options.ops {
-                if let InterpolationOp::ResolveOsPath = op {
+                if let InterpolationOp::Resolve = op {
                     continue;
                 }
                 if !has_colon {
@@ -271,13 +271,11 @@ impl std::fmt::Display for Interpolation {
                         regex_interpolation_op.regex,
                         regex_interpolation_op.replacer
                     )?,
-                    InterpolationOp::ResolveOsPath => unreachable!(),
                     InterpolationOp::Dedup => f.write_str("dedup")?,
                     InterpolationOp::Filename => f.write_str("filename")?,
                     InterpolationOp::Dirname => f.write_str("dir")?,
                     InterpolationOp::Ext => f.write_str("ext")?,
-                    InterpolationOp::ResolveOutDir => f.write_str("out-dir")?,
-                    InterpolationOp::ResolveWorkspace => f.write_str("workspace")?,
+                    InterpolationOp::Resolve => unreachable!(),
                 }
             }
         }
@@ -361,9 +359,7 @@ pub enum InterpolationOp {
     RegexReplace(RegexInterpolationOp),
     // Interpret the string as an OS path and resolve it. This is the `<..>`
     // interpolation syntax.
-    ResolveOsPath,
-    ResolveOutDir,
-    ResolveWorkspace,
+    Resolve,
 }
 
 impl SemanticHash for InterpolationOp {
@@ -381,9 +377,7 @@ impl SemanticHash for InterpolationOp {
             | InterpolationOp::Filename
             | InterpolationOp::Dirname
             | InterpolationOp::Ext
-            | InterpolationOp::ResolveOsPath
-            | InterpolationOp::ResolveOutDir
-            | InterpolationOp::ResolveWorkspace => (),
+            | InterpolationOp::Resolve => (),
         }
     }
 }

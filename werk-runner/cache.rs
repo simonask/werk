@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use stringleton::Symbol;
 use werk_eval::Io;
 use werk_fs::Absolute;
-use werk_util::hash128::Hash128;
+use werk_util::{IoError, hash128::Hash128};
 
 pub const WERK_CACHE_FILENAME: &str = ".werk-cache";
 
@@ -22,7 +22,7 @@ impl WerkCache {
         let data = match io.read_file(&werk_cache_path) {
             Ok(data) => data,
             Err(err) => {
-                if err.kind() != std::io::ErrorKind::NotFound {
+                if err.error.kind() != std::io::ErrorKind::NotFound {
                     tracing::error!("Failed to read workspace cache, even though it exists: {err}");
                 }
                 tracing::debug!(".werk-cache does not exist");
@@ -51,7 +51,7 @@ impl WerkCache {
         &self,
         io: &dyn Io,
         output_dir: &Absolute<std::path::Path>,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), IoError> {
         fn make_table(item: &mut toml_edit::Item) -> Option<&mut toml_edit::Table> {
             match std::mem::take(item).into_table() {
                 Ok(table) => {

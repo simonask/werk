@@ -4,7 +4,7 @@ use annotate_snippets::{AnnotationKind, Snippet};
 use werk_fs::Absolute;
 use werk_util::{DiagnosticFileId, DiagnosticSourceMap, DiagnosticSpan, IoError, Level};
 
-use crate::{ShellCommandLine, Value};
+use crate::{GlobError, ShellCommandLine, Value};
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq)]
 pub enum EvalError {
@@ -64,8 +64,10 @@ pub enum EvalError {
     NonUtf8Which(DiagnosticSpan, std::path::PathBuf),
     #[error("`read` failed because file is not valid UTF-8: {}", .1.display())]
     NonUtf8Read(DiagnosticSpan, std::path::PathBuf),
+    #[error("resolved file path is not valid UTF-8: {}", .1.display())]
+    NonUtf8Path(DiagnosticSpan, std::path::PathBuf),
     #[error("{1}")]
-    Glob(DiagnosticSpan, Arc<globset::Error>),
+    Glob(DiagnosticSpan, Arc<GlobError>),
     /// Shell command failed during evaluation. Note: This error is not reported
     /// when executing commands as part of a rule, only when executing commands
     /// during evaluation (settings variables etc.)
@@ -140,6 +142,7 @@ impl EvalError {
             | EvalError::CommandNotFound(span, _, _)
             | EvalError::NonUtf8Which(span, _)
             | EvalError::NonUtf8Read(span, _)
+            | EvalError::NonUtf8Path(span, _)
             | EvalError::Glob(span, _)
             | EvalError::Shell(span, _)
             | EvalError::Path(span, _)
@@ -194,6 +197,7 @@ impl werk_util::AsDiagnostic for EvalError {
             EvalError::CommandNotFound(..) => "E0021",
             EvalError::NonUtf8Which(..) => "E0022",
             EvalError::NonUtf8Read(..) => "E0023",
+            EvalError::NonUtf8Path(..) => "E0040",
             EvalError::Glob(..) => "E0024",
             EvalError::Shell(..) => "E0025",
             EvalError::Path(..) => "E0026",
@@ -202,7 +206,6 @@ impl werk_util::AsDiagnostic for EvalError {
             EvalError::AssertEqFailed(..) => "E0029",
             EvalError::AssertMatchFailed(..) => "E0030",
             EvalError::AssertCustomFailed(..) => "E0031",
-            EvalError::PathResolution(_, ResolvePathError::Ambiguous(_)) => "E0032",
             EvalError::IncludeError(_, err) => {
                 let mut groups = err.as_diagnostic(source_map);
                 groups.push(
@@ -237,15 +240,6 @@ impl werk_util::AsDiagnostic for EvalError {
             EvalError::NoSuchCaptureGroup(..) => diag.element(Level::HELP.message(
                 "pattern capture groups are zero-indexed, starting from 0",
             )),
-            EvalError::PathResolution(_, ResolvePathError::Ambiguous(err)) => {
-                let previous_definition_file = source_map.get_source(err.build_recipe.file).expect("invalid file ID");
-                diag
-                .element(
-                    Snippet::source(previous_definition_file.source)
-                        .path(previous_definition_file.file)
-                        .annotation(AnnotationKind::Context.span(err.build_recipe.span.into()).label("matched this build recipe")))
-                .element(Level::HELP.message("use `<...:out-dir>` or `<...:workspace>` to disambiguate between paths in the workspace and the output directory"))
-            },
             EvalError::DuplicateConfigStatement(_, previous_span) => {
                 let previous_definition_file = source_map.get_source(previous_span.file).expect("invalid file ID");
                 diag
@@ -269,7 +263,7 @@ impl werk_util::AsDiagnostic for EvalError {
 #[derive(Debug, Clone)]
 pub struct ShellError {
     pub command: ShellCommandLine,
-    pub result: Arc<std::io::Result<std::process::Output>>,
+    pub result: Arc<Result<std::process::Output, IoError>>,
 }
 
 impl PartialEq for ShellError {
@@ -277,7 +271,7 @@ impl PartialEq for ShellError {
         self.command == other.command
             && match (&*self.result, &*other.result) {
                 (Ok(l), Ok(r)) => l == r,
-                (Err(l), Err(r)) => l.kind() == r.kind(),
+                (Err(l), Err(r)) => l == r,
                 _ => false,
             }
     }
@@ -301,19 +295,8 @@ impl std::fmt::Display for ShellError {
     }
 }
 
-#[derive(Debug, Clone, thiserror::Error, PartialEq)]
-#[error(
-    "ambiguous path resolution: {path} exists in the workspace, but also matches a build recipe"
-)]
-pub struct AmbiguousPathError {
-    pub path: Absolute<werk_fs::PathBuf>,
-    pub build_recipe: DiagnosticSpan,
-}
-
 #[derive(Debug, thiserror::Error, Clone, PartialEq)]
 pub enum ResolvePathError {
-    #[error("{0}")]
-    Ambiguous(AmbiguousPathError),
     #[error("path resolution `<...>` interpolations cannot be used in patterns")]
     Illegal,
 }

@@ -4,12 +4,12 @@ use futures::{StreamExt, future, pin_mut};
 use parking_lot::Mutex;
 use stringleton::Symbol;
 use werk_eval::{
-    Env, Eval, EvaluatedBuildRecipe, EvaluatedTaskRecipe, RunCommand, ShellCommandLine, TaskName,
-    Warning,
+    Env, Eval, EvalError, EvaluatedBuildRecipe, EvaluatedTaskRecipe, RunCommand, Scope,
+    ShellCommandLine, TaskName, Warning,
 };
-use werk_fs::{Absolute, SymPath};
+use werk_fs::{Absolute, PathError, SymPath};
 use werk_planner::{EvaluatedTask, PlannerError, RecipeMatch, TaskGraph, TaskId, TaskSpec};
-use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, broadcast_one, cancel};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticSpan, IoError, broadcast_one, cancel};
 
 use crate::{
     ChildCaptureOutput, ChildLinesStream, Error, Outdatedness, OutdatednessTracker, Reason,
@@ -131,7 +131,10 @@ impl<'a> Runner<'a> {
 
     pub async fn run(&self, mut task_graph: TaskGraph<'a>) -> Result<(), Annotated<'a, Error>> {
         let mut run_state = self.state.lock();
-        assert!(!run_state.is_some(), "Runner is already running; reset it first");
+        assert!(
+            !run_state.is_some(),
+            "Runner is already running; reset it first"
+        );
         let mut tasks = Vec::with_capacity(task_graph.num_tasks());
         let mut status_senders = Vec::with_capacity(task_graph.num_tasks());
         let mut status_receivers = Vec::with_capacity(task_graph.num_tasks());
@@ -332,7 +335,7 @@ impl<'a> Inner<'a> {
             .take_build_target_cache(recipe_match.target_file);
         let out_mtime = self
             .workspace
-            .get_existing_output_file(recipe_match.target_file.as_path())?
+            .stat_file_if_exists(recipe_match.target_file.as_path())?
             .map(|entry| entry.metadata.mtime);
 
         let mut outdatedness = OutdatednessTracker::new(
@@ -372,7 +375,7 @@ impl<'a> Inner<'a> {
 
         // Create the parent directory for the target file if it doesn't exist.
         self.workspace
-            .create_output_parent_dirs(recipe_match.target_file.as_path())?;
+            .create_parent_dirs(recipe_match.target_file.as_path())?;
 
         let (outdated, new_cache) = outdatedness.finish();
         self.workspace
@@ -406,7 +409,7 @@ impl<'a> Inner<'a> {
     }
 
     fn check_exists(&self, path: &Absolute<werk_fs::Path>) -> Result<BuildStatus, Error> {
-        let Some(entry) = self.workspace.get_project_file(path) else {
+        let Some(entry) = self.workspace.stat_file_if_exists(path)? else {
             return Err(Error::Planner(PlannerError::NoRuleToBuildTarget(
                 path.to_string(),
             )));
@@ -423,20 +426,19 @@ impl<'a> Inner<'a> {
     /// 3. When the file neither exists in the filesystem, nor in the output
     ///    directory, nor is there a build recipe to produce it, ignore it.
     fn check_exists_relaxed(&self, path: &Absolute<werk_fs::Path>) -> BuildStatus {
-        let mtime = if let Some(entry) = self.workspace.get_project_file(path) {
-            Some(entry.metadata.mtime)
-        } else if let Ok(Some(entry)) = self.workspace.get_existing_output_file(path) {
-            Some(entry.metadata.mtime)
-        } else {
-            None
-        };
+        let mtime = self
+            .workspace
+            .stat_file_if_exists(path)
+            .ok()
+            .flatten()
+            .map(|e| e.metadata.mtime);
 
         if let Some(mtime) = mtime {
             tracing::debug!("Check file mtime `{path}`: {mtime:?}");
             BuildStatus::Exists(Absolute::symbolicate(path), mtime)
         } else {
             // The dependency could not be found anywhere, so just ignore it.
-            tracing::debug!("Depfile dependency not found anywhere, ignoring it: {path}");
+            tracing::debug!("Depfile dependency not found, ignoring it: {path}");
             BuildStatus::Ignore(Absolute::symbolicate(path))
         }
     }
@@ -501,22 +503,14 @@ impl<'a> Inner<'a> {
                     self.workspace.io.write_file(&path_buf, &vec)?;
                 }
                 RunCommand::Copy(from, to) => {
-                    let Some(src_entry) =
-                        self.workspace.get_existing_project_or_output_file(&from)?
-                    else {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::NotFound,
-                            "`copy` source file not found in workspace or output directory",
-                        )
-                        .into());
-                    };
+                    let src_entry = self.workspace.stat_file(&from)?;
                     self.workspace.io.copy_file(&src_entry.path, &to)?;
                 }
                 RunCommand::Delete(span, paths) => {
                     self.execute_recipe_delete_command(task_id, &paths, silent, span)?;
                 }
                 RunCommand::Touch(span, paths) => {
-                    self.execute_recipe_touch_command(task_id, &paths, silent, span)?;
+                    self.execute_recipe_touch_command(&paths, span)?;
                 }
                 RunCommand::Info(_span, message) => {
                     self.workspace.render.message(Some(task_id), &message);
@@ -608,7 +602,7 @@ impl<'a> Inner<'a> {
         self.workspace
             .render
             .did_execute(task_id, command_line, &result, step, num_steps);
-        let status = result?;
+        let status = result.map_err(|e| IoError::new(&command_line.program, e))?;
         if !status.success() {
             return Err(Error::CommandFailed(status));
         }
@@ -692,26 +686,22 @@ impl<'a> Inner<'a> {
         span: DiagnosticSpan,
     ) -> Result<(), Error> {
         for path in paths {
-            if self.workspace.is_in_output_directory(path) {
-                match self.workspace.io.delete_file(path) {
-                    Ok(()) => (),
-                    Err(err) => match err.kind() {
-                        std::io::ErrorKind::NotFound => {
-                            if !silent {
-                                self.workspace.render.warning(
-                                    Some(task_id),
-                                    &Warning::IgnoringFileNotFound(span, path.clone()),
-                                );
-                            }
+            self.check_protected(path, span, "delete")?;
+        }
+        for path in paths {
+            match self.workspace.io.delete_file(path) {
+                Ok(()) => (),
+                Err(err) => match err.error.kind() {
+                    std::io::ErrorKind::NotFound => {
+                        if !silent {
+                            self.workspace.render.warning(
+                                Some(task_id),
+                                &Warning::IgnoringFileNotFound(span, path.clone()),
+                            );
                         }
-                        _ => return Err(err.into()),
-                    },
-                }
-            } else if !silent {
-                self.workspace.render.warning(
-                    Some(task_id),
-                    &Warning::IgnoringPathOutsideOutputDirectory(span, path.clone()),
-                );
+                    }
+                    _ => return Err(err.into()),
+                },
             }
         }
 
@@ -720,20 +710,44 @@ impl<'a> Inner<'a> {
 
     fn execute_recipe_touch_command(
         &self,
-        task_id: TaskName,
         paths: &[Absolute<std::path::PathBuf>],
-        silent: bool,
         span: DiagnosticSpan,
     ) -> Result<(), Error> {
         for path in paths {
-            if self.workspace.is_in_output_directory(path) {
-                self.workspace.io.touch(path)?;
-            } else if !silent {
-                self.workspace.render.warning(
-                    Some(task_id),
-                    &Warning::IgnoringPathOutsideOutputDirectory(span, path.clone()),
-                );
+            self.check_protected(path, span, "touch")?;
+        }
+
+        for path in paths {
+            self.workspace.io.touch(path)?;
+        }
+
+        Ok(())
+    }
+
+    fn check_protected(
+        &self,
+        path: &Absolute<std::path::Path>,
+        span: DiagnosticSpan,
+        operation: &'static str,
+    ) -> Result<(), Error> {
+        let workspace_path = match self.workspace.unresolve_path(path) {
+            Ok(path) => path,
+            Err(PathError::UnresolveBeyondRoot(resolved)) => {
+                return Err(Error::WriteBeyondRoot {
+                    span: Some(span),
+                    op: operation,
+                    path: resolved,
+                });
             }
+            Err(err) => return Err(Error::eval(EvalError::Path(span, err))),
+        };
+
+        if self.workspace.is_path_protected(&workspace_path) {
+            return Err(Error::ProtectedPath {
+                span: Some(span),
+                op: operation,
+                path: path.as_inner().to_owned(),
+            });
         }
 
         Ok(())

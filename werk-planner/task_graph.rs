@@ -88,6 +88,15 @@ impl<'a> TaskGraph<'a> {
         }
     }
 
+    /// Get all files with no dependencies, meaning that they are input files.
+    /// This includes files discovered through depfiles.
+    pub fn get_input_files(&self) -> impl Iterator<Item = &werk_fs::Absolute<werk_fs::SymPath>> {
+        self.task_specs.iter().filter_map(|spec| match spec {
+            TaskSpec::Recipe(_) => None,
+            TaskSpec::CheckExists(path) | TaskSpec::CheckExistsRelaxed(path) => Some(path),
+        })
+    }
+
     pub fn add_dependency(&mut self, task: TaskId, depends_on: TaskId) {
         let index = task.index();
         insert_ordered(&mut self.dependency_lists[index], depends_on);

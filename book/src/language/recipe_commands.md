@@ -210,14 +210,10 @@ build "message.txt" {
 
 ## `copy`
 
-Copy files to a file or directory path in the output directory.
+Copy file(s).
 
 The destination path is an [abstract path](../paths.md) that will be resolved
-relative to the output directory. This command will never overwrite any file
-outside of the output directory.
-
-The source path may refer to files or directories in the output directory or in
-the workspace.
+relative to the workspace directory.
 
 **Note:** The source-path does _not_ automatically participate in [outdatedness
 checks](../outdatedness.md) for the recipe. The dependency must be established

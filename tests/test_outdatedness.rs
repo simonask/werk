@@ -95,19 +95,19 @@ async fn test_outdated_env() -> anyhow::Result<()> {
         program: program_path("write"),
         arguments: vec![
             "debug".into(),
-            test.output_path(["env-dep"]).display().to_string()
+            test.workspace_path(["env-dep"]).display().to_string()
         ],
     }));
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.did_write_output_file(&[".werk-cache"]));
+    assert!(test.did_write_output_file(&["target", ".werk-cache"]));
 
     assert!(contains_file(
         &test.io.filesystem.lock(),
-        &test.output_path([".werk-cache"])
+        &test.workspace_path(["target", ".werk-cache"])
     ));
     assert!(contains_file(
         &test.io.filesystem.lock(),
-        &test.output_path(["env-dep"])
+        &test.workspace_path(["env-dep"])
     ));
 
     // Change the environment!
@@ -152,11 +152,11 @@ async fn test_outdated_which() -> anyhow::Result<()> {
     }));
 
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.did_write_output_file(&[".werk-cache"]));
+    assert!(test.did_write_output_file(&["target", ".werk-cache"]));
 
     assert!(contains_file(
         &test.io.filesystem.lock(),
-        &test.output_path([".werk-cache"])
+        &test.workspace_path(["target", ".werk-cache"])
     ));
 
     // Change the environment!
@@ -217,11 +217,11 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
         arguments: vec![],
     }));
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.did_write_output_file(&[".werk-cache"]));
+    assert!(test.did_write_output_file(&["target", ".werk-cache"]));
 
     assert!(contains_file(
         &test.io.filesystem.lock(),
-        &test.output_path([".werk-cache"]),
+        &test.workspace_path(["target", ".werk-cache"]),
     ));
 
     // Change the environment!
@@ -236,7 +236,7 @@ async fn test_outdated_recipe_changed() -> anyhow::Result<()> {
         program: program_path("clang"),
         arguments: vec![
             String::from("-o"),
-            test.output_path(["which-dep"]).display().to_string()
+            test.workspace_path(["which-dep"]).display().to_string()
         ],
     }));
 
@@ -288,9 +288,12 @@ async fn test_outdated_glob() -> anyhow::Result<()> {
     }));
 
     // println!("oplog = {:#?}", &*io.oplog.lock());
-    assert!(test.did_write_output_file(&[".werk-cache"]));
+    assert!(test.did_write_output_file(&["target", ".werk-cache"]));
 
-    assert!(test.io.contains_file(test.output_path([".werk-cache"])));
+    assert!(
+        test.io
+            .contains_file(test.workspace_path(["target", ".werk-cache"]))
+    );
 
     // Change the environment!
     test.io.delete_file(test.workspace_path(["b.c"])).unwrap();
@@ -345,18 +348,18 @@ async fn test_outdated_define() -> anyhow::Result<()> {
         program: program_path("write"),
         arguments: vec![
             "debug".into(),
-            test.output_path(["env-dep"]).display().to_string()
+            test.workspace_path(["env-dep"]).display().to_string()
         ],
     }));
 
-    assert!(test.did_write_output_file(&[".werk-cache"]));
+    assert!(test.did_write_output_file(&["target", ".werk-cache"]));
     assert!(contains_file(
         &test.io.filesystem.lock(),
-        &test.output_path(&[".werk-cache"])
+        &test.workspace_path(&["target", ".werk-cache"])
     ));
     assert!(contains_file(
         &test.io.filesystem.lock(),
-        &test.output_path(&["env-dep"])
+        &test.workspace_path(&["env-dep"])
     ));
 
     // Override the `profile` variable manually.
@@ -449,11 +452,11 @@ build "binary" {
 
     let depfile = format!(
         "{}: {}",
-        test.output_path(["binary"]).display(),
+        test.workspace_path(["binary"]).display(),
         // File in the output directory should be considered as a dependency,
         // but the fact that it does not exist in the workspace should not force
         // the target to become outdated.
-        test.output_path(["nonexistent_source.rs"]).display()
+        test.workspace_path(["nonexistent_source.rs"]).display()
     );
     // The binary exists and is up to date.
     test.set_output_file(&["binary"], "foo").unwrap();
@@ -491,5 +494,5 @@ build "binary" {
     plan_build_and_get_status(workspace, "binary")
         .await
         .unwrap();
-    test.did_touch(test.output_path(["binary"]), mtime);
+    test.did_touch(test.workspace_path(["binary"]), mtime);
 }
