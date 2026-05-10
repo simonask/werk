@@ -85,3 +85,24 @@ See [Examples](./examples).
 
 * [ ] IDE integration to run individual tasks.
 * [ ] WASM host support.
+
+## LLM transparency statement
+
+Werk is designed and written by humans, with very limited use of LLMs.
+
+1. Design and implementation of all major components is done by humans.
+2. LLMs have been used at the "auto-complete" level within the main components,
+   and all LLM output has been carefully reviewed.
+3. LLMs have been used to give feedback about and review certain aspects of the
+   code. Humans have verified and reacted to the feedback.
+4. Certain minor components have been developed by LLMs, especially around
+   terminal output formatting.
+5. The Zed extension and tree-sitter parser has been fully authored by Claude
+   Opus 4.7 based on Werk's native parser, and carefully reviewed before being
+   published.
+
+If any piece of this project violates the copyright of any author through the
+use of LLMs and their unattributed training data, such violation is
+unintentional and will be fixed as soon as possible, either through attribution
+or removal of the offending code. Please don't hesitate to report any such
+violations.
