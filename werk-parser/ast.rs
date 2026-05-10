@@ -13,7 +13,7 @@ use stringleton::Symbol;
 
 /// Whitespace and comments within statements and expressions (not doc
 /// comments).
-#[derive(Default, PartialEq, Clone, Copy, Eq, Hash)]
+#[derive(Default, PartialEq, Clone, Copy, Eq)]
 #[must_use]
 pub struct Whitespace(pub Span);
 
@@ -239,7 +239,7 @@ impl Spanned for ConfigBool {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct Ident {
     #[serde(skip, default)]
@@ -348,7 +348,7 @@ impl SemanticHash for BuildRecipe {
 }
 
 /// A `{...}` block.
-#[derive(Debug, PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct Body<T> {
     #[serde(skip, default)]
@@ -373,7 +373,7 @@ impl<T: SemanticHash> SemanticHash for Body<T> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, PartialEq, Eq, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
 pub struct BodyStmt<T> {
     #[serde(skip, default)]

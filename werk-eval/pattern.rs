@@ -1,6 +1,6 @@
 use werk_util::DiagnosticSpan;
 
-#[derive(Debug, Clone, Eq, Hash)]
+#[derive(Debug, Clone, Eq)]
 pub struct Pattern {
     /// The source span for the pattern.
     pub span: DiagnosticSpan,

@@ -2,7 +2,7 @@ use std::hash::Hash;
 
 use crate::{DiagnosticFileId, SemanticHash};
 
-#[derive(Clone, Copy, Default, Eq, Hash)]
+#[derive(Clone, Copy, Default, Eq)]
 pub struct Span {
     pub start: Offset,
     pub end: Offset,
@@ -226,7 +226,7 @@ impl From<Span> for std::ops::Range<usize> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DiagnosticSpan {
     pub file: DiagnosticFileId,
     pub span: Span,
