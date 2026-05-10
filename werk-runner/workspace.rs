@@ -273,11 +273,7 @@ impl Workspace {
         })?;
         for included_file in files {
             let file_entry = self.stat_file(&included_file).map_err(|err| {
-                EvalError::IncludeIoError(
-                    file.span(stmt.span),
-                    included_file.to_string(),
-                    err,
-                )
+                EvalError::IncludeIoError(file.span(stmt.span), included_file.to_string(), err)
             })?;
 
             // Note: The included file's mtime is not included in outdatedness
@@ -285,11 +281,7 @@ impl Workspace {
             // fine-grained hashing.
 
             let source = self.io.read_file(&file_entry.path).map_err(|err| {
-                EvalError::IncludeIoError(
-                    file.span(stmt.span),
-                    included_file.to_string(),
-                    err,
-                )
+                EvalError::IncludeIoError(file.span(stmt.span), included_file.to_string(), err)
             })?;
 
             let source = String::from_utf8(source).map_err(|_| {
@@ -496,9 +488,11 @@ impl Workspace {
                     &|path| {
                         if let Some(unresolved_path) = self.unresolve_path(path).ok()
                             && let Ok(metadata) = self.io.metadata(path)
-                            && metadata.is_file && matcher.is_match(unresolved_path.as_os_path()) {
-                                matches.lock().push(unresolved_path);
-                            }
+                            && metadata.is_file
+                            && matcher.is_match(unresolved_path.as_os_path())
+                        {
+                            matches.lock().push(unresolved_path);
+                        }
                     },
                 )?;
 
