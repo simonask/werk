@@ -23,7 +23,7 @@ let foo = "b"   # valid
 let bar = foo   # == "b"
 ```
 
-## Global variables are public
+## Config variables are public
 
 Variables defined with the `config` keyword instead of `let` at the global scope
 (i.e., outside of any recipe) are public, and will appear in the output of `werk
@@ -38,7 +38,7 @@ config profile = "debug"
 
 ```sh
 $ werk --list
-Global variables:
+Config variables:
     profile = "debug" # Set the build profile.
 ```
 

@@ -1,4 +1,4 @@
-default out-dir = "../../target/examples/c"
+default cache-dir = "../../target/examples/c"
 default target = "build"
 
 include "config.werk"
@@ -7,9 +7,9 @@ include "recipes.werk"
 let executable = "{profile}/example{EXE_SUFFIX}"
 
 # Build the executable.
-build "{executable}" {
+build "target/{executable}" {
     from glob "*.c" | match {
-        "%.c" => "/{profile}%.o"
+        "%.c" => "target/{profile}%.o"
     }
     run "{ld} -o <out> <in*>"
 }
@@ -27,10 +27,9 @@ task run {
 }
 
 task clean {
-    let object-files = glob "*.c" | map "{profile}{:.c=.o}"
+    let object-files = glob "*.c" | map "target/{profile}{:.c=.o}"
     run {
         delete object-files
         delete executable
     }
 }
-
