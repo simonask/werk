@@ -1941,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "tests"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ahash",
  "anstream 0.6.21",
@@ -2382,7 +2382,7 @@ dependencies = [
 
 [[package]]
 name = "werk-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ahash",
  "annotate-snippets",
@@ -2421,7 +2421,7 @@ dependencies = [
 
 [[package]]
 name = "werk-depfile"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "thiserror",
  "winnow 1.0.2",
@@ -2429,7 +2429,7 @@ dependencies = [
 
 [[package]]
 name = "werk-eval"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ahash",
  "annotate-snippets",
@@ -2451,7 +2451,7 @@ dependencies = [
 
 [[package]]
 name = "werk-fs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "stringleton",
@@ -2462,7 +2462,7 @@ dependencies = [
 
 [[package]]
 name = "werk-parser"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "annotate-snippets",
  "anstream 0.6.21",
@@ -2479,7 +2479,7 @@ dependencies = [
 
 [[package]]
 name = "werk-planner"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ahash",
  "annotate-snippets",
@@ -2500,7 +2500,7 @@ dependencies = [
 
 [[package]]
 name = "werk-runner"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ahash",
  "annotate-snippets",
@@ -2535,7 +2535,7 @@ dependencies = [
 
 [[package]]
 name = "werk-util"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "ahash",
  "annotate-snippets",
