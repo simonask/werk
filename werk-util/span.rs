@@ -106,7 +106,7 @@ impl From<Offset> for Span {
     }
 }
 
-#[derive(Clone, Copy, Eq, Hash)]
+#[derive(Clone, Copy, Eq)]
 pub struct Offset(pub u32);
 
 impl Offset {
