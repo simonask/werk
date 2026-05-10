@@ -39,7 +39,7 @@ pub trait Ellipsis {
     fn write_ellipsis(&self, w: &mut dyn std::fmt::Write, remaining: usize) -> std::fmt::Result;
 }
 
-impl Ellipsis for &str {
+impl Ellipsis for str {
     fn width_for_remaining_items(&self, _: usize) -> usize {
         self.graphemes(true).count()
     }
@@ -68,12 +68,12 @@ pub fn ellipsize_with<W, E>(
     input: &str,
     mode: StringBreakMode,
     max_width: usize,
-    ellipsis: E,
+    ellipsis: &E,
     location: Location,
 ) -> std::fmt::Result
 where
     W: std::fmt::Write,
-    E: Ellipsis,
+    E: Ellipsis + ?Sized,
 {
     if max_width == 0 {
         return Ok(());
@@ -179,13 +179,13 @@ pub fn ellipsize_list<W, E>(
     input: impl ExactSizeIterator<Item: std::fmt::Display>,
     mode: ListBreakMode,
     max_length: usize,
-    ellipsis: E,
+    ellipsis: &E,
     location: Location,
     joiner: &str,
 ) -> std::fmt::Result
 where
     W: std::fmt::Write,
-    E: Ellipsis,
+    E: Ellipsis + ?Sized,
 {
     let joiner_width = joiner.graphemes(true).count();
     let item_count = input.len();
@@ -323,7 +323,7 @@ mod tests {
         input: &str,
         mode: StringBreakMode,
         max_width: usize,
-        ellipsis: impl Ellipsis,
+        ellipsis: &(impl Ellipsis + ?Sized),
         location: Location,
     ) -> String {
         let mut out = String::new();
@@ -546,7 +546,7 @@ mod tests {
             "abcdefghijklmnopqrstuvwxyz",
             StringBreakMode::GraphemeCluster,
             20,
-            AndMoreEllipsis,
+            &AndMoreEllipsis,
             Location::End,
         );
         assert!(graphemes_in(&out) <= 20, "{out:?} too wide");
@@ -622,12 +622,12 @@ mod tests {
         items: &[&str],
         mode: ListBreakMode,
         max_width: usize,
-        ellipsis: E,
+        ellipsis: &E,
         location: Location,
         joiner: &str,
     ) -> String
     where
-        E: Ellipsis,
+        E: Ellipsis + ?Sized,
     {
         let mut out = String::new();
         ellipsize_list(
@@ -746,7 +746,7 @@ mod tests {
             &items,
             ListBreakMode::BetweenItems,
             25,
-            AndMoreEllipsis,
+            &AndMoreEllipsis,
             Location::End,
             ", ",
         );
