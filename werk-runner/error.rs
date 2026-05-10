@@ -111,10 +111,8 @@ impl PartialEq for Error {
                 Self::TargetIsADirectory { path: lhs, .. },
                 Self::TargetIsADirectory { path: rhs, .. },
             ) => lhs == rhs,
-            (Self::ProtectedPath { path: lhs, .. }, Self::ProtectedPath { path: rhs, .. }) => {
-                lhs == rhs
-            }
-            (Self::WriteBeyondRoot { path: lhs, .. }, Self::WriteBeyondRoot { path: rhs, .. }) => {
+            (Self::ProtectedPath { path: lhs, .. }, Self::ProtectedPath { path: rhs, .. })
+            | (Self::WriteBeyondRoot { path: lhs, .. }, Self::WriteBeyondRoot { path: rhs, .. }) => {
                 lhs == rhs
             }
             (Self::Custom(l0), Self::Custom(r0)) => l0.to_string() == r0.to_string(),
