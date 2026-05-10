@@ -187,109 +187,20 @@ where
     W: std::fmt::Write,
     E: Ellipsis + ?Sized,
 {
-    let joiner_width = joiner.graphemes(true).count();
     let item_count = input.len();
 
     if item_count == 0 || max_length == 0 {
         return Ok(());
     }
 
-    let items: Vec<String> = input.map(|item| item.to_string()).collect();
-
     match mode {
         ListBreakMode::BetweenItems => {
-            let widths: Vec<usize> = items.iter().map(|s| s.graphemes(true).count()).collect();
-            let mut item_widths_sum: usize = widths.iter().sum();
-
-            // Fast path: everything fits without truncation.
-            let no_ellipsis_width = item_widths_sum + joiner_width * (item_count - 1);
-            if no_ellipsis_width <= max_length {
-                for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        output.write_str(joiner)?;
-                    }
-                    output.write_str(item)?;
-                }
-                return Ok(());
-            }
-
-            // Drop items (from the requested location) until the kept items plus
-            // the ellipsis — treated as an extra list element with a joiner on
-            // each side that has a neighbour — fit within max_length.
-            //
-            // Width formula: item_widths_sum + kept * joiner_width + e_width
-            //   kept == 0  →  just e_width (no joiners)
-            let mut indices: VecDeque<usize> = (0..item_count).collect();
-            let mut num_removed = 0usize;
-
-            while !indices.is_empty() {
-                let kept = indices.len();
-                let e_width = ellipsis.width_for_remaining_items(num_removed);
-                let total = item_widths_sum + kept * joiner_width + e_width;
-                if total <= max_length {
-                    break;
-                }
-                let removed_idx = match location {
-                    Location::Start => indices.pop_front().unwrap(),
-                    Location::Middle => {
-                        let mid = indices.len() / 2;
-                        indices.remove(mid).unwrap()
-                    }
-                    Location::End => indices.pop_back().unwrap(),
-                };
-                item_widths_sum -= widths[removed_idx];
-                num_removed += 1;
-            }
-
-            // Guard: the ellipsis alone won't fit either.
-            if ellipsis.width_for_remaining_items(num_removed) > max_length {
-                return Ok(());
-            }
-
-            // Write kept items with the ellipsis inserted at the right edge.
-            // The ellipsis is separated from its neighbours by the joiner, just
-            // like any other list element.
-            match location {
-                Location::Start => {
-                    ellipsis.write_ellipsis(output, num_removed)?;
-                    for &idx in &indices {
-                        output.write_str(joiner)?;
-                        output.write_str(&items[idx])?;
-                    }
-                }
-                Location::Middle => {
-                    if indices.is_empty() {
-                        ellipsis.write_ellipsis(output, num_removed)?;
-                    } else {
-                        let mid = indices.len() / 2;
-                        for (i, &idx) in indices.iter().enumerate() {
-                            if i > 0 {
-                                output.write_str(joiner)?;
-                            }
-                            if i == mid {
-                                ellipsis.write_ellipsis(output, num_removed)?;
-                                output.write_str(joiner)?;
-                            }
-                            output.write_str(&items[idx])?;
-                        }
-                    }
-                }
-                Location::End => {
-                    for (i, &idx) in indices.iter().enumerate() {
-                        if i > 0 {
-                            output.write_str(joiner)?;
-                        }
-                        output.write_str(&items[idx])?;
-                    }
-                    if !indices.is_empty() {
-                        output.write_str(joiner)?;
-                    }
-                    ellipsis.write_ellipsis(output, num_removed)?;
-                }
-            }
-            Ok(())
+            ellipsize_list_between_items(output, input, max_length, ellipsis, location, joiner)
         }
         ListBreakMode::InsideItems(string_break_mode) => {
+            let items: Vec<String> = input.map(|item| item.to_string()).collect();
+            let joiner_width = joiner.graphemes(true).count();
+
             // Keep all items visible but truncate long ones individually.
             // Budget the available width evenly across items after reserving
             // space for the joiners between them.
@@ -313,6 +224,114 @@ where
             Ok(())
         }
     }
+}
+
+fn ellipsize_list_between_items<W, E>(
+    output: &mut W,
+    input: impl ExactSizeIterator<Item: std::fmt::Display>,
+    max_length: usize,
+    ellipsis: &E,
+    location: Location,
+    joiner: &str,
+) -> std::fmt::Result
+where
+    W: std::fmt::Write,
+    E: Ellipsis + ?Sized,
+{
+    let item_count = input.len();
+    let joiner_width = joiner.graphemes(true).count();
+    let items: Vec<String> = input.map(|item| item.to_string()).collect();
+
+    let widths: Vec<usize> = items.iter().map(|s| s.graphemes(true).count()).collect();
+    let mut item_widths_sum: usize = widths.iter().sum();
+
+    // Fast path: everything fits without truncation.
+    let no_ellipsis_width = item_widths_sum + joiner_width * (item_count - 1);
+    if no_ellipsis_width <= max_length {
+        for (i, item) in items.iter().enumerate() {
+            if i > 0 {
+                output.write_str(joiner)?;
+            }
+            output.write_str(item)?;
+        }
+        return Ok(());
+    }
+
+    // Drop items (from the requested location) until the kept items plus
+    // the ellipsis — treated as an extra list element with a joiner on
+    // each side that has a neighbour — fit within max_length.
+    //
+    // Width formula: item_widths_sum + kept * joiner_width + e_width
+    //   kept == 0  →  just e_width (no joiners)
+    let mut indices: VecDeque<usize> = (0..item_count).collect();
+    let mut num_removed = 0usize;
+
+    while !indices.is_empty() {
+        let kept = indices.len();
+        let e_width = ellipsis.width_for_remaining_items(num_removed);
+        let total = item_widths_sum + kept * joiner_width + e_width;
+        if total <= max_length {
+            break;
+        }
+        let removed_idx = match location {
+            Location::Start => indices.pop_front().unwrap(),
+            Location::Middle => {
+                let mid = indices.len() / 2;
+                indices.remove(mid).unwrap()
+            }
+            Location::End => indices.pop_back().unwrap(),
+        };
+        item_widths_sum -= widths[removed_idx];
+        num_removed += 1;
+    }
+
+    // Guard: the ellipsis alone won't fit either.
+    if ellipsis.width_for_remaining_items(num_removed) > max_length {
+        return Ok(());
+    }
+
+    // Write kept items with the ellipsis inserted at the right edge.
+    // The ellipsis is separated from its neighbours by the joiner, just
+    // like any other list element.
+    match location {
+        Location::Start => {
+            ellipsis.write_ellipsis(output, num_removed)?;
+            for &idx in &indices {
+                output.write_str(joiner)?;
+                output.write_str(&items[idx])?;
+            }
+        }
+        Location::Middle => {
+            if indices.is_empty() {
+                ellipsis.write_ellipsis(output, num_removed)?;
+            } else {
+                let mid = indices.len() / 2;
+                for (i, &idx) in indices.iter().enumerate() {
+                    if i > 0 {
+                        output.write_str(joiner)?;
+                    }
+                    if i == mid {
+                        ellipsis.write_ellipsis(output, num_removed)?;
+                        output.write_str(joiner)?;
+                    }
+                    output.write_str(&items[idx])?;
+                }
+            }
+        }
+        Location::End => {
+            for (i, &idx) in indices.iter().enumerate() {
+                if i > 0 {
+                    output.write_str(joiner)?;
+                }
+                output.write_str(&items[idx])?;
+            }
+            if !indices.is_empty() {
+                output.write_str(joiner)?;
+            }
+            ellipsis.write_ellipsis(output, num_removed)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
