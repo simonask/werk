@@ -1,3 +1,4 @@
+use annotate_snippets::{AnnotationKind, Snippet};
 use std::sync::Arc;
 use werk_eval::TaskName;
 use werk_planner::PlannerError;
@@ -28,12 +29,11 @@ pub enum Error {
     /// `TrackRunner` interface.
     #[error("command failed: {0}")]
     CommandFailed(std::process::ExitStatus),
-    #[error(
-        "cannot convert abstract paths to native OS paths yet; output directory has not been set in the [global] scope"
-    )]
-    OutputDirectoryNotAvailable,
-    #[error(".werk-cache file found in workspace; please add its directory to .gitignore")]
-    ClobberedWorkspace(std::path::PathBuf),
+    #[error("build recipe target is a directory: {path}")]
+    TargetIsADirectory {
+        span: DiagnosticSpan,
+        path: werk_fs::PathBuf,
+    },
     #[error("cannot {op} because the path is protected: {}", path.display())]
     ProtectedPath {
         span: Option<DiagnosticSpan>,
@@ -81,8 +81,7 @@ impl Error {
             | Error::DuplicateCommand(_)
             | Error::DuplicateTarget(_)
             | Error::Planner(_)
-            | Error::OutputDirectoryNotAvailable
-            | Error::ClobberedWorkspace(_)
+            | Error::TargetIsADirectory { .. }
             | Error::InvalidTargetPath(..)
             | Error::InvalidPathInDepfile(..)
             | Error::MustMigrate(..)
@@ -108,7 +107,16 @@ impl PartialEq for Error {
             (Self::DuplicateCommand(l0), Self::DuplicateCommand(r0))
             | (Self::DuplicateTarget(l0), Self::DuplicateTarget(r0)) => l0 == r0,
             (Self::CommandFailed(l0), Self::CommandFailed(r0)) => l0 == r0,
-            (Self::ClobberedWorkspace(l0), Self::ClobberedWorkspace(r0)) => l0 == r0,
+            (
+                Self::TargetIsADirectory { path: lhs, .. },
+                Self::TargetIsADirectory { path: rhs, .. },
+            ) => lhs == rhs,
+            (Self::ProtectedPath { path: lhs, .. }, Self::ProtectedPath { path: rhs, .. }) => {
+                lhs == rhs
+            }
+            (Self::WriteBeyondRoot { path: lhs, .. }, Self::WriteBeyondRoot { path: rhs, .. }) => {
+                lhs == rhs
+            }
             (Self::Custom(l0), Self::Custom(r0)) => l0.to_string() == r0.to_string(),
             _ => core::mem::discriminant(self) == core::mem::discriminant(other),
         }
@@ -167,8 +175,7 @@ impl werk_util::AsDiagnostic for Error {
             Error::DuplicateCommand(..) => "R0009",
             Error::DuplicateTarget(..) => "R0010",
             Error::CommandFailed(..) => "R0012",
-            Error::OutputDirectoryNotAvailable => "R0013",
-            Error::ClobberedWorkspace(..) => "R0016",
+            Error::TargetIsADirectory { .. } => "R0052",
             Error::InvalidTargetPath(..) => "R0017",
             Error::InvalidPathInDepfile(..) => "R0018",
             Error::Custom(..) | Error::MustMigrate(_) => "R9999",
@@ -177,8 +184,25 @@ impl werk_util::AsDiagnostic for Error {
         };
 
         // Use the Display impl from thiserror.
-        vec![annotate_snippets::Group::with_title(
+        let diag = annotate_snippets::Group::with_title(
             Level::ERROR.primary_title(self.to_string()).id(id),
-        )]
+        );
+
+        let diag =
+            match self {
+                Error::TargetIsADirectory { span, path } => {
+                    let source_file = source_map.get_source(span.file).expect("invalid file ID");
+                    diag.element(
+                        Snippet::source(source_file.source)
+                            .path(source_file.file)
+                            .annotation(AnnotationKind::Context.span(span.span.into()).label(
+                                format!("this build recipe target matches the directory '{path}'"),
+                            )),
+                    )
+                }
+                _ => diag,
+            };
+
+        vec![diag]
     }
 }

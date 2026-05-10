@@ -1,7 +1,7 @@
 use stringleton::Symbol;
 
 use werk_fs::Absolute;
-use werk_util::{DiagnosticFileId, Spanned as _};
+use werk_util::{DiagnosticFileId, DiagnosticSpan, Spanned as _};
 
 use std::sync::Arc;
 
@@ -753,6 +753,7 @@ pub fn eval_glob(
 }
 
 pub struct EvaluatedBuildRecipe {
+    pub span: DiagnosticSpan,
     pub explicit_dependencies: Vec<StringValue>,
     pub depfile: Option<StringValue>,
     pub commands: Vec<RunCommand>,
@@ -761,10 +762,12 @@ pub struct EvaluatedBuildRecipe {
 
 pub fn eval_build_recipe_statements(
     scope: &mut dyn BuildTaskScope,
+    span: DiagnosticSpan,
     body: &[ast::BodyStmt<ast::BuildRecipeStmt>],
     file: DiagnosticFileId,
 ) -> Result<Eval<EvaluatedBuildRecipe>, EvalError> {
     let mut evaluated = EvaluatedBuildRecipe {
+        span,
         explicit_dependencies: Vec::new(),
         depfile: None,
         commands: Vec::new(),

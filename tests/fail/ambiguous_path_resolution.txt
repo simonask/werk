@@ -1,1 +1,1 @@
-error[R0005]: dependency failed: build: /workspace/bar: is a directory
+error[R0005]: dependency failed: build: build recipe target is a directory: /bar

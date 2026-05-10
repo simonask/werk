@@ -335,10 +335,20 @@ impl<'a> Inner<'a> {
         let cache = self
             .workspace
             .take_build_target_cache(recipe_match.target_file);
-        let out_mtime = self
+        let out_mtime = match self
             .workspace
-            .stat_file_if_exists(recipe_match.target_file.as_path())?
-            .map(|entry| entry.metadata.mtime);
+            .stat_file_if_exists(recipe_match.target_file.as_path())
+        {
+            Ok(Some(entry)) => Some(entry.metadata.mtime),
+            Ok(None) => None,
+            Err(err) if err.error.kind() == std::io::ErrorKind::IsADirectory => {
+                return Err(Error::TargetIsADirectory {
+                    span: recipe_match.recipe.span,
+                    path: recipe_match.target_file.as_path().to_owned().into_inner(),
+                });
+            }
+            Err(err) => return Err(err.into()),
+        };
 
         let mut outdatedness = OutdatednessTracker::new(
             self.workspace,

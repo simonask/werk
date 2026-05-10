@@ -172,6 +172,7 @@ impl<'a> Planner<'a> {
 
         let evaluated = werk_eval::eval_build_recipe_statements(
             &mut scope,
+            build_recipe_match.recipe.span,
             &build_recipe_match.recipe.ast.body.statements,
             build_recipe_match.recipe.span.file,
         )
