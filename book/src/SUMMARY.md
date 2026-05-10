@@ -38,7 +38,7 @@
 - [Command-line reference](command_line.md)
   - [Completion](command_line_completion.md)
 - [Environment variables](env.md)
-- [Migrating to v0.2](./migrating_to_v0_2.md)
+- [Migrating to v0.2](./migrating_v0_2.md)
 
 -----------------------------
 
