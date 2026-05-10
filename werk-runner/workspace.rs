@@ -171,7 +171,7 @@ impl Workspace {
                         werk_util::Span::from_offset_and_len(werk_util::Offset(0), 0),
                     )),
                     previously_included_from,
-                    path.to_owned(),
+                    path.clone(),
                 ));
             }
         };
@@ -276,7 +276,7 @@ impl Workspace {
                 EvalError::IncludeIoError(
                     file.span(stmt.span),
                     included_file.to_string(),
-                    err.into(),
+                    err,
                 )
             })?;
 
@@ -288,7 +288,7 @@ impl Workspace {
                 EvalError::IncludeIoError(
                     file.span(stmt.span),
                     included_file.to_string(),
-                    err.into(),
+                    err,
                 )
             })?;
 
@@ -464,7 +464,7 @@ impl Workspace {
     }
 
     pub fn create_parent_dirs(&self, path: &Absolute<werk_fs::Path>) -> Result<(), Error> {
-        let fs_path = path.resolve(&self.project_root());
+        let fs_path = path.resolve(self.project_root());
         self.io.create_parent_dirs(&fs_path).map_err(Into::into)
     }
 
@@ -496,11 +496,9 @@ impl Workspace {
                     &|path| {
                         if let Some(unresolved_path) = self.unresolve_path(path).ok()
                             && let Ok(metadata) = self.io.metadata(path)
-                        {
-                            if metadata.is_file && matcher.is_match(unresolved_path.as_os_path()) {
+                            && metadata.is_file && matcher.is_match(unresolved_path.as_os_path()) {
                                 matches.lock().push(unresolved_path);
                             }
-                        }
                     },
                 )?;
 

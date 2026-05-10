@@ -258,7 +258,7 @@ impl<'a> TaskGraph<'a> {
             if !settings.all_files
                 && self.evaluated[index]
                     .as_ref()
-                    .map_or(false, |t| matches!(t, EvaluatedTask::CheckExists))
+                    .is_some_and(|t| matches!(t, EvaluatedTask::CheckExists))
             {
                 continue;
             }
@@ -267,7 +267,7 @@ impl<'a> TaskGraph<'a> {
                 if !settings.all_files
                     && self.evaluated[dep.index()]
                         .as_ref()
-                        .map_or(false, |dep| matches!(dep, EvaluatedTask::CheckExists))
+                        .is_some_and(|dep| matches!(dep, EvaluatedTask::CheckExists))
                 {
                     continue;
                 }

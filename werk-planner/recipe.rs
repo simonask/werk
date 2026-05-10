@@ -27,7 +27,7 @@ impl std::hash::Hash for RecipeMatch<'_> {
         core::mem::discriminant(self).hash(state);
         match self {
             RecipeMatch::Task(task_recipe) => {
-                std::ptr::from_ref::<TaskRecipe>(*task_recipe).hash(state)
+                std::ptr::from_ref::<TaskRecipe>(*task_recipe).hash(state);
             }
             RecipeMatch::Build(build_recipe_match) => build_recipe_match.hash(state),
         }

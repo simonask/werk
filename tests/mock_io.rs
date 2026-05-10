@@ -1200,12 +1200,12 @@ impl werk_eval::Io for MockIo {
                 match entry {
                     MockDirEntry::File(_, _) => {
                         if !ignore_explicitly.is_match(&*entry_path) {
-                            visit(&*entry_path)
+                            visit(&entry_path)
                         }
                     }
                     MockDirEntry::Dir(subdir) => {
                         if !ignore_explicitly.is_match(&*entry_path) {
-                            visit(&*entry_path);
+                            visit(&entry_path);
                         }
                         glob(&entry_path, subdir, visit, ignore_explicitly)?;
                     }

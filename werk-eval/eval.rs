@@ -701,7 +701,7 @@ pub fn eval_read(
     let path = path.absolutize(werk_fs::Path::ROOT).map_err(path_err)?;
     let fs_entry = scope
         .stat_file(&path)
-        .map_err(|err| EvalError::Io(file.span(expr.span), err.into()))?;
+        .map_err(|err| EvalError::Io(file.span(expr.span), err))?;
 
     let contents = scope
         .io()
