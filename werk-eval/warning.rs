@@ -34,6 +34,7 @@ pub enum Warning {
 }
 
 impl Warning {
+    #[allow(clippy::needless_pass_by_value)]
     pub fn custom(span: Option<DiagnosticSpan>, message: impl ToString) -> Self {
         Warning::Custom(span, message.to_string())
     }
@@ -48,12 +49,11 @@ impl Warning {
             Warning::IgnoringPathOutsideOutputDirectory(_, _) => "W0022",
             Warning::IgnoringFileNotFound(_, _) => "W0023",
             Warning::DepfileNotGenerated(_, _) => "W0030",
-            Warning::WarningExpression(_, _) => "W9999",
             Warning::UnusedDefine(_) => "W1000",
             Warning::CacheDirectoryChanged(..) => "W1001",
             Warning::ZombieChild => "W1002",
             Warning::ShadowingGlobalConstant(..) => "W1003",
-            Warning::Custom(..) => "W9999",
+            Warning::WarningExpression(_, _) | Warning::Custom(..) => "W9999",
         }
     }
 

@@ -92,7 +92,11 @@ impl<'a> Planner<'a> {
             match spec {
                 TaskSpec::Recipe(RecipeMatch::Build(build_recipe_match)) => {
                     tracing::trace!("Planning build recipe: {}", build_recipe_match.target_file);
-                    self.evaluate_and_plan_build_recipe(task_id, build_recipe_match, global_scope)?;
+                    self.evaluate_and_plan_build_recipe(
+                        task_id,
+                        &build_recipe_match,
+                        global_scope,
+                    )?;
                 }
                 TaskSpec::Recipe(RecipeMatch::Task(task_recipe_match)) => {
                     tracing::trace!("Planning task recipe: {}", task_recipe_match.name);
@@ -153,13 +157,13 @@ impl<'a> Planner<'a> {
     fn evaluate_and_plan_build_recipe(
         &mut self,
         task_id: TaskId,
-        build_recipe_match: BuildRecipeMatch<'a>,
+        build_recipe_match: &BuildRecipeMatch<'a>,
         global_scope: &dyn Scope,
     ) -> Result<(), Annotated<'a, PlannerError>> {
         let mut scope = BuildRecipeScope::new(
             global_scope,
             TaskName::Build(build_recipe_match.target_file),
-            &build_recipe_match,
+            build_recipe_match,
         );
         scope.set(
             sym!(out),
@@ -196,7 +200,7 @@ impl<'a> Planner<'a> {
                 depfile_span.with_file(build_recipe_match.recipe.span.file),
                 depfile,
                 &scope,
-            )?;
+            );
         }
         self.graph
             .set_evaluated(task_id, EvaluatedTask::Build(evaluated));
@@ -209,13 +213,13 @@ impl<'a> Planner<'a> {
         span: DiagnosticSpan,
         depfile_path: &str,
         scope: &BuildRecipeScope<'_>,
-    ) -> Result<(), Annotated<'a, PlannerError>> {
+    ) {
         let Ok(depfile_path) = werk_fs::Path::new(depfile_path) else {
             scope.warning(&Warning::custom(
                 Some(span),
                 format_args!("invalid depfile path '{depfile_path}'; ignoring"),
             ));
-            return Ok(());
+            return;
         };
         let depfile_path = match depfile_path.absolutize(werk_fs::Path::ROOT) {
             Ok(depfile_path) => depfile_path,
@@ -226,7 +230,7 @@ impl<'a> Planner<'a> {
                         "error absolutizing depfile path '{depfile_path}': {err}; ignoring"
                     ),
                 ));
-                return Ok(());
+                return;
             }
         };
 
@@ -249,13 +253,13 @@ impl<'a> Planner<'a> {
 
         let depfile_contents = match scope.io().read_file(&depfile_os_path) {
             Ok(depfile_contents) => depfile_contents,
-            Err(err) if err.error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) if err.error.kind() == std::io::ErrorKind::NotFound => return,
             Err(err) => {
                 scope.warning(&Warning::custom(
                     Some(span),
                     format_args!("error reading depfile '{depfile_path}': {err}; ignoring"),
                 ));
-                return Ok(());
+                return;
             }
         };
 
@@ -266,7 +270,7 @@ impl<'a> Planner<'a> {
                     Some(span),
                     format_args!("error parsing depfile '{depfile_path}': {err}; ignoring"),
                 ));
-                return Ok(());
+                return;
             }
         };
 
@@ -316,6 +320,5 @@ impl<'a> Planner<'a> {
                 )),
             }
         }
-        Ok(())
     }
 }

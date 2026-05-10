@@ -130,41 +130,43 @@ impl<'a> Runner<'a> {
     }
 
     pub async fn run(&self, mut task_graph: TaskGraph<'a>) -> Result<(), Annotated<'a, Error>> {
-        let mut run_state = self.state.lock();
-        assert!(
-            !run_state.is_some(),
-            "Runner is already running; reset it first"
-        );
-        let mut tasks = Vec::with_capacity(task_graph.num_tasks());
-        let mut status_senders = Vec::with_capacity(task_graph.num_tasks());
-        let mut status_receivers = Vec::with_capacity(task_graph.num_tasks());
+        let tasks = {
+            let mut run_state = self.state.lock();
+            assert!(
+                !run_state.is_some(),
+                "Runner is already running; reset it first"
+            );
+            let mut tasks = Vec::with_capacity(task_graph.num_tasks());
+            let mut status_senders = Vec::with_capacity(task_graph.num_tasks());
+            let mut status_receivers = Vec::with_capacity(task_graph.num_tasks());
 
-        for _ in 0..task_graph.num_tasks() {
-            let (send, recv) = broadcast_one::channel();
-            status_senders.push(Some(send));
-            status_receivers.push(recv);
-        }
+            for _ in 0..task_graph.num_tasks() {
+                let (send, recv) = broadcast_one::channel();
+                status_senders.push(Some(send));
+                status_receivers.push(recv);
+            }
 
-        for index in 0..task_graph.num_tasks() {
-            let task_id = TaskId::from_index(index);
-            let evaluated_task = task_graph.take_task(task_id);
-            let task_spec = task_graph.get_task_spec(task_id).clone();
-            let result_sender = status_senders[task_id.index()].take().unwrap();
-            let wait_for_dependencies = task_graph
-                .get_task_dependencies(task_id)
-                .iter()
-                .map(|dep_id| status_receivers[dep_id.index()].clone())
-                .collect::<Vec<_>>();
-            tasks.push(self.inner.executor.spawn(self.inner.clone().run_task(
-                self.inner.cancel.receiver(),
-                task_spec,
-                evaluated_task,
-                wait_for_dependencies,
-                result_sender,
-            )));
-        }
-        *run_state = Some(RunState { status_receivers });
-        std::mem::drop(run_state);
+            for index in 0..task_graph.num_tasks() {
+                let task_id = TaskId::from_index(index);
+                let evaluated_task = task_graph.take_task(task_id);
+                let task_spec = task_graph.get_task_spec(task_id).clone();
+                let result_sender = status_senders[task_id.index()].take().unwrap();
+                let wait_for_dependencies = task_graph
+                    .get_task_dependencies(task_id)
+                    .iter()
+                    .map(|dep_id| status_receivers[dep_id.index()].clone())
+                    .collect::<Vec<_>>();
+                tasks.push(self.inner.executor.spawn(self.inner.clone().run_task(
+                    self.inner.cancel.receiver(),
+                    task_spec,
+                    evaluated_task,
+                    wait_for_dependencies,
+                    result_sender,
+                )));
+            }
+            *run_state = Some(RunState { status_receivers });
+            tasks
+        };
 
         self.inner
             .executor

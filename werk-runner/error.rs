@@ -171,8 +171,7 @@ impl werk_util::AsDiagnostic for Error {
             Error::ClobberedWorkspace(..) => "R0016",
             Error::InvalidTargetPath(..) => "R0017",
             Error::InvalidPathInDepfile(..) => "R0018",
-            Error::Custom(..) => "R9999",
-            Error::MustMigrate(_) => "R9999",
+            Error::Custom(..) | Error::MustMigrate(_) => "R9999",
             Error::ProtectedPath { .. } => "R0050",
             Error::WriteBeyondRoot { .. } => "R0051",
         };

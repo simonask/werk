@@ -79,8 +79,8 @@ impl<'a> TaskGraph<'a> {
             hash_map::Entry::Vacant(vacant_entry) => {
                 let id = TaskId::from_index(self.task_specs.len());
                 self.task_specs.push(vacant_entry.key().clone());
-                self.dependency_lists.push(Default::default());
-                self.dependents_lists.push(Default::default());
+                self.dependency_lists.push(IdList::default());
+                self.dependents_lists.push(IdList::default());
                 self.evaluated.push(None);
                 vacant_entry.insert(id);
                 id
@@ -155,7 +155,7 @@ impl<'a> TaskGraph<'a> {
         for (index, dependencies) in self.dependency_lists.iter().enumerate() {
             let task_id = TaskId::from_index(index);
             stack.push(task_id);
-            self.check_circular_dependency(task_id, dependencies, &mut stack, &mut checked)?;
+            self.check_circular_dependency(dependencies, &mut stack, &mut checked)?;
             stack.pop();
         }
 
@@ -164,7 +164,6 @@ impl<'a> TaskGraph<'a> {
 
     fn check_circular_dependency(
         &self,
-        task_id: TaskId,
         dependencies: &[TaskId],
         stack: &mut Vec<TaskId>,
         checked: &mut HashSet<TaskId>,
@@ -186,7 +185,6 @@ impl<'a> TaskGraph<'a> {
 
             stack.push(dependency);
             self.check_circular_dependency(
-                task_id,
                 &self.dependency_lists[dependency.index()],
                 stack,
                 checked,

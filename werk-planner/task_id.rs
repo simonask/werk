@@ -13,7 +13,7 @@ impl TaskId {
     #[must_use]
     pub fn from_index(index: usize) -> Self {
         Self {
-            index: index as u32,
+            index: u32::try_from(index).expect("too many tasks!"),
         }
     }
 }

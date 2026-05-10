@@ -28,8 +28,9 @@ impl TaskSpec<'_> {
                     TaskName::Build(build_recipe_match.target_file)
                 }
             },
-            TaskSpec::CheckExists(absolute) => TaskName::Build(*absolute),
-            TaskSpec::CheckExistsRelaxed(absolute) => TaskName::Build(*absolute),
+            TaskSpec::CheckExists(absolute) | TaskSpec::CheckExistsRelaxed(absolute) => {
+                TaskName::Build(*absolute)
+            }
         }
     }
 }
