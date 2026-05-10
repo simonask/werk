@@ -16,7 +16,7 @@ impl std::fmt::Display for Disconnected {
 }
 impl std::error::Error for Disconnected {}
 
-#[must_use] 
+#[must_use]
 pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
     let shared = Arc::new(Shared {
         event: Event::new(),
@@ -40,7 +40,7 @@ impl<T> Sender<T> {
         std::mem::forget(self);
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn receiver(&self) -> Receiver<T> {
         Receiver {
             shared: Arc::clone(&self.shared),
@@ -80,7 +80,7 @@ impl<T> Clone for Receiver<T> {
 }
 
 impl<T> Receiver<T> {
-    #[must_use] 
+    #[must_use]
     pub fn recv(&self) -> RecvFut<'_, T> {
         RecvFut {
             shared: &self.shared,
@@ -88,7 +88,7 @@ impl<T> Receiver<T> {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn try_recv(&self) -> Option<Result<&T, Disconnected>> {
         self.shared.data.get().map(|result| match result {
             Ok(data) => Ok(data),

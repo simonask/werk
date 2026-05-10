@@ -19,7 +19,7 @@ pub enum TaskSpec<'a> {
 }
 
 impl TaskSpec<'_> {
-    #[must_use] 
+    #[must_use]
     pub fn name(&self) -> TaskName {
         match self {
             TaskSpec::Recipe(recipe_match) => match recipe_match {

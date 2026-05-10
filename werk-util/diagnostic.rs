@@ -233,10 +233,7 @@ pub trait AsDiagnostic {
         source_map: &'a dyn DiagnosticSourceMap,
     ) -> Vec<annotate_snippets::Group<'a>>;
 
-    fn into_diagnostic_error(
-        self,
-        source_files: &dyn DiagnosticSourceMap,
-    ) -> Annotated<'_, Self>
+    fn into_diagnostic_error(self, source_files: &dyn DiagnosticSourceMap) -> Annotated<'_, Self>
     where
         Self: Sized,
     {
