@@ -1,6 +1,6 @@
-default target = "bar"
+default target = "target/bar"
 
-build "bar" {
+build "target/bar" {
     from "foo"
     run {
         copy "{in}" to "{out}"
@@ -8,4 +8,4 @@ build "bar" {
 }
 
 #!file foo=hello
-#!assert-file bar=hello
+#!assert-file target/bar=hello

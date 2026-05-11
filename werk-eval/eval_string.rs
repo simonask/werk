@@ -1,29 +1,28 @@
-use std::{borrow::Cow, fmt::Write as _, sync::Arc};
+use std::{borrow::Cow, fmt::Write as _};
 
 use indexmap::IndexMap;
-use stringleton::Symbol;
 use werk_fs::Absolute;
 use werk_parser::ast;
 use werk_util::{DiagnosticFileId, DiagnosticSpan};
 
 use crate::{
-    AmbiguousPatternError, EvalError, Lookup, LookupValue, Pattern, PatternMatcher, PatternRegex,
-    PatternRegexCaptures, Scope, ShellCommandLine, StringFlags, StringValue, Value, Warning,
-    Workspace,
+    Eval, EvalError, Lookup, LookupValue, Pattern, PatternMatcher, PatternRegex,
+    PatternRegexCaptures, ResolvePathError, Scope, ShellCommandLine, StringFlags, StringValue,
+    Value, Warning,
 };
 
-use super::{Eval, ResolvePathMode, Used, UsedVariable};
+use super::Used;
 
 /// Normal string builder, not sensitive to argument quoting.
-pub(crate) struct StringBuilder<'a, P: ?Sized> {
-    scope: &'a P,
+pub(crate) struct StringBuilder<'a> {
+    scope: &'a dyn Scope,
     string: String,
     flags: StringFlags,
     used: Used,
 }
 
-impl<'a, P: Scope + ?Sized> StringBuilder<'a, P> {
-    pub fn new(scope: &'a P) -> Self {
+impl<'a> StringBuilder<'a> {
+    pub fn new(scope: &'a dyn Scope) -> Self {
         Self {
             scope,
             string: String::new(),
@@ -54,7 +53,7 @@ impl<'a, P: Scope + ?Sized> StringBuilder<'a, P> {
                     self.scope,
                     span,
                     interp,
-                    ResolvePathMode::Infer,
+                    true, // allow path resolution
                     &mut self.string,
                     &mut self.used,
                 )?;
@@ -86,8 +85,8 @@ impl<'a, P: Scope + ?Sized> StringBuilder<'a, P> {
     }
 }
 
-pub(crate) struct PatternBuilder<'a, P: ?Sized> {
-    scope: &'a P,
+pub struct PatternBuilder<'a> {
+    scope: &'a dyn Scope,
     fragments: Vec<PatternFragment>,
     used: Used,
     span: DiagnosticSpan,
@@ -99,8 +98,8 @@ enum PatternFragment {
     OneOf(Vec<String>),
 }
 
-impl<'a, P: Scope + ?Sized> PatternBuilder<'a, P> {
-    pub fn new(scope: &'a P, span: DiagnosticSpan) -> Self {
+impl<'a> PatternBuilder<'a> {
+    pub fn new(scope: &'a dyn Scope, span: DiagnosticSpan) -> Self {
         Self {
             scope,
             fragments: vec![PatternFragment::Literal(String::new())],
@@ -170,13 +169,16 @@ impl<'a, P: Scope + ?Sized> PatternBuilder<'a, P> {
                     self.scope,
                     self.span,
                     interp,
-                    ResolvePathMode::Illegal,
+                    false, // disallow path resolution in patterns
                     buf,
                     &mut self.used,
                 )?;
 
                 if flags.contains(StringFlags::CONTAINS_PATHS) {
-                    return Err(EvalError::ResolvePathInPattern(self.span));
+                    return Err(EvalError::PathResolution(
+                        self.span,
+                        ResolvePathError::Illegal,
+                    ));
                 }
             }
         }
@@ -239,6 +241,7 @@ impl<'a, P: Scope + ?Sized> PatternBuilder<'a, P> {
         }
     }
 
+    #[must_use]
     pub fn build_partial_regex(self) -> Eval<PatternRegex> {
         let value = self.build_partial_regex_inner();
         Eval {
@@ -249,6 +252,7 @@ impl<'a, P: Scope + ?Sized> PatternBuilder<'a, P> {
 
     /// Build the pattern either as a literal-match pattern or a regex pattern
     /// that matches the whole string (if it contains stems or capture groups)
+    #[must_use]
     pub fn build(self) -> Eval<Pattern> {
         let span = self.span;
 
@@ -282,7 +286,7 @@ impl<'a, P: Scope + ?Sized> PatternBuilder<'a, P> {
     }
 }
 
-impl<P: ?Sized> std::fmt::Display for PatternBuilder<'_, P> {
+impl std::fmt::Display for PatternBuilder<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for fragment in &self.fragments {
             match fragment {
@@ -306,8 +310,8 @@ impl<P: ?Sized> std::fmt::Display for PatternBuilder<'_, P> {
     }
 }
 
-pub(crate) struct CommandLineBuilder<'a, P: ?Sized> {
-    scope: &'a P,
+pub(crate) struct CommandLineBuilder<'a> {
+    scope: &'a dyn Scope,
     in_quotes: Option<InQuotes>,
     escape: bool,
     parts: Vec<String>,
@@ -320,8 +324,8 @@ enum InQuotes {
     Double,
 }
 
-impl<'a, P: Scope + ?Sized> CommandLineBuilder<'a, P> {
-    pub fn new(scope: &'a P, span: DiagnosticSpan) -> Self {
+impl<'a> CommandLineBuilder<'a> {
+    pub fn new(scope: &'a dyn Scope, span: DiagnosticSpan) -> Self {
         Self {
             scope,
             in_quotes: None,
@@ -417,7 +421,7 @@ impl<'a, P: Scope + ?Sized> CommandLineBuilder<'a, P> {
                         self.scope,
                         self.span,
                         interp,
-                        ResolvePathMode::Infer,
+                        true, // allow path resolution
                         buf,
                         &mut self.used,
                     )?;
@@ -432,8 +436,7 @@ impl<'a, P: Scope + ?Sized> CommandLineBuilder<'a, P> {
                         self.span,
                         value.into_value(),
                         interp.options.as_deref().map_or(&[], |ops| &*ops.ops),
-                        self.scope.workspace(),
-                        ResolvePathMode::Infer,
+                        self.scope,
                     )?;
 
                     // If we just saw an unquoted space that started a new argument,
@@ -478,18 +481,15 @@ impl<'a, P: Scope + ?Sized> CommandLineBuilder<'a, P> {
                 return Err(EvalError::EmptyCommand(self.span));
             };
 
-            let (program_path, hash) = self
+            let program_path = self
                 .scope
-                .workspace()
                 .which(&program)
                 .map_err(|err| EvalError::CommandNotFound(self.span, program.clone(), err))?;
-            self.used
-                .vars
-                .extend(hash.map(|hash| UsedVariable::Which(Symbol::new(&program), hash)));
+            self.used.vars.extend(program_path.used.vars);
 
             Ok(Eval {
                 value: ShellCommandLine {
-                    program: program_path.into_owned(),
+                    program: program_path.value,
                     arguments: parts.collect(),
                 },
                 used: self.used,
@@ -498,11 +498,11 @@ impl<'a, P: Scope + ?Sized> CommandLineBuilder<'a, P> {
     }
 }
 
-fn eval_string_interpolation<P: Scope + ?Sized>(
-    scope: &P,
+fn eval_string_interpolation(
+    scope: &dyn Scope,
     span: DiagnosticSpan,
     interp: &ast::Interpolation,
-    resolve_mode: ResolvePathMode,
+    allow_path_resolution: bool,
     buf: &mut String,
     used: &mut Used,
 ) -> Result<StringFlags, EvalError> {
@@ -516,8 +516,7 @@ fn eval_string_interpolation<P: Scope + ?Sized>(
                 value.into_value(),
                 buf,
                 options,
-                scope.workspace(),
-                resolve_mode,
+                scope,
             );
         }
     }
@@ -547,8 +546,8 @@ fn eval_string_interpolation<P: Scope + ?Sized>(
     let (s, flags) = find_first_string(value);
     buf.push_str(s);
 
-    if flags.contains(StringFlags::CONTAINS_PATHS) && resolve_mode == ResolvePathMode::Illegal {
-        return Err(EvalError::ResolvePathInPattern(span));
+    if flags.contains(StringFlags::CONTAINS_PATHS) && !allow_path_resolution {
+        return Err(EvalError::PathResolution(span, ResolvePathError::Illegal));
     }
 
     Ok(flags)
@@ -585,11 +584,9 @@ fn eval_string_interpolation_ops_and_join(
     mut value: Value,
     buf: &mut String,
     options: &ast::InterpolationOptions,
-    workspace: &Workspace,
-    default_resolve_mode: ResolvePathMode,
+    scope: &dyn Scope,
 ) -> Result<StringFlags, EvalError> {
-    value =
-        eval_string_interpolation_ops(span, value, &options.ops, workspace, default_resolve_mode)?;
+    value = eval_string_interpolation_ops(span, value, &options.ops, scope)?;
 
     if let (Value::List(_), Some(sep)) = (&value, options.join.as_deref()) {
         Ok(recursive_join_push(&value, sep, buf))
@@ -604,11 +601,8 @@ fn eval_string_interpolation_ops(
     span: DiagnosticSpan,
     mut value: Value,
     options: &[ast::InterpolationOp],
-    workspace: &Workspace,
-    default_resolve_mode: ResolvePathMode,
+    scope: &dyn Scope,
 ) -> Result<Value, EvalError> {
-    let mut resolve_mode = default_resolve_mode;
-
     for op in options {
         match op {
             ast::InterpolationOp::Dedup => {
@@ -631,20 +625,8 @@ fn eval_string_interpolation_ops(
             ast::InterpolationOp::RegexReplace(r) => {
                 recursive_regex_replace(&mut value, &r.regex, &r.replacer);
             }
-            ast::InterpolationOp::ResolveOsPath => {
-                recursive_resolve_path(
-                    span,
-                    &mut value,
-                    werk_fs::Path::ROOT,
-                    workspace,
-                    resolve_mode,
-                )?;
-            }
-            ast::InterpolationOp::ResolveOutDir => {
-                resolve_mode = ResolvePathMode::OutDir;
-            }
-            ast::InterpolationOp::ResolveWorkspace => {
-                resolve_mode = ResolvePathMode::Workspace;
+            ast::InterpolationOp::Resolve => {
+                recursive_resolve_path(span, &mut value, werk_fs::Path::ROOT, scope)?;
             }
         }
     }
@@ -702,8 +684,7 @@ fn recursive_resolve_path(
     span: DiagnosticSpan,
     value: &mut Value,
     working_dir: &Absolute<werk_fs::Path>,
-    workspace: &Workspace,
-    resolve_mode: ResolvePathMode,
+    scope: &dyn Scope,
 ) -> Result<(), EvalError> {
     value.try_visit_mut(&mut |string: &mut StringValue| -> Result<(), EvalError> {
         if string.flags.contains(StringFlags::CONTAINS_PATHS) {
@@ -711,15 +692,12 @@ fn recursive_resolve_path(
         }
 
         let path = werk_fs::Path::new(string).map_err(|err| EvalError::Path(span, err))?;
-        let path = path.absolutize(working_dir).map_err(|err| EvalError::Path(span, err))?;
-        let path = match resolve_mode {
-            ResolvePathMode::Infer => resolve_path_infer(span, &path, workspace)?,
-            ResolvePathMode::OutDir => path.resolve(workspace.output_directory()),
-            ResolvePathMode::Workspace => path.resolve(workspace.project_root()),
-            ResolvePathMode::Illegal => return Err(EvalError::ResolvePathInPattern(span)),
-        };
-        let Some(path) = path.to_str() else {
-            panic!("Path resolution produced a non-UTF8 path; probably the project root path is non-UTF8")
+        let path = path
+            .absolutize(working_dir)
+            .map_err(|err| EvalError::Path(span, err))?;
+        let resolved = scope.resolve_path(&path);
+        let Some(path) = resolved.to_str() else {
+            return Err(EvalError::NonUtf8Path(span, resolved.into_inner()));
         };
 
         path.clone_into(&mut string.string);
@@ -728,34 +706,34 @@ fn recursive_resolve_path(
     })
 }
 
-fn resolve_path_infer(
-    span: DiagnosticSpan,
-    path: &Absolute<werk_fs::Path>,
-    workspace: &Workspace,
-) -> Result<Absolute<std::path::PathBuf>, EvalError> {
-    if let Some(workspace_file) = workspace.get_project_file(path) {
-        // Check if the path also matches a build recipe, and must be disambiguated.
-        match workspace.manifest.match_build_recipe(path) {
-            Ok(Some(recipe)) => Err(EvalError::AmbiguousPathResolution(
-                span,
-                Arc::new(crate::AmbiguousPathError {
-                    path: path.to_path_buf(),
-                    build_recipe: recipe.recipe.pattern.span,
-                }),
-            )),
-            Err(AmbiguousPatternError { pattern1, .. }) => Err(EvalError::AmbiguousPathResolution(
-                span,
-                Arc::new(crate::AmbiguousPathError {
-                    path: path.to_path_buf(),
-                    build_recipe: pattern1,
-                }),
-            )),
-            Ok(None) => Ok(workspace_file.path.clone()),
-        }
-    } else {
-        Ok(path.resolve(workspace.output_directory()))
-    }
-}
+// fn resolve_path_infer(
+//     span: DiagnosticSpan,
+//     path: &Absolute<werk_fs::Path>,
+//     scope: &dyn Scope,
+// ) -> Result<Absolute<std::path::PathBuf>, EvalError> {
+//     if let Some(workspace_file) = workspace.get_project_file(path) {
+//         // Check if the path also matches a build recipe, and must be disambiguated.
+//         match workspace.manifest.match_build_recipe(path) {
+//             Ok(Some(recipe)) => Err(EvalError::AmbiguousPathResolution(
+//                 span,
+//                 Arc::new(crate::AmbiguousPathError {
+//                     path: path.to_path_buf(),
+//                     build_recipe: recipe.recipe.pattern.span,
+//                 }),
+//             )),
+//             Err(AmbiguousPatternError { pattern1, .. }) => Err(EvalError::AmbiguousPathResolution(
+//                 span,
+//                 Arc::new(crate::AmbiguousPathError {
+//                     path: path.to_path_buf(),
+//                     build_recipe: pattern1,
+//                 }),
+//             )),
+//             Ok(None) => Ok(workspace_file.path.clone()),
+//         }
+//     } else {
+//         Ok(path.resolve(workspace.output_directory()))
+//     }
+// }
 
 fn recursive_replace_extension(value: &mut Value, from: &str, to: &str) {
     value.visit_mut(&mut |s: &mut StringValue| {

@@ -1,4 +1,5 @@
 default target = "build"
+default cache-dir = "target"
 
 # Path to clang
 let cc = which "clang"
@@ -17,9 +18,9 @@ let cflags = profile | match {
 }
 
 # Build rule for object files
-build "%.o" {
+build "target/%.o" {
     from "%.c"
-    depfile "%.c.d"
+    depfile "target/%.c.d"
 
     let include-path = "src"
     let flags = [cflags, "-I<include-path>"]
@@ -29,7 +30,7 @@ build "%.o" {
 }
 
 # Build rule for the main executable
-build "my-program{EXE_SUFFIX}" {
+build "target/my-program{EXE_SUFFIX}" {
     # Include all .c files in the build
     from glob "src/**/*.c" | map "{:.c=.o}"
 
@@ -37,12 +38,12 @@ build "my-program{EXE_SUFFIX}" {
 }
 
 task build {
-    build "my-program{EXE_SUFFIX}"
+    build "target/my-program{EXE_SUFFIX}"
     info "Build complete!"
 }
 
 task run {
-    let executable = "my-program{EXE_SUFFIX}"
+    let executable = "target/my-program{EXE_SUFFIX}"
     build executable
     run "<executable>"
 }

@@ -8,57 +8,7 @@ use std::{
 use futures::{
     AsyncBufRead, AsyncRead, AsyncWrite, FutureExt as _, Stream, StreamExt, io::BufReader, ready,
 };
-
-pub trait Child: Send + Sync + Unpin {
-    fn stdin(self: Pin<&mut Self>) -> Option<Pin<&mut dyn AsyncWrite>>;
-    fn stderr(self: Pin<&mut Self>) -> Option<Pin<&mut dyn AsyncRead>>;
-
-    fn take_stdin(&mut self) -> Option<Pin<Box<dyn AsyncWrite + Send>>>;
-    fn take_stdout(&mut self) -> Option<Pin<Box<dyn AsyncRead + Send>>>;
-    fn take_stderr(&mut self) -> Option<Pin<Box<dyn AsyncRead + Send>>>;
-
-    /// Wait for the process to exit. Does NOT drop the stdin handle.
-    fn status(
-        &mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<std::process::ExitStatus, std::io::Error>> + Send>>;
-
-    fn kill(&mut self) -> std::io::Result<()>;
-}
-
-impl Child for smol::process::Child {
-    fn stdin(self: Pin<&mut Self>) -> Option<Pin<&mut dyn AsyncWrite>> {
-        let stdin = Pin::new(self.get_mut().stdin.as_mut()?);
-        Some(stdin as _)
-    }
-
-    fn stderr(self: Pin<&mut Self>) -> Option<Pin<&mut dyn AsyncRead>> {
-        let stderr = Pin::new(self.get_mut().stderr.as_mut()?);
-        Some(stderr as _)
-    }
-
-    fn take_stdin(&mut self) -> Option<Pin<Box<dyn futures::AsyncWrite + Send>>> {
-        self.stdin.take().map(|s| Box::pin(s) as _)
-    }
-
-    fn take_stdout(&mut self) -> Option<Pin<Box<dyn AsyncRead + Send>>> {
-        self.stdout.take().map(|s| Box::pin(s) as _)
-    }
-
-    fn take_stderr(&mut self) -> Option<Pin<Box<dyn AsyncRead + Send>>> {
-        self.stderr.take().map(|s| Box::pin(s) as _)
-    }
-
-    fn status(
-        &mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<std::process::ExitStatus, std::io::Error>> + Send>>
-    {
-        Box::pin(self.status())
-    }
-
-    fn kill(&mut self) -> std::io::Result<()> {
-        self.kill()
-    }
-}
+use werk_eval::Child;
 
 pub enum ChildCaptureOutput {
     /// stderr was available.
@@ -67,6 +17,43 @@ pub enum ChildCaptureOutput {
     /// true`.
     Stdout(Vec<u8>),
     Exit(std::process::ExitStatus),
+}
+
+pub struct ChildProcess(pub smol::process::Child);
+
+impl Child for ChildProcess {
+    fn stdin(self: Pin<&mut Self>) -> Option<Pin<&mut dyn AsyncWrite>> {
+        let stdin = Pin::new(self.get_mut().0.stdin.as_mut()?);
+        Some(stdin as _)
+    }
+
+    fn stderr(self: Pin<&mut Self>) -> Option<Pin<&mut dyn AsyncRead>> {
+        let stderr = Pin::new(self.get_mut().0.stderr.as_mut()?);
+        Some(stderr as _)
+    }
+
+    fn take_stdin(&mut self) -> Option<Pin<Box<dyn futures::AsyncWrite + Send>>> {
+        self.0.stdin.take().map(|s| Box::pin(s) as _)
+    }
+
+    fn take_stdout(&mut self) -> Option<Pin<Box<dyn AsyncRead + Send>>> {
+        self.0.stdout.take().map(|s| Box::pin(s) as _)
+    }
+
+    fn take_stderr(&mut self) -> Option<Pin<Box<dyn AsyncRead + Send>>> {
+        self.0.stderr.take().map(|s| Box::pin(s) as _)
+    }
+
+    fn status(
+        &mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<std::process::ExitStatus, std::io::Error>> + Send>>
+    {
+        Box::pin(self.0.status())
+    }
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        self.0.kill()
+    }
 }
 
 /// Read lines of the output from a child process, capturing stderr

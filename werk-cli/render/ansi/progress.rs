@@ -1,7 +1,7 @@
 use std::{fmt::Write as _, io::Write, time::Instant};
 
 use owo_colors::OwoColorize;
-use werk_runner::TaskId;
+use werk_eval::TaskName;
 
 use crate::render::TtyWidth;
 
@@ -52,7 +52,7 @@ impl Progress {
     pub fn render<'a, W, I>(&mut self, out: &mut W, tasks: I) -> std::io::Result<()>
     where
         W: Write,
-        I: IntoIterator<IntoIter: ExactSizeIterator, Item = (&'a TaskId, &'a TaskStatus)>,
+        I: IntoIterator<IntoIter: ExactSizeIterator, Item = (&'a TaskName, &'a TaskStatus)>,
     {
         match self.style {
             ProgressStyle::Spinner => self.render_spinner(out, tasks),
@@ -62,7 +62,7 @@ impl Progress {
     fn render_spinner<'a, W, I>(&mut self, out: &mut W, tasks: I) -> std::io::Result<()>
     where
         W: Write,
-        I: IntoIterator<IntoIter: ExactSizeIterator, Item = (&'a TaskId, &'a TaskStatus)>,
+        I: IntoIterator<IntoIter: ExactSizeIterator, Item = (&'a TaskName, &'a TaskStatus)>,
     {
         let Some(term_width) = self.term_width.progress_max_width() else {
             // Don't render anything if we don't have a terminal width (not a TTY).
@@ -97,7 +97,7 @@ impl Progress {
     #[cfg(test)]
     fn render_spinner_to_string<'a, I>(&mut self, tasks: I) -> std::io::Result<String>
     where
-        I: IntoIterator<IntoIter: ExactSizeIterator, Item = (&'a TaskId, &'a TaskStatus)>,
+        I: IntoIterator<IntoIter: ExactSizeIterator, Item = (&'a TaskName, &'a TaskStatus)>,
     {
         let mut buffer = Vec::new();
         let mut stream = crate::render::strip::StripStream::new(&mut buffer);
@@ -117,7 +117,7 @@ fn draw_spinner<'a, W, I>(
 ) -> Result<usize, std::io::Error>
 where
     W: Write,
-    I: ExactSizeIterator<Item = (&'a TaskId, &'a TaskStatus)>,
+    I: ExactSizeIterator<Item = (&'a TaskName, &'a TaskStatus)>,
 {
     if term_width < 3 {
         return Ok(0);
@@ -195,7 +195,7 @@ mod tests {
         progress.set_progress(0, 1);
 
         let one_task = [(
-            &TaskId::try_build("/target_name.o").unwrap(),
+            &TaskName::try_build("/target_name.o").unwrap(),
             &TaskStatus {
                 progress: 0,
                 num_steps: 1,
@@ -254,7 +254,7 @@ mod tests {
 
         let two = [
             (
-                &TaskId::try_build("/target1.o").unwrap(),
+                &TaskName::try_build("/target1.o").unwrap(),
                 &TaskStatus {
                     progress: 0,
                     num_steps: 1,
@@ -262,7 +262,7 @@ mod tests {
                 },
             ),
             (
-                &TaskId::try_build("/target2.o").unwrap(),
+                &TaskName::try_build("/target2.o").unwrap(),
                 &TaskStatus {
                     progress: 0,
                     num_steps: 1,

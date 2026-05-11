@@ -1,11 +1,12 @@
 use tests::mock_io::*;
+use werk_eval::{Pattern, PatternMatchData};
 use werk_parser::parser::{Input, pattern_expr_inside_quotes};
-use werk_runner::{Pattern, PatternMatchData, Workspace};
+use werk_runner::Workspace;
 use werk_util::DiagnosticFileId;
 
 fn parse_and_compile_pattern(workspace: &Workspace, pattern: &str) -> Pattern {
     let expr = pattern_expr_inside_quotes(&mut Input::new(pattern)).unwrap();
-    werk_runner::eval::eval_pattern(workspace, &expr, DiagnosticFileId(0))
+    werk_eval::eval_pattern(workspace, &expr, DiagnosticFileId(0))
         .unwrap()
         .value
 }

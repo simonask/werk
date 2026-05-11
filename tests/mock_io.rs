@@ -7,15 +7,17 @@ use std::{
     time::SystemTime,
 };
 
+use literator::Literator as _;
 use parking_lot::Mutex;
+use werk_eval::{DirEntry, EvalError, Io as _, Metadata, ShellCommandLine, TaskName, Warning};
 use werk_fs::Absolute;
+use werk_planner::PlannerError;
 use werk_runner::{
-    BuildStatus, DirEntry, Env, Error, EvalError, GlobSettings, Io, Metadata, Outdatedness,
-    ShellCommandLine, TaskId, Warning, WhichError, Workspace, WorkspaceSettings, globset,
+    BuildStatus, Error, Outdatedness, WhichError, Workspace, WorkspaceSettings, globset,
 };
 use werk_util::{
-    Annotated, AsDiagnostic as _, DiagnosticFileId, DiagnosticSource, DiagnosticSourceMap, Offset,
-    Span,
+    Annotated, AsDiagnostic as _, DiagnosticFileId, DiagnosticSource, DiagnosticSourceMap, IoError,
+    Offset, Span,
 };
 use winnow::stream::Offset as _;
 
@@ -45,7 +47,7 @@ pub struct TestBuilder<'a> {
     /// Note: Path in the mocked filesystem, not the actual filesystem.
     /// `canonicalize()` won't work etc.
     pub workspace_dir: Absolute<std::path::PathBuf>,
-    pub output_dir: Absolute<std::path::PathBuf>,
+    pub cache_dir: Absolute<std::path::PathBuf>,
     pub defines: Vec<(String, String)>,
     pub default_filesystem: bool,
     pub create_workspace_dir: bool,
@@ -71,7 +73,7 @@ impl Default for TestBuilder<'_> {
     fn default() -> Self {
         Self {
             workspace_dir: native_path(&["workspace"]),
-            output_dir: native_path(&["workspace", "output"]),
+            cache_dir: native_path(&["workspace", "target"]),
             defines: Vec::new(),
             default_filesystem: true,
             create_workspace_dir: true,
@@ -87,8 +89,8 @@ impl<'a> TestBuilder<'a> {
         self
     }
 
-    pub fn output_dir(&mut self, path: &[&str]) -> &mut Self {
-        self.output_dir = native_path(path);
+    pub fn cache_dir(&mut self, path: &[&str]) -> &mut Self {
+        self.cache_dir = native_path(path);
         self
     }
 
@@ -107,7 +109,7 @@ impl<'a> TestBuilder<'a> {
         io.set_env("PROFILE", "debug");
         if self.default_filesystem {
             create_dirs(&mut io.filesystem.lock(), &self.workspace_dir).unwrap();
-            create_dirs(&mut io.filesystem.lock(), &self.output_dir).unwrap();
+            create_dirs(&mut io.filesystem.lock(), &self.cache_dir).unwrap();
 
             io.set_program("clang", program_path("clang"), |_cmd, _fs, _env| {
                 Ok(empty_program_output())
@@ -175,7 +177,7 @@ impl<'a> TestBuilder<'a> {
             io,
             render,
             workspace_dir: self.workspace_dir.clone(),
-            output_dir: self.output_dir.clone(),
+            cache_dir: self.cache_dir.clone(),
             source: self.werkfile,
             pragma_check_files: vec![],
             defines: self.defines.clone(),
@@ -185,14 +187,14 @@ impl<'a> TestBuilder<'a> {
 }
 
 fn workspace_settings(
-    output_dir: &Absolute<std::path::Path>,
+    cache_dir: &Absolute<std::path::Path>,
     defines: impl IntoIterator<Item = (String, String)>,
 ) -> werk_runner::WorkspaceSettings {
-    let mut settings = WorkspaceSettings::new(output_dir.to_owned());
+    let mut settings = WorkspaceSettings::new(cache_dir.to_owned());
 
     // Normally this would be covered by `.gitignore`, but we don't have that,
     // so just use a manual ignore pattern.
-    let ignore_pattern = output_dir.join("**").unwrap();
+    let ignore_pattern = cache_dir.join("**").unwrap();
     settings.ignore_explicitly(
         globset::GlobSet::builder()
             .add(ignore_pattern.to_string_lossy().parse().unwrap())
@@ -210,7 +212,7 @@ pub struct Test<'a> {
     pub io: Arc<MockIo>,
     pub render: Arc<MockRender>,
     pub workspace_dir: Absolute<std::path::PathBuf>,
-    pub output_dir: Absolute<std::path::PathBuf>,
+    pub cache_dir: Absolute<std::path::PathBuf>,
     pub source: &'a str,
     pub defines: Vec<(String, String)>,
     workspace: Option<Workspace>,
@@ -237,22 +239,24 @@ impl<'a> Test<'a> {
         TestBuilder::default().werkfile(source).build()
     }
 
-    pub fn create_workspace(
-        &mut self,
-    ) -> Result<&mut Workspace, Annotated<werk_runner::Error, &dyn DiagnosticSourceMap>> {
+    pub fn create_workspace<'b>(
+        &'b mut self,
+    ) -> Result<&'b mut Workspace, Annotated<'b, werk_runner::Error>> {
         let ast = match werk_parser::parse_werk(self.source) {
             Ok(ast) => ast,
             Err(err) => {
-                return Err(Error::Eval(EvalError::Parse(werk_parser::ErrorInFile {
-                    file: DiagnosticFileId(0),
-                    error: err,
-                }))
+                return Err(Error::Planner(PlannerError::Evaluation(EvalError::Parse(
+                    werk_parser::ErrorInFile {
+                        file: DiagnosticFileId(0),
+                        error: err,
+                    },
+                )))
                 .into_diagnostic_error(&*self as _));
             }
         };
         self.reload_test_pragmas(&ast);
 
-        let settings = workspace_settings(&self.output_dir, self.defines.iter().cloned());
+        let settings = workspace_settings(&self.cache_dir, self.defines.iter().cloned());
         let workspace = match werk_runner::Workspace::new(
             self.io.clone(),
             self.render.clone(),
@@ -274,18 +278,19 @@ impl<'a> Test<'a> {
         ) {
             Ok(_) => (),
             Err(err) => {
-                return Err(Error::Eval(err).into_diagnostic_error(&workspace.manifest as _));
+                return Err(Error::Planner(PlannerError::Evaluation(err))
+                    .into_diagnostic_error(&workspace.manifest as _));
             }
         }
 
         Ok(workspace)
     }
 
-    pub fn reload(
-        &mut self,
+    pub fn reload<'w>(
+        &'w mut self,
         source: &'a str,
         defines: &[(&str, &str)],
-    ) -> Result<&mut Workspace, werk_util::Annotated<Error, &dyn DiagnosticSourceMap>> {
+    ) -> Result<&'w mut Workspace, werk_util::Annotated<'w, Error>> {
         self.source = source;
         self.defines = defines
             .iter()
@@ -361,13 +366,13 @@ impl<'a> Test<'a> {
         }
     }
 
-    pub fn run_pragma_tests(&self) -> Result<(), werk_runner::EvalError> {
+    pub fn run_pragma_tests(&self) -> Result<(), EvalError> {
         let fs = self.io.filesystem.lock();
         for (span, filename, expected) in &self.pragma_check_files {
-            let out_file = self.output_path(filename.split('/'));
+            let out_file = self.workspace_path(filename.split('/'));
             let (_entry, actual) = read_fs(&fs, &out_file).unwrap();
             if actual != expected {
-                return Err(werk_runner::EvalError::AssertCustomFailed(
+                return Err(EvalError::AssertCustomFailed(
                     DiagnosticFileId(0).span(*span),
                     format!(
                         "contents of output file `{filename}` do not match\nexpected: {expected:?}\n  actual: {actual:?}"
@@ -394,26 +399,6 @@ impl<'a> Test<'a> {
 
     pub fn workspace_path_str(&self, path: impl IntoIterator<Item: AsRef<OsStr>>) -> String {
         self.workspace_path(path)
-            .into_inner()
-            .to_string_lossy()
-            .into_owned()
-    }
-
-    pub fn output_path(
-        &self,
-        path: impl IntoIterator<Item: AsRef<OsStr>>,
-    ) -> Absolute<std::path::PathBuf> {
-        let mut output_path = self.output_dir.clone();
-        for c in path {
-            output_path
-                .push(std::path::Component::Normal(c.as_ref()))
-                .unwrap();
-        }
-        output_path
-    }
-
-    pub fn output_path_str(&self, path: impl IntoIterator<Item: AsRef<OsStr>>) -> String {
-        self.output_path(path)
             .into_inner()
             .to_string_lossy()
             .into_owned()
@@ -447,7 +432,7 @@ impl<'a> Test<'a> {
         contents: impl AsRef<[u8]>,
     ) -> std::io::Result<()> {
         let mut fs = self.io.filesystem.lock();
-        let path = self.output_path(path);
+        let path = self.workspace_path(path);
         create_parent_dirs(&mut fs, &path).unwrap();
         insert_fs(
             &mut fs,
@@ -503,7 +488,7 @@ impl<'a> Test<'a> {
     }
 
     pub fn did_read_output_file(&self, path: &[&str]) -> bool {
-        let workspace_file = self.output_path(path);
+        let workspace_file = self.workspace_path(path);
         self.io
             .oplog
             .lock()
@@ -512,7 +497,7 @@ impl<'a> Test<'a> {
     }
 
     pub fn did_write_output_file(&self, path: &[&str]) -> bool {
-        let path = self.output_path(path);
+        let path = self.workspace_path(path);
         self.io
             .oplog
             .lock()
@@ -572,28 +557,55 @@ pub struct MockRender {
 
 #[derive(Debug, PartialEq)]
 pub enum MockRenderEvent {
-    WillBuild(TaskId, usize, Outdatedness),
-    DidBuild(TaskId, Result<BuildStatus, Error>),
-    WillExecute(TaskId, ShellCommandLine, usize, usize),
+    WillBuild(TaskName, usize, Outdatedness),
+    DidBuild(TaskName, Result<BuildStatus, Error>),
+    WillExecute(TaskName, ShellCommandLine, usize, usize),
     DidExecute(
-        TaskId,
+        TaskName,
         ShellCommandLine,
         Result<std::process::ExitStatus, ()>,
         usize,
         usize,
     ),
-    Message(Option<TaskId>, String),
-    Warning(Option<TaskId>, String),
+    Message(Option<TaskName>, String),
+    Warning(Option<TaskName>, String),
 }
 
 impl MockRender {
     pub fn did_see(&self, event: &MockRenderEvent) -> bool {
         self.log.lock().iter().any(|e| e == event)
     }
+
+    #[track_caller]
+    pub fn assert_did_see(&self, event: &MockRenderEvent) {
+        assert!(
+            self.did_see(event),
+            "event not seen: {event:?}\nevent log:\n{:?}",
+            self.log.lock().iter().surround_each("    ", '\n')
+        );
+    }
+}
+
+impl werk_eval::Messenger for MockRender {
+    fn message(&self, task_id: Option<TaskName>, message: &str) {
+        tracing::trace!(
+            "info({}) {message}",
+            task_id.map(|t| t.to_string()).unwrap_or_default()
+        );
+        self.log
+            .lock()
+            .push(MockRenderEvent::Message(task_id, message.to_string()));
+    }
+
+    fn warning(&self, task_id: Option<TaskName>, warning: &Warning) {
+        self.log
+            .lock()
+            .push(MockRenderEvent::Warning(task_id, warning.to_string()));
+    }
 }
 
 impl werk_runner::Render for MockRender {
-    fn will_build(&self, task_id: TaskId, num_steps: usize, outdatedness: &Outdatedness) {
+    fn will_build(&self, task_id: TaskName, num_steps: usize, outdatedness: &Outdatedness) {
         self.log.lock().push(MockRenderEvent::WillBuild(
             task_id,
             num_steps,
@@ -601,7 +613,7 @@ impl werk_runner::Render for MockRender {
         ));
     }
 
-    fn did_build(&self, task_id: TaskId, result: &Result<BuildStatus, Error>) {
+    fn did_build(&self, task_id: TaskName, result: &Result<BuildStatus, Error>) {
         self.log
             .lock()
             .push(MockRenderEvent::DidBuild(task_id, result.clone()));
@@ -609,7 +621,7 @@ impl werk_runner::Render for MockRender {
 
     fn will_execute(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         step: usize,
         num_steps: usize,
@@ -624,7 +636,7 @@ impl werk_runner::Render for MockRender {
 
     fn did_execute(
         &self,
-        task_id: TaskId,
+        task_id: TaskName,
         command: &ShellCommandLine,
         result: &Result<std::process::ExitStatus, std::io::Error>,
         step: usize,
@@ -638,41 +650,26 @@ impl werk_runner::Render for MockRender {
             num_steps,
         ));
     }
-
-    fn message(&self, task_id: Option<TaskId>, message: &str) {
-        tracing::trace!(
-            "info({}) {message}",
-            task_id.map(|t| t.to_string()).unwrap_or_default()
-        );
-        self.log
-            .lock()
-            .push(MockRenderEvent::Message(task_id, message.to_string()));
-    }
-
-    fn warning(&self, task_id: Option<TaskId>, warning: &Warning) {
-        self.log
-            .lock()
-            .push(MockRenderEvent::Warning(task_id, warning.to_string()));
-    }
 }
 
 pub type MockDir = HashMap<OsString, MockDirEntry>;
 pub type ProgramResult = std::io::Result<std::process::Output>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum MockDirEntry {
     File(Metadata, Vec<u8>),
     Dir(MockDir),
 }
 
-pub type Program = Box<dyn FnMut(&ShellCommandLine, &mut MockDir, &Env) -> ProgramResult + Send>;
+pub type Program =
+    Box<dyn FnMut(&ShellCommandLine, &mut MockDir, &werk_eval::Env) -> ProgramResult + Send>;
 
 #[derive(Default)]
 pub struct MockIo {
     pub filesystem: Mutex<MockDir>,
     pub which: Mutex<HashMap<String, Absolute<std::path::PathBuf>>>,
     pub programs: Mutex<HashMap<Absolute<std::path::PathBuf>, Program>>,
-    pub env: Mutex<Env>,
+    pub env: Mutex<werk_eval::Env>,
     pub oplog: Mutex<Vec<MockIoOp>>,
     pub now: AtomicU64,
 }
@@ -1012,7 +1009,9 @@ impl MockIo {
         &self,
         program: impl Into<String>,
         path: Absolute<std::path::PathBuf>,
-        fun: impl FnMut(&ShellCommandLine, &mut MockDir, &Env) -> ProgramResult + Send + 'static,
+        fun: impl FnMut(&ShellCommandLine, &mut MockDir, &werk_eval::Env) -> ProgramResult
+        + Send
+        + 'static,
     ) -> &Self {
         let program = program.into();
         self.which.lock().insert(program.clone(), path.clone());
@@ -1066,7 +1065,7 @@ struct MockChild {
     status: Option<Pin<Box<futures::future::Ready<std::io::Result<std::process::ExitStatus>>>>>,
 }
 
-impl werk_runner::Child for MockChild {
+impl werk_eval::Child for MockChild {
     fn stdin(
         self: std::pin::Pin<&mut Self>,
     ) -> Option<std::pin::Pin<&mut dyn futures::AsyncWrite>> {
@@ -1108,14 +1107,14 @@ impl werk_runner::Child for MockChild {
     }
 }
 
-impl werk_runner::Io for MockIo {
+impl werk_eval::Io for MockIo {
     fn run_recipe_command(
         &self,
         command_line: &ShellCommandLine,
         _working_dir: &Absolute<std::path::Path>,
-        env: &Env,
+        env: &werk_eval::Env,
         forward_stdout: bool,
-    ) -> std::io::Result<Box<dyn werk_runner::Child>> {
+    ) -> Result<Box<dyn werk_eval::Child>, IoError> {
         tracing::trace!("run during build: {}", command_line);
         self.oplog
             .lock()
@@ -1123,9 +1122,9 @@ impl werk_runner::Io for MockIo {
 
         let mut programs = self.programs.lock();
         let Some(program) = programs.get_mut(&command_line.program) else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "program not found",
+            return Err(IoError::new(
+                &command_line.program,
+                std::io::Error::new(std::io::ErrorKind::NotFound, "program not found"),
             ));
         };
         let mut fs = self.filesystem.lock();
@@ -1135,7 +1134,8 @@ impl werk_runner::Io for MockIo {
             status,
             stderr,
             stdout,
-        } = program(command_line, &mut fs, &global_env)?;
+        } = program(command_line, &mut fs, &global_env)
+            .map_err(|e| IoError::new(&command_line.program, e))?;
 
         Ok(Box::new(MockChild {
             stderr: Some(Box::pin(futures::io::Cursor::new(stderr))),
@@ -1152,23 +1152,23 @@ impl werk_runner::Io for MockIo {
         &self,
         command_line: &ShellCommandLine,
         _working_dir: &Absolute<std::path::Path>,
-        command_env: &werk_runner::Env,
-    ) -> Result<std::process::Output, std::io::Error> {
+        command_env: &werk_eval::Env,
+    ) -> Result<std::process::Output, IoError> {
         self.oplog
             .lock()
             .push(MockIoOp::RunDuringEval(command_line.clone()));
 
         let mut programs = self.programs.lock();
         let Some(program) = programs.get_mut(&*command_line.program) else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "program not found",
+            return Err(IoError::new(
+                &command_line.program,
+                std::io::Error::new(std::io::ErrorKind::NotFound, "program not found"),
             ));
         };
         let mut fs = self.filesystem.lock();
         let mut env = self.env.lock().clone();
         env.merge_from(command_env);
-        program(command_line, &mut fs, &env)
+        program(command_line, &mut fs, &env).map_err(|e| IoError::new(&command_line.program, e))
     }
 
     fn which(&self, command: &str) -> Result<Absolute<std::path::PathBuf>, WhichError> {
@@ -1183,40 +1183,31 @@ impl werk_runner::Io for MockIo {
             .ok_or(WhichError::CannotFindBinaryPath)
     }
 
-    fn glob_workspace(
+    fn walk_directory(
         &self,
         path: &Absolute<std::path::Path>,
-        settings: &GlobSettings,
-    ) -> Result<Vec<DirEntry>, Error> {
+        settings: werk_eval::GlobSettings,
+        visit: &(dyn Fn(&Absolute<std::path::Path>) + Send + Sync),
+    ) -> Result<(), werk_eval::GlobError> {
         fn glob(
             path: &Absolute<std::path::Path>,
             dir: &MockDir,
-            results: &mut Vec<DirEntry>,
+            visit: &(dyn Fn(&Absolute<std::path::Path>) + Send + Sync),
             ignore_explicitly: &globset::GlobSet,
-        ) -> Result<(), Error> {
+        ) -> Result<(), werk_eval::GlobError> {
             for (name, entry) in dir {
                 let entry_path = path.join(name).unwrap();
                 match entry {
-                    MockDirEntry::File(metadata, _) => {
+                    MockDirEntry::File(_, _) => {
                         if !ignore_explicitly.is_match(&*entry_path) {
-                            results.push(DirEntry {
-                                path: entry_path,
-                                metadata: *metadata,
-                            });
+                            visit(&entry_path)
                         }
                     }
                     MockDirEntry::Dir(subdir) => {
                         if !ignore_explicitly.is_match(&*entry_path) {
-                            results.push(DirEntry {
-                                path: entry_path.clone(),
-                                metadata: Metadata {
-                                    mtime: SystemTime::UNIX_EPOCH,
-                                    is_file: false,
-                                    is_symlink: false,
-                                },
-                            });
+                            visit(&entry_path);
                         }
-                        glob(&entry_path, subdir, results, ignore_explicitly)?;
+                        glob(&entry_path, subdir, visit, ignore_explicitly)?;
                     }
                 }
             }
@@ -1225,7 +1216,8 @@ impl werk_runner::Io for MockIo {
         }
 
         tracing::trace!("glob workspace: {}", path.display());
-        let fs = self.filesystem.lock();
+        // Cloning because the callback may invoke filesystem methods.
+        let fs = self.filesystem.lock().clone();
 
         let MockDirEntry::Dir(workspace) =
             get_fs(&fs, path).expect("workspace path does not exist")
@@ -1233,38 +1225,32 @@ impl werk_runner::Io for MockIo {
             panic!("workspace path is a file");
         };
 
-        let mut results = Vec::new();
-        let result = glob(path, workspace, &mut results, &settings.ignore_explicitly);
-
-        result.map(move |()| results)
+        glob(path, workspace, visit, &settings.ignore_explicitly)?;
+        Ok(())
     }
 
-    fn metadata(&self, path: &Absolute<std::path::Path>) -> Result<Metadata, Error> {
+    fn metadata(&self, path: &Absolute<std::path::Path>) -> Result<Metadata, IoError> {
         let fs = self.filesystem.lock();
         read_fs(&fs, path)
             .map(|(entry, _)| entry.metadata)
-            .map_err(Into::into)
+            .map_err(|e| IoError::new(path, e))
     }
 
-    fn read_file(&self, path: &Absolute<std::path::Path>) -> Result<Vec<u8>, std::io::Error> {
+    fn read_file(&self, path: &Absolute<std::path::Path>) -> Result<Vec<u8>, IoError> {
         self.oplog.lock().push(MockIoOp::ReadFile(path.to_owned()));
         let fs = self.filesystem.lock();
-        let (entry, data) = read_fs(&fs, path)?;
+        let (entry, data) = read_fs(&fs, path).map_err(|e| IoError::new(path, e))?;
         if !entry.metadata.is_file {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::IsADirectory,
-                "is a directory",
+            return Err(IoError::new(
+                path,
+                std::io::Error::new(std::io::ErrorKind::IsADirectory, "is a directory"),
             ));
         }
         let data = Vec::from(data);
         Ok(data)
     }
 
-    fn write_file(
-        &self,
-        path: &Absolute<std::path::Path>,
-        data: &[u8],
-    ) -> Result<(), std::io::Error> {
+    fn write_file(&self, path: &Absolute<std::path::Path>, data: &[u8]) -> Result<(), IoError> {
         let path = path.to_path_buf();
         self.oplog.lock().push(MockIoOp::WriteFile(path.clone()));
 
@@ -1281,42 +1267,43 @@ impl werk_runner::Io for MockIo {
                 Vec::from(data),
             ),
         )
+        .map_err(|e| IoError::new(path, e))
     }
 
     fn copy_file(
         &self,
         from: &Absolute<std::path::Path>,
         to: &Absolute<std::path::Path>,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), IoError> {
         self.oplog
             .lock()
             .push(MockIoOp::CopyFile(from.to_path_buf(), to.to_path_buf()));
 
         let mut fs = self.filesystem.lock();
-        copy_fs(&mut fs, from, to)
+        copy_fs(&mut fs, from, to).map_err(|e| IoError::new(from, e))
     }
 
-    fn delete_file(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
+    fn delete_file(&self, path: &Absolute<std::path::Path>) -> Result<(), IoError> {
         let path = path.to_path_buf();
         self.oplog.lock().push(MockIoOp::DeleteFile(path.clone()));
 
         let mut fs = self.filesystem.lock();
-        remove_fs(&mut fs, &path)
+        remove_fs(&mut fs, &path).map_err(|e| IoError::new(path, e))
     }
 
-    fn touch(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
+    fn touch(&self, path: &Absolute<std::path::Path>) -> Result<(), IoError> {
         let mut fs = self.filesystem.lock();
         let now = self.now();
-        touch_fs(&mut fs, path, now)
+        touch_fs(&mut fs, path, now).map_err(|e| IoError::new(path, e))
     }
 
-    fn create_parent_dirs(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
+    fn create_parent_dirs(&self, path: &Absolute<std::path::Path>) -> Result<(), IoError> {
         self.oplog
             .lock()
             .push(MockIoOp::CreateParentDirs(path.to_path_buf()));
 
         let mut fs = self.filesystem.lock();
-        create_parent_dirs(&mut fs, path)
+        create_parent_dirs(&mut fs, path).map_err(|e| IoError::new(path, e))
     }
 
     fn read_env(&self, name: &str) -> Option<String> {

@@ -1,29 +1,18 @@
 mod cache;
-pub mod depfile;
+mod defaults;
 mod error;
-pub mod eval;
 mod io;
-pub mod ir;
 mod outdatedness;
-mod pattern;
 mod render;
 mod runner;
-mod scope;
-mod shell;
-mod value;
-mod warning;
 mod workspace;
 
+pub use defaults::*;
 pub use error::*;
 pub use io::*;
 pub use outdatedness::*;
-pub use pattern::*;
 pub use render::*;
 pub use runner::*;
-pub use scope::*;
-pub use shell::*;
-pub use value::*;
-pub use warning::*;
 pub use workspace::*;
 
 pub use which::Error as WhichError;
@@ -31,4 +20,10 @@ pub use which::Error as WhichError;
 #[doc(no_inline)]
 pub use globset;
 
-stringleton::enable!();
+stringleton::enable!(werk_eval);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Edition {
+    #[default]
+    V1,
+}

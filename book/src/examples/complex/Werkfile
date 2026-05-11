@@ -1,4 +1,5 @@
 default target = "build"
+default cache-dir = "target"
 
 let cargo = which "cargo"
 let glslc = which "glslc"
@@ -18,12 +19,12 @@ let cargo-wasm-profile = wasm-profile | match {
 }
 
 # Rule to build a WASM target with Cargo.
-build "{wasm-tuple}/{wasm-profile}/%.wasm" {
+build "target/{wasm-tuple}/{wasm-profile}/%.wasm" {
     # Cargo uses dashes in package names and underscores in build artifacts, so
     # use a regex to replace it.
     let package-name = "{%:s/_/-/}"
 
-    depfile "{wasm-tuple}/{wasm-profile}/%.d"
+    depfile "target/{wasm-tuple}/{wasm-profile}/%.d"
     run "{cargo} build
         --target={wasm-tuple}
         --profile={cargo-wasm-profile}
@@ -31,34 +32,34 @@ build "{wasm-tuple}/{wasm-profile}/%.wasm" {
 }
 
 # Rule to build a SPIR-V shader with glslc.
-build "%.(frag|vert|comp).spv" {
+build "target/%.{frag|vert|comp}.spv" {
     from "%.{0}"
-    depfile "%.{0}.d"
+    depfile "target/%.{0}.d"
     run "{glslc} -MD -MF <depfile> -o <out> <in>"
 }
 
 let wasm-targets = ["plugin1", "plugin2"]
                    | map "{wasm-tuple}/{wasm-profile}/{}.wasm"
 
-build "assets.tar.gz" {
+build "target/assets.tar.gz" {
     from [
         wasm-targets,
         glob "assets/**/*.png",
-        glob "shaders/**/*.\{frag,vert,comp\}" | map "{}.spv"
+        glob "shaders/**/*.\{frag,vert,comp\}" | map "target/{}.spv"
     ]
 
     run "tar -zcf <out> <in*>"
 }
 
 # Rule to build the main program.
-build "{profile}/program{EXE_SUFFIX}" {
-    depfile "{profile}/program.d"
+build "target/{profile}/program{EXE_SUFFIX}" {
+    depfile "target/{profile}/program.d"
     run "cargo build -p program --profile={cargo-profile}"
 }
 
 # Task to build everything.
 task build {
-    build ["{profile}/program{EXE_SUFFIX}", "assets.tar.gz"]
+    build ["target/{profile}/program{EXE_SUFFIX}", "target/assets.tar.gz"]
 }
 
 # Task that just runs `cargo clean`. This deletes `target/`, so also removes

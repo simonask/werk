@@ -1,6 +1,6 @@
 use werk_util::DiagnosticSpan;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq)]
 pub struct Pattern {
     /// The source span for the pattern.
     pub span: DiagnosticSpan,
@@ -9,24 +9,39 @@ pub struct Pattern {
     pub(crate) matcher: PatternMatcher,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum PatternMatcher {
     Literal(String),
     Regex(PatternRegex),
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct PatternRegexCaptures {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct PatternRegexCaptures {
     pub stem_capture_index: Option<usize>,
     pub num_normal_capture_groups: usize,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct PatternRegex {
+pub struct PatternRegex {
     /// The regular expression used to match this pattern.
     pub regex: regex::Regex,
     /// Information about the capture groups in the regex.
     pub captures: PatternRegexCaptures,
+}
+
+impl PartialEq for PatternRegex {
+    fn eq(&self, other: &Self) -> bool {
+        self.regex.as_str() == other.regex.as_str() && self.captures == other.captures
+    }
+}
+
+impl Eq for PatternRegex {}
+
+impl std::hash::Hash for PatternRegex {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.regex.as_str().hash(state);
+        self.captures.hash(state);
+    }
 }
 
 impl PartialEq for Pattern {

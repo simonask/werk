@@ -1,12 +1,12 @@
-default out-dir = "../../target/examples/demo"
+default cache-dir = "../../target/examples/demo"
 
 let cc = which "clang"
 let ld = cc
 
-build "%.o" {
+build "target/%.o" {
     run "{cc} -c <in> -o <out> -MF <depfile> -MM -MT <in>"
 }
 
 task build {
-    build "program{EXE_SUFFIX}"
+    build "target/program{EXE_SUFFIX}"
 }

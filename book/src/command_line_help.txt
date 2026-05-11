@@ -29,7 +29,10 @@ Options:
           Override the workspace directory. Defaults to the directory containing Werkfile
 
       --output-dir <OUTPUT_DIR>
-          Use the output directory instead of the default
+          Deprecated: Migrate to `--cache-dir`
+
+      --cache-dir <CACHE_DIR>
+          The directory in which to place the `.werk-cache` file
 
   -D, --define <DEFINE>
           Override global variable. This takes the form `name=value`
@@ -60,20 +63,26 @@ Output options:
           Shorthand for `--explain --print-commands --print-fresh --no-capture --loud`
 
       --color <COLOR>
-          [default: auto]
-
           Possible values:
           - auto:   Probe the current terminal and environment variables for color support
           - always: Force color output, even if the command is not running in a terminal
           - never:  Do not use color output
+          
+          [default: auto]
 
       --output-format <OUTPUT_FORMAT>
-          [default: ansi]
-
           Possible values:
           - ansi: Provide friendly user feedback assuming an ANSI terminal
           - log:  Emit the progress as log statements (assuming `WERK_LOG` is set to a value)
           - json: Report progress as JSON to stdout. This also disables color output
+          
+          [default: ansi]
+
+      --dot <DOT>
+          Write the execution plan to a Graphviz file in the DOT format. Combine with `--dry-run` to inspect the plan without executing commands
+
+      --dot-include-all-files
+          Include input file targets in the DOT output (files whose existence is checked). Warning: This can produce a very large graph
 
       --log [<LOG>]
           Enable debug logging to stdout.

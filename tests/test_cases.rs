@@ -1,4 +1,5 @@
 use tests::mock_io::*;
+use werk_planner::Planner;
 use werk_runner::Runner;
 
 fn strip_colors(s: &str) -> String {
@@ -23,9 +24,16 @@ async fn evaluate_check(file: &std::path::Path) -> Result<(), anyhow::Error> {
 
     // Invoke the runner if there is a default target.
     if let Some(ref default_target) = workspace.default_target {
+        let mut planner = Planner::new(&workspace.manifest);
+        planner
+            .add_goal_by_name(default_target)
+            .map_err(|err| anyhow::Error::msg(err.to_string()))?;
+        let task_graph = planner
+            .plan(workspace)
+            .map_err(|err| anyhow::Error::msg(err.to_string()))?;
         let runner = Runner::new(workspace);
         runner
-            .build_or_run(default_target)
+            .run(task_graph)
             .await
             .map_err(|err| anyhow::Error::msg(err.to_string()))?;
         std::mem::drop(runner);
@@ -110,7 +118,11 @@ error_case!(ambiguous_build_recipe);
 error_case!(ambiguous_path_resolution);
 error_case!(capture_group_out_of_bounds);
 error_case!(duplicate_config);
+
+// TODO: This is disabled because there are native paths in the error message.
+#[cfg(not(target_family = "windows"))]
 error_case!(include_missing);
+
 error_case!(include_with_error);
 error_case!(include_self);
 error_case!(include_twice);

@@ -12,10 +12,10 @@ Cargo or NPM. It can also replace `just` in most cases.
 The motivating use case is an asset building pipeline for a video game, which
 must perform a series of expensive steps to produce an asset archive that can be
 hot-reloaded by a game engine, but it can build anything, including C/C++
-binaries, or integrate with external build systems, like Cargo.
+binaries, or integrate with external build systems and compilers, such as Cargo.
 
 Werk is [limited and opinionated](./features.md#limitations). It is not suited
-for all use cases, and it can not replace more advanced solutions, like CMake or
+for all use cases, and it cannot replace more advanced solutions, like CMake or
 scons. However, it _is_ suited to work together with such systems, and can be
 used to invoke them in a convenient way. See the [Depfile
 support](./depfile_support.md) chapter for more details.

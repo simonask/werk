@@ -1,12 +1,12 @@
 [
-    {
-        "Default": {
-            "OutDir": "../../target/examples/c"
-        }
-    },
-    {
-        "Default": {
-            "Target": "build"
-        }
+  {
+    "Default": {
+      "DeprecatedOutDir": "../../target/examples/c"
     }
+  },
+  {
+    "Default": {
+      "Target": "build"
+    }
+  }
 ]

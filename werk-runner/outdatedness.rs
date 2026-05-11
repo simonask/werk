@@ -4,14 +4,10 @@ use std::{
 };
 
 use stringleton::Symbol;
+use werk_eval::{TaskName, Used, UsedVariable};
 use werk_fs::{Absolute, SymPath};
 
-use crate::{
-    TaskId, Workspace,
-    cache::TargetOutdatednessCache,
-    eval::{Used, UsedVariable},
-    ir,
-};
+use crate::{Workspace, cache::TargetOutdatednessCache};
 
 /// A reason why a variable or recipe is "outdated".
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -33,7 +29,7 @@ pub enum Reason {
     /// Manual define changed.
     Define(Symbol),
     /// The recipe has a dependency that was rebuilt.
-    Rebuilt(TaskId),
+    Rebuilt(TaskName),
 }
 
 impl Reason {
@@ -170,7 +166,7 @@ impl<'a> OutdatednessTracker<'a> {
     pub fn new(
         workspace: &'a Workspace,
         cache: Option<&'a TargetOutdatednessCache>,
-        recipe: &ir::BuildRecipe,
+        recipe: &werk_planner::BuildRecipe,
         target_mtime: Option<std::time::SystemTime>,
     ) -> Self {
         let mut outdatedness = Outdatedness::unchanged();

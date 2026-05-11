@@ -1,7 +1,7 @@
 # `.werk-cache`
 
-This is a special file created by `werk` in the [output
-directory](./workspace.md#output-directory).
+This is a special file created by `werk` in the [cache
+directory](./workspace.md#cache-directory).
 
 It is a TOML document containing metadata used during [outdatedness
 checks](./outdatedness.md), including [glob](./language/operations.md#glob)
@@ -18,5 +18,5 @@ environment, but the hash is not cryptographically secure. It can't be: since
 the hash must be stable between runs, using a random seed would defeat the
 purpose.
 
-`.werk-cache` can be safely deleted by the user, but doing so may cause the next
+`.werk-cache` can be safely deleted by the user, but doing so will cause the next
 build to rebuild more than necessary.

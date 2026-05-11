@@ -1,7 +1,8 @@
 use std::{future::Future, pin::Pin};
 
+use werk_eval::{Child, Env, ShellCommandLine};
 use werk_fs::Absolute;
-use werk_runner::{Child, DirEntry, Env, Error, ShellCommandLine};
+use werk_util::IoError;
 
 pub struct DryRun(werk_runner::RealSystem);
 
@@ -60,14 +61,14 @@ impl Child for DryRunChild {
     }
 }
 
-impl werk_runner::Io for DryRun {
+impl werk_eval::Io for DryRun {
     fn run_recipe_command(
         &self,
         command_line: &ShellCommandLine,
         _working_dir: &Absolute<std::path::Path>,
         _env: &Env,
         _forward_stdout: bool,
-    ) -> std::io::Result<Box<dyn Child>> {
+    ) -> Result<Box<dyn Child>, IoError> {
         tracing::info!("[DRY-RUN] Would run: {}", command_line);
         Ok(Box::new(DryRunChild::default()))
     }
@@ -77,7 +78,7 @@ impl werk_runner::Io for DryRun {
         command_line: &ShellCommandLine,
         working_dir: &Absolute<std::path::Path>,
         env: &Env,
-    ) -> Result<std::process::Output, std::io::Error> {
+    ) -> Result<std::process::Output, IoError> {
         tracing::warn!(
             "[DRY-MODE] Running executable, despite dry-run mode: {}",
             command_line
@@ -92,27 +93,24 @@ impl werk_runner::Io for DryRun {
         self.0.which(command)
     }
 
-    fn glob_workspace(
+    fn walk_directory(
         &self,
         path: &Absolute<std::path::Path>,
-        settings: &werk_runner::GlobSettings,
-    ) -> Result<Vec<DirEntry>, Error> {
-        self.0.glob_workspace(path, settings)
+        settings: werk_eval::GlobSettings,
+        visit: &(dyn Fn(&Absolute<std::path::Path>) + Send + Sync),
+    ) -> Result<(), werk_eval::GlobError> {
+        self.0.walk_directory(path, settings, visit)
     }
 
-    fn metadata(&self, path: &Absolute<std::path::Path>) -> Result<werk_runner::Metadata, Error> {
+    fn metadata(&self, path: &Absolute<std::path::Path>) -> Result<werk_eval::Metadata, IoError> {
         self.0.metadata(path)
     }
 
-    fn read_file(&self, path: &Absolute<std::path::Path>) -> Result<Vec<u8>, std::io::Error> {
+    fn read_file(&self, path: &Absolute<std::path::Path>) -> Result<Vec<u8>, IoError> {
         self.0.read_file(path)
     }
 
-    fn write_file(
-        &self,
-        path: &Absolute<std::path::Path>,
-        data: &[u8],
-    ) -> Result<(), std::io::Error> {
+    fn write_file(&self, path: &Absolute<std::path::Path>, data: &[u8]) -> Result<(), IoError> {
         tracing::info!(
             "[DRY-RUN] Would write file '{}' ({} bytes)",
             path.display(),
@@ -125,7 +123,7 @@ impl werk_runner::Io for DryRun {
         &self,
         from: &Absolute<std::path::Path>,
         to: &Absolute<std::path::Path>,
-    ) -> Result<(), std::io::Error> {
+    ) -> Result<(), IoError> {
         tracing::info!(
             "[DRY-RUN] Would copy file '{}' to '{}'",
             from.display(),
@@ -134,17 +132,17 @@ impl werk_runner::Io for DryRun {
         Ok(())
     }
 
-    fn delete_file(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
+    fn delete_file(&self, path: &Absolute<std::path::Path>) -> Result<(), IoError> {
         tracing::info!("[DRY-RUN] Would delete file '{}'", path.display());
         Ok(())
     }
 
-    fn touch(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
+    fn touch(&self, path: &Absolute<std::path::Path>) -> Result<(), IoError> {
         tracing::info!("[DRY-RUN] Would touch file '{}'", path.display());
         Ok(())
     }
 
-    fn create_parent_dirs(&self, path: &Absolute<std::path::Path>) -> Result<(), std::io::Error> {
+    fn create_parent_dirs(&self, path: &Absolute<std::path::Path>) -> Result<(), IoError> {
         tracing::info!(
             "[DRY-RUN] Would create parent directories for '{}'",
             path.display()

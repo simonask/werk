@@ -46,6 +46,14 @@ Rust and Cargo installed.
        point it to the path to the `werk-vscode` directory within this
        repository.
 
+### Language Support for Zed
+
+* Clone this repository
+* Install the extension from `zed-werk`:
+  * From within Zed: Run "zed: install dev extension" and
+       point it to the path to the `zed-werk` directory within this
+       repository.
+
 ## Features and limitations
 
 See [Features and limitations](https://simonask.github.io/werk/features.html).
@@ -55,10 +63,10 @@ See [Features and limitations](https://simonask.github.io/werk/features.html).
 * `werk` will probably never be fastest.
     1. User friendliness is always higher priority.
     2. Reporting "no changes" quickly is specifically not a goal. Use Ninja if
-    this is important to you. Typically, `werk` is invoked when the user has
-    actually made changes.
+       this is important to you. Typically, `werk` is invoked when the user has
+       actually made changes.
     3. That said, `werk` does try to be reasonably fast, and is implemented in
-    Rust using best practices.
+       Rust using best practices.
 * `werk` will probably never support all use cases.
     1. It is designed to support the use cases that are important to me, the
        author.
@@ -77,3 +85,24 @@ See [Examples](./examples).
 
 * [ ] IDE integration to run individual tasks.
 * [ ] WASM host support.
+
+## LLM transparency statement
+
+Werk is designed and written by humans, with very limited use of LLMs.
+
+1. Design and implementation of all major components is done by humans.
+2. LLMs have been used at the "auto-complete" level within the main components,
+   and all LLM output has been carefully reviewed.
+3. LLMs have been used to give feedback about and review certain aspects of the
+   code. Humans have verified and reacted to the feedback.
+4. Certain minor components have been developed by LLMs, especially around
+   terminal output formatting.
+5. The Zed extension and tree-sitter parser has been fully authored by Claude
+   Opus 4.7 based on Werk's native parser, and carefully reviewed before being
+   published.
+
+If any piece of this project violates the copyright of any author through the
+use of LLMs and their unattributed training data, such violation is
+unintentional and will be fixed as soon as possible, either through attribution
+or removal of the offending code. Please don't hesitate to report any such
+violations.

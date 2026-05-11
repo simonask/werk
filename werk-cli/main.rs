@@ -2,7 +2,7 @@ mod complete;
 pub mod dry_run;
 mod render;
 
-use std::{borrow::Cow, path::Path, sync::Arc};
+use std::{borrow::Cow, io::Write as _, path::Path, sync::Arc};
 
 use ahash::HashSet;
 use clap::{CommandFactory, Parser};
@@ -11,9 +11,11 @@ use futures::future::{self, Either};
 use notify_debouncer_full::notify;
 use owo_colors::OwoColorize as _;
 use render::{AutoStream, ColorOutputKind};
+use werk_eval::{Scope, Warning};
 use werk_fs::{Absolute, Normalize as _, PathError};
-use werk_runner::{BuildStatus, Runner, Warning, Workspace, WorkspaceSettings};
-use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticSource, DiagnosticSourceMap};
+use werk_planner::{Planner, TaskGraph, TaskGraphToDotSettings};
+use werk_runner::{Runner, Workspace, WorkspaceSettings};
+use werk_util::{Annotated, AsDiagnostic, DiagnosticFileId, DiagnosticSource};
 
 shadow_rs::shadow!(build);
 
@@ -63,6 +65,16 @@ pub struct OutputArgs {
     #[clap(long, default_value = "ansi")]
     pub output_format: OutputChoice,
 
+    /// Write the execution plan to a Graphviz file in the DOT format. Combine
+    /// with `--dry-run` to inspect the plan without executing commands.
+    #[clap(long)]
+    pub dot: Option<std::path::PathBuf>,
+
+    /// Include input file targets in the DOT output (files whose existence is
+    /// checked). Warning: This can produce a very large graph.
+    #[clap(long)]
+    pub dot_include_all_files: bool,
+
     /// Enable debug logging to stdout.
     ///
     /// This takes a logging directive like `RUST_LOG`.
@@ -109,9 +121,13 @@ pub struct Args {
     #[clap(long)]
     pub workspace_dir: Option<std::path::PathBuf>,
 
-    /// Use the output directory instead of the default.
+    /// Deprecated: Migrate to `--cache-dir`.
     #[clap(long)]
     pub output_dir: Option<std::path::PathBuf>,
+
+    /// The directory in which to place the `.werk-cache` file.
+    #[clap(long)]
+    pub cache_dir: Option<std::path::PathBuf>,
 
     /// Override global variable. This takes the form `name=value`.
     #[clap(long, short = 'D', add = ArgValueCandidates::new(complete::defines))]
@@ -155,8 +171,12 @@ pub enum Error {
     Runner,
     #[error("Invalid workspace directory '{0}': {1}")]
     WorkspaceDirectory(String, std::io::Error),
-    #[error("Invalid output directory '{0}': {1}")]
-    OutputDirectory(String, PathError),
+    #[error(
+        "No cache directory specified. Pass `--cache-dir`, or set `config cache-dir=\"...\"` in the Werkfile"
+    )]
+    NoCacheDirectory,
+    #[error("Invalid cache directory '{0}': {1}")]
+    CacheDirectory(String, PathError),
     #[error("Werkfile not found in this directory or any parent directory")]
     NoWerkfile,
     #[error("Invalid define (must take the form `key=value`): {0}")]
@@ -217,21 +237,38 @@ async fn try_main(args: Args) -> Result<(), Error> {
     let ast = werk_parser::parse_werk(&source_code).map_err(|err| {
         print_parse_error(
             err.with_file(main_file_id)
-                .into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)),
+                .into_diagnostic_error(&DiagnosticSource::new(&werkfile, &source_code)),
         )
     })?;
 
     // Read the `default` statements from the AST.
-    let defaults = werk_runner::ir::Defaults::new(&ast, main_file_id).map_err(|err| {
-        print_eval_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
+    let defaults = werk_runner::Defaults::new(&ast, main_file_id).map_err(|err| {
+        print_eval_error(err.into_diagnostic_error(&DiagnosticSource::new(&werkfile, &source_code)))
     })?;
+
+    if args.output_dir.is_some() || defaults.deprecated_output_directory.is_some() {
+        anstream::eprintln!(
+            "{} {}",
+            "FATAL:".bright_red().bold(),
+            if args.output_dir.is_some() {
+                "The `--output-dir` option is deprecated. Migrate to `--cache-dir`."
+            } else {
+                "The `out-dir` config option is deprecated. Migrate to `cache-dir`."
+            }
+        );
+        anstream::eprintln!(
+            "{} Please consult https://simonask.github.io/werk/migrating_v0_2.html for more information.",
+            "MIGRATION:".bright_yellow().bold()
+        );
+        std::process::exit(1);
+    }
 
     let settings = get_workspace_settings(&defaults, &args, &workspace_dir, color_stdout)?;
 
     tracing::info!("Project directory: {}", workspace_dir.display());
-    tracing::info!("Output directory: {}", settings.output_directory.display());
+    tracing::info!("Cache directory: {}", settings.cache_dir.display());
 
-    let io: Arc<dyn werk_runner::Io> = if args.dry_run || args.list {
+    let io: Arc<dyn werk_eval::Io> = if args.dry_run || args.list {
         Arc::new(dry_run::DryRun::new())
     } else {
         Arc::new(werk_runner::RealSystem::new())
@@ -250,12 +287,12 @@ async fn try_main(args: Args) -> Result<(), Error> {
         &settings,
     )
     .map_err(|err| {
-        print_error(err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)))
+        print_error(err.into_diagnostic_error(&DiagnosticSource::new(&werkfile, &source_code)))
     })?;
     let werkfile_abstract_path = workspace.unresolve_path(&werkfile).unwrap();
     workspace
         .add_werkfile_parsed(&werkfile_abstract_path, &source_code, ast)
-        .map_err(|err| print_eval_error(err.into_diagnostic_error(&workspace)))?;
+        .map_err(|err| print_eval_error(err.into_diagnostic_error(&workspace.manifest)))?;
 
     if args.list {
         let mut output = AutoStream::new(std::io::stdout(), color_stdout);
@@ -293,20 +330,53 @@ async fn try_main(args: Args) -> Result<(), Error> {
         let ctrlc_recv = ctrlc_receiver.recv();
         smol::pin!(ctrlc_recv);
 
-        let (runner, result) = run(&workspace, &target).await;
-        result?;
+        let task_graph = build_task_graph(&workspace, &[&target]).map_err(print_error)?;
+
+        if let Some(dot) = args.output.dot.as_deref() {
+            let mut dot_source = String::new();
+            task_graph
+                .to_dot(
+                    &mut dot_source,
+                    &TaskGraphToDotSettings {
+                        all_files: args.output.dot_include_all_files,
+                    },
+                )
+                .unwrap();
+            let mut dot_file = std::fs::File::create(dot)?;
+            dot_file.write_all(dot_source.as_bytes())?;
+        }
+
+        let runner = Runner::new(&workspace);
+        let result = runner.run(task_graph).await;
+        let write_cache = match result {
+            Ok(_) => {
+                let wait = runner.wait_for_long_running_tasks();
+                smol::pin!(wait);
+                true
+            }
+            Err(ref err) => {
+                runner.stop(std::time::Duration::from_secs(1)).await;
+                err.error.should_still_write_werk_cache()
+            }
+        };
+
+        if write_cache {
+            if let Err(err) = workspace.finalize().await {
+                eprintln!("Error writing `.werk-cache`: {err}");
+            }
+        }
+
         let wait = runner.wait_for_long_running_tasks();
         smol::pin!(wait);
-
         match future::select(wait, ctrlc_recv).await {
-            Either::Left(_) => Ok(()),
+            Either::Left(_) => (),
             Either::Right(_) => {
                 // Stop children, giving child processes a chance to finish
                 // cleanly (and giving us a chance to read their stdout/stderr).
                 runner.stop(std::time::Duration::from_millis(100)).await;
-                Ok(())
             }
         }
+        result.map_err(print_error)
     }
 }
 
@@ -331,13 +401,6 @@ async fn autowatch_loop(
 
     let watch_manifest = HashSet::from_iter([werkfile.clone()]);
     let mut watch_set = watch_manifest.clone();
-    watch_set.extend(workspace.workspace_files().filter_map(|(_, entry)| {
-        if entry.metadata.is_file {
-            Some(entry.path.clone())
-        } else {
-            None
-        }
-    }));
     let workspace_dir = workspace.project_root().to_path_buf();
 
     let mut settings = settings.clone();
@@ -352,16 +415,38 @@ async fn autowatch_loop(
             watch_set = watch_manifest.clone();
         }
 
-        // Start the notifier.
+        // Start the notifier before running the graph.
         let notifier = make_notifier_for_files(&watch_set, notification_sender.clone(), timeout)?;
         let notification_recv = notification_receiver.recv();
 
         // Build or rebuild the target!
-        let runner_and_result = if let Some(target) = target.as_ref() {
-            Some(run(&workspace, target).await)
+        let result = if let Some(target) = target.as_ref() {
+            match build_task_graph(&workspace, &[target]) {
+                Ok(task_graph) => {
+                    watch_set.extend(
+                        task_graph
+                            .get_input_files()
+                            .map(|p| workspace.resolve_path(p.as_path())),
+                    );
+                    let runner = Runner::new(&workspace);
+                    let result = runner.run(task_graph).await;
+                    (Some(runner), result)
+                }
+                Err(err) => (None, Err(err.inner_into())),
+            }
         } else {
-            None
+            (None, Ok(()))
         };
+
+        let write_cache = match result.1 {
+            Ok(_) => true,
+            Err(ref err) => err.error.should_still_write_werk_cache(),
+        };
+        if write_cache {
+            if let Err(err) = workspace.finalize().await {
+                eprintln!("Error writing `.werk-cache`: {err}")
+            }
+        }
 
         if watch_set == watch_manifest {
             render.runner_message("Watching manifest for changes, press Ctrl-C to stop");
@@ -389,11 +474,11 @@ async fn autowatch_loop(
         // If there are any long-running tasks, give them a chance to finish.
         // Note that `run()` automatically does this if the target could not be
         // built.
-        if let Some((ref runner, Ok(_))) = runner_and_result {
+        if let (Some(ref runner), Ok(_)) = result {
             runner.stop(std::time::Duration::from_millis(100)).await;
         }
 
-        std::mem::drop(runner_and_result);
+        std::mem::drop(result);
 
         // Stop the notifier again immediately. TODO: Consider if it makes sense to reuse it.
         notifier.stop();
@@ -419,7 +504,7 @@ async fn autowatch_loop(
             Err(err) => {
                 print_parse_error(
                     err.with_file(main_file_id)
-                        .into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)),
+                        .into_diagnostic_error(&DiagnosticSource::new(&werkfile, &source_code)),
                 );
                 watch_set = watch_manifest.clone();
                 continue;
@@ -427,39 +512,36 @@ async fn autowatch_loop(
         };
 
         // Reload config.
-        let defaults = match werk_runner::ir::Defaults::new(&ast, main_file_id) {
+        let defaults = match werk_runner::Defaults::new(&ast, main_file_id) {
             Ok(config) => config,
             Err(err) => {
                 print_eval_error(
-                    err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)),
+                    err.into_diagnostic_error(&DiagnosticSource::new(&werkfile, &source_code)),
                 );
                 watch_set = watch_manifest.clone();
                 continue;
             }
         };
 
-        let out_dir = match find_output_directory(
+        let cache_dir = match find_cache_directory(
             &workspace_dir,
             output_directory_from_args,
-            defaults.output_directory.as_deref(),
+            defaults.cache_dir.as_deref(),
         ) {
-            Ok(out_dir) => out_dir,
+            Ok(cache_dir) => cache_dir,
             Err(err) => {
-                render.runner_message(&format!("Error finding output directory: {err}"));
+                render.runner_message(&format!("Error finding cache directory: {err}"));
                 watch_set = watch_manifest.clone();
                 continue;
             }
         };
 
-        if out_dir != settings.output_directory {
+        if cache_dir != settings.cache_dir {
             render.warning(
                 None,
-                &Warning::OutputDirectoryChanged(
-                    settings.output_directory.clone(),
-                    out_dir.clone(),
-                ),
+                &Warning::CacheDirectoryChanged(settings.cache_dir.clone(), cache_dir.clone()),
             );
-            settings.output_directory = out_dir;
+            settings.cache_dir = cache_dir;
         }
 
         workspace =
@@ -467,7 +549,7 @@ async fn autowatch_loop(
                 Ok(workspace) => workspace,
                 Err(err) => {
                     print_error(
-                        err.into_diagnostic_error(DiagnosticSource::new(&werkfile, &source_code)),
+                        err.into_diagnostic_error(&DiagnosticSource::new(&werkfile, &source_code)),
                     );
                     // Workspace evaluation may depend on other files, so just keep
                     // the current watchset.
@@ -478,7 +560,7 @@ async fn autowatch_loop(
         match workspace.add_werkfile_parsed(&werkfile_abstract_path, &source_code, ast) {
             Ok(_) => (),
             Err(err) => {
-                print_eval_error(err.into_diagnostic_error(&workspace));
+                print_eval_error(err.into_diagnostic_error(&workspace.manifest));
                 // Workspace evaluation may depend on other files, so just keep
                 // the current watchset.
                 continue;
@@ -492,38 +574,20 @@ async fn autowatch_loop(
         // Update the watchset.
         watch_set.clear();
         watch_set.extend(watch_manifest.iter().cloned());
-        watch_set.extend(workspace.workspace_files().filter_map(|(_, entry)| {
-            if entry.metadata.is_file {
-                Some(entry.path.clone())
-            } else {
-                None
-            }
-        }));
     }
 }
 
-async fn run<'w>(
+fn build_task_graph<'w>(
     workspace: &'w Workspace,
-    target: &str,
-) -> (Runner<'w>, Result<BuildStatus, Error>) {
-    let runner = Runner::new(workspace);
-    let result = runner.build_or_run(target).await;
-
-    let write_cache = match result {
-        Ok(_) => true,
-        Err(ref err) => {
-            runner.stop(std::time::Duration::from_secs(1)).await;
-            err.error.should_still_write_werk_cache()
-        }
-    };
-
-    if write_cache {
-        if let Err(err) = workspace.finalize().await {
-            eprintln!("Error writing `.werk-cache`: {err}")
-        }
+    targets: &[&str],
+) -> Result<TaskGraph<'w>, Annotated<'w, werk_runner::Error>> {
+    let mut planner = Planner::new(&workspace.manifest);
+    for target in targets {
+        planner
+            .add_goal_by_name(target)
+            .map_err(Annotated::inner_into)?;
     }
-
-    (runner, result.map_err(print_error))
+    planner.plan(workspace).map_err(Annotated::inner_into)
 }
 
 fn make_notifier_for_files(
@@ -549,7 +613,7 @@ fn make_notifier_for_files(
     Ok(notifier)
 }
 
-pub fn print_list(manifest: &werk_runner::ir::Manifest, out: &mut dyn std::io::Write) {
+pub fn print_list(manifest: &werk_planner::Manifest, out: &mut dyn std::io::Write) {
     let configs = manifest
         .config_variables
         .iter()
@@ -707,20 +771,20 @@ pub fn get_workspace_dir<'a>(
 }
 
 pub fn get_workspace_settings(
-    defaults: &werk_runner::ir::Defaults,
+    defaults: &werk_runner::Defaults,
     args: &Args,
     workspace_dir: &Absolute<std::path::Path>,
     color_stdout: ColorOutputKind,
 ) -> Result<WorkspaceSettings, Error> {
-    let out_dir = find_output_directory(
+    let cache_dir = find_cache_directory(
         workspace_dir,
         args.output_dir.as_deref(),
-        defaults.output_directory.as_deref(),
+        defaults.cache_dir.as_deref(),
     )?;
 
     let mut settings = WorkspaceSettings::new(workspace_dir.to_owned());
     settings.jobs = args.jobs.or(defaults.jobs).unwrap_or_else(num_cpus::get);
-    settings.output_directory = out_dir;
+    settings.cache_dir = cache_dir;
     for def in &args.define {
         let Some((key, value)) = def.split_once('=') else {
             return Err(Error::InvalidDefineArg(def.clone()));
@@ -737,7 +801,7 @@ pub fn get_workspace_settings(
     Ok(settings)
 }
 
-fn find_output_directory(
+fn find_cache_directory(
     workspace_dir: &Absolute<std::path::Path>,
     from_args: Option<&std::path::Path>,
     from_config: Option<&str>,
@@ -745,32 +809,32 @@ fn find_output_directory(
     if let Some(from_args) = from_args {
         workspace_dir
             .join(from_args)
-            .map_err(|err| Error::OutputDirectory(from_args.display().to_string(), err.into()))
+            .map_err(|err| Error::CacheDirectory(from_args.display().to_string(), err.into()))
     } else if let Some(from_config) = from_config {
         workspace_dir
             .join(from_config)
-            .map_err(|err| Error::OutputDirectory(from_config.to_owned(), err.into()))
+            .map_err(|err| Error::CacheDirectory(from_config.to_owned(), err.into()))
     } else {
-        Ok(workspace_dir.join("target").unwrap())
+        Err(Error::NoCacheDirectory)
     }
 }
 
-fn print_error<E: AsDiagnostic, R: DiagnosticSourceMap>(err: Annotated<E, R>) -> Error {
+fn print_error<E: AsDiagnostic>(err: Annotated<'_, E>) -> Error {
     print_diagnostic(err);
     Error::Runner
 }
 
-fn print_eval_error<E: AsDiagnostic, R: DiagnosticSourceMap>(err: Annotated<E, R>) -> Error {
+fn print_eval_error<E: AsDiagnostic>(err: Annotated<'_, E>) -> Error {
     print_diagnostic(err);
     Error::Eval
 }
 
-fn print_parse_error<E: AsDiagnostic, R: DiagnosticSourceMap>(err: Annotated<E, R>) -> Error {
+fn print_parse_error<E: AsDiagnostic>(err: Annotated<'_, E>) -> Error {
     print_diagnostic(err);
     Error::Parse
 }
 
-fn print_diagnostic<E: AsDiagnostic, R: DiagnosticSourceMap>(err: Annotated<E, R>) {
+fn print_diagnostic<E: AsDiagnostic>(err: Annotated<'_, E>) {
     use annotate_snippets::renderer::DEFAULT_TERM_WIDTH;
     let renderer = annotate_snippets::Renderer::styled().term_width(
         render::stderr_width()

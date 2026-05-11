@@ -8,14 +8,10 @@ recipe may be references to files within the workspace, or they may be
 referencing the output of another recipe, which will exist in the output
 directory.
 
-## Output directory
+## Cache directory
 
-The output directory is where files produced by `werk` will be placed. The
-default path is `$WORKSPACE/target` (same as Cargo), but this can be overridden
-in two ways:
+The cache directory is where Werk stores its internal cache. It can be set in
+two ways:
 
-* From within the Werkfile: `default out-dir = ".."`
-* From the command-like: `werk --output-dir=..`
-
-If `werk` detects that an output directory is included in the workspace (i.e.,
-it is not covered by `.gitignore`), it will emit a hard error.
+* From within the Werkfile: `default cache-dir = ".."`
+* From the command-line: `werk --cache-dir=..`

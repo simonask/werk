@@ -13,8 +13,8 @@ arguments take precedence over `default` statements.
 Reference:
 
 ```werk
-# Set the output directory, relative to the workspace root. Default is "target".
-default out-dir = "output-directory"
+# Set the cache directory, relative to the workspace root.
+default cache-dir = "output-directory"
 
 # Set the default recipe to run when werk is run without arguments.
 default target = "recipe-name"

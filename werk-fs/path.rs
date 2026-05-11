@@ -82,7 +82,7 @@ pub enum PathError {
     #[error("path would contain too many parents (would go above the root)")]
     TooManyParents,
     #[error("path is outside the workspace")]
-    UnresolveBeyondRoot,
+    UnresolveBeyondRoot(std::path::PathBuf),
     #[error("illegal character in path: {0}")]
     IllegalChar(char),
     #[error("illegal filename stem (reserved on Windows): {0}")]
@@ -583,6 +583,12 @@ impl PathBuf {
     #[must_use]
     pub fn new_unchecked(path: String) -> Self {
         PathBuf { path }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn into_string(self) -> String {
+        self.path
     }
 
     pub fn from_utf8(path: Vec<u8>) -> Result<Self, PathError> {

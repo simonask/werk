@@ -1,0 +1,29 @@
+[package]
+name = "werk-planner"
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ahash.workspace = true
+annotate-snippets.workspace = true
+globset.workspace = true
+indexmap.workspace = true
+literator.workspace = true
+stringleton.workspace = true
+thiserror.workspace = true
+tinyvec.workspace = true
+tracing.workspace = true
+werk-depfile.workspace = true
+werk-eval.workspace = true
+werk-fs.workspace = true
+werk-parser.workspace = true
+werk-util.workspace = true
+which.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true

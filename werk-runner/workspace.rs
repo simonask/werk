@@ -1,22 +1,24 @@
-use ahash::HashMap;
-use indexmap::IndexMap;
+use ahash::{HashMap, HashSet};
 use parking_lot::Mutex;
 use std::{borrow::Cow, collections::hash_map, sync::Arc};
-use stringleton::Symbol;
-use werk_fs::{Absolute, Normalize as _, PathError};
+use stringleton::{Symbol, sym};
+use werk_eval::{
+    Eval, EvalError, GlobError, GlobSettings, Io, Lookup, LookupValue, Scope, UsedVariable, Value,
+    Warning,
+};
+use werk_fs::{Absolute, Normalize as _, PathError, SymPath};
 use werk_parser::ast;
-use werk_util::{DiagnosticFileId, DiagnosticSpan};
+use werk_planner::{BuildRecipe, Manifest, TaskRecipe};
+use werk_util::{DiagnosticFileId, DiagnosticSpan, IoError, hash128::Hash128};
 
 use crate::{
-    DirEntry, Error, EvalError, Io, Render, Value, Warning,
-    cache::{Hash128, TargetOutdatednessCache, WerkCache},
-    eval::{self, Eval, UsedVariable},
-    ir::{self, BuildRecipe, TaskRecipe},
+    Error, Render,
+    cache::{TargetOutdatednessCache, WERK_CACHE_FILENAME, WerkCache},
 };
 
 #[derive(Clone)]
 pub struct WorkspaceSettings {
-    pub output_directory: Absolute<std::path::PathBuf>,
+    pub cache_dir: Absolute<std::path::PathBuf>,
     /// Settings for globbing the workspace directory. Note that the
     /// `output_directory` is not automatically ignored, and must either be
     /// present in `.gitignore` or explicitly ignored here.
@@ -37,46 +39,14 @@ pub struct WorkspaceSettings {
 
 impl WorkspaceSettings {
     #[must_use]
-    pub fn new(output_dir: Absolute<std::path::PathBuf>) -> Self {
+    pub fn new(cache_dir: Absolute<std::path::PathBuf>) -> Self {
         WorkspaceSettings {
-            output_directory: output_dir,
+            cache_dir,
             glob: GlobSettings::default(),
             defines: HashMap::default(),
             force_color: false,
             jobs: 1,
             artificial_delay: None,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-#[allow(clippy::struct_excessive_bools)]
-pub struct GlobSettings {
-    /// Read the workspace directory's `.gitignore`. Enabled by default.
-    pub git_ignore: bool,
-    /// Read a global gitignore file, specified in the `core.excludeFiles`
-    /// config option. Enabled by default.
-    pub git_ignore_global: bool,
-    /// Read `.git/info/exclude`. Enabled by default.
-    pub git_ignore_exclude: bool,
-    /// Read `.gitignore` from parent directoryes. Enabled by default.
-    pub git_ignore_from_parents: bool,
-    /// Enables reading `.ignore` files, supported by `ripgrep` and The Silver Searcher. Enabled by default.
-    pub dot_ignore: bool,
-    /// Explicit file name patterns to ignore in addition to gitignore and .ignore files.
-    pub ignore_explicitly: globset::GlobSet,
-}
-
-impl Default for GlobSettings {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            git_ignore: true,
-            git_ignore_global: true,
-            git_ignore_exclude: true,
-            git_ignore_from_parents: true,
-            dot_ignore: true,
-            ignore_explicitly: globset::GlobSet::empty(),
         }
     }
 }
@@ -95,15 +65,14 @@ impl WorkspaceSettings {
 }
 
 pub struct Workspace {
-    pub manifest: ir::Manifest,
+    pub manifest: Manifest,
+    protected_paths: HashSet<Absolute<werk_fs::PathBuf>>,
     // Project root - note that the workspace only accesses this directory
     // through the `Io` trait, and never directly.
     project_root: Absolute<std::path::PathBuf>,
     // Project root - note that the workspace only accesses this directory
     // through the `Io` trait, and never directly.
-    output_directory: Absolute<std::path::PathBuf>,
-    // Using IndexMap to ensure that the ordering of glob results is well-defined.
-    files: IndexMap<Absolute<werk_fs::PathBuf>, DirEntry, ahash::RandomState>,
+    cache_dir: Absolute<std::path::PathBuf>,
     /// The contents of `<out-dir>/.werk-cache.toml`.
     werk_cache: Mutex<WerkCache>,
     /// Caches of expensive runtime values (glob, which, env).
@@ -114,8 +83,9 @@ pub struct Workspace {
     pub force_color: bool,
     pub io: Arc<dyn Io>,
     pub render: Arc<dyn Render>,
-    pub(crate) runner_state: crate::runner::RunnerState,
     pub(crate) artificial_delay: Option<std::time::Duration>,
+    pub max_concurrent_jobs: usize,
+    glob_settings: GlobSettings,
 }
 
 #[derive(Default)]
@@ -126,8 +96,6 @@ struct Caches {
     build_recipe_hashes: HashMap<String, Hash128>,
 }
 
-pub const WERK_CACHE_FILENAME: &str = ".werk-cache";
-
 impl Workspace {
     pub fn new(
         io: Arc<dyn Io>,
@@ -135,42 +103,21 @@ impl Workspace {
         project_root: Absolute<std::path::PathBuf>,
         settings: &WorkspaceSettings,
     ) -> Result<Self, Error> {
-        let werk_cache = read_workspace_cache(&*io, &settings.output_directory);
+        let werk_cache = WerkCache::read(&*io, &settings.cache_dir);
 
-        let mut workspace_files =
-            IndexMap::with_capacity_and_hasher(1024, ahash::RandomState::default());
-
-        for entry in io.glob_workspace(&project_root, &settings.glob)? {
-            if entry.path.file_name() == Some(WERK_CACHE_FILENAME.as_ref()) {
-                return Err(Error::ClobberedWorkspace(entry.path.into_inner()));
-            }
-
-            let path_in_project = match entry.path.unresolve(&project_root) {
-                Ok(path_in_project) => path_in_project,
-                // This should not be possible.
-                Err(err @ PathError::UnresolveBeyondRoot) => {
-                    return Err(Error::InvalidTargetPath(
-                        entry.path.display().to_string(),
-                        err,
-                    ));
-                }
-                Err(_) => continue,
-            };
-            tracing::trace!("Workspace file: {path_in_project}");
-            workspace_files.insert(path_in_project, entry);
-        }
-
-        // Deterministic workspace order to preserve the ordering of glob
-        // results.
-        workspace_files.sort_unstable_keys();
-
-        let manifest = ir::Manifest::default();
+        let manifest = Manifest::default();
 
         let workspace = Self {
             manifest,
+            protected_paths: HashSet::from_iter(
+                settings
+                    .cache_dir
+                    .join(WERK_CACHE_FILENAME)
+                    .ok()
+                    .and_then(|p| p.unresolve(&project_root).ok()),
+            ),
             project_root,
-            output_directory: settings.output_directory.clone(),
-            files: workspace_files,
+            cache_dir: settings.cache_dir.clone(),
             werk_cache: Mutex::new(werk_cache),
             runtime_caches: Mutex::new(Caches {
                 glob_cache: HashMap::default(),
@@ -187,11 +134,22 @@ impl Workspace {
             force_color: settings.force_color,
             io,
             render,
-            runner_state: crate::RunnerState::new(settings.jobs),
             artificial_delay: settings.artificial_delay,
+            max_concurrent_jobs: settings.jobs,
+            glob_settings: settings.glob.clone(),
         };
 
         Ok(workspace)
+    }
+
+    /// Add arbitrary workspace paths to the protected set.
+    pub fn protect_paths(&mut self, paths: impl IntoIterator<Item = Absolute<werk_fs::PathBuf>>) {
+        self.protected_paths.extend(paths);
+    }
+
+    /// Returns whether the given path is protected from being modified by recipes.
+    pub fn is_path_protected(&self, path: &Absolute<werk_fs::Path>) -> bool {
+        self.protected_paths.contains(path)
     }
 
     fn register_werkfile_source(
@@ -200,8 +158,9 @@ impl Workspace {
         source: &str,
         included_from: Option<DiagnosticSpan>,
     ) -> Result<DiagnosticFileId, EvalError> {
+        let path = path.to_owned();
         let id = match self.manifest.source_map.insert_check_duplicate(
-            path.to_owned().into_inner().into(),
+            path.clone().into_inner().into(),
             source.to_owned(),
             included_from,
         ) {
@@ -212,12 +171,13 @@ impl Workspace {
                         werk_util::Span::from_offset_and_len(werk_util::Offset(0), 0),
                     )),
                     previously_included_from,
-                    path.to_owned(),
+                    path.clone(),
                 ));
             }
         };
 
         self.render.add_source_file(id, path.as_str(), source);
+        self.protected_paths.insert(path);
         Ok(id)
     }
 
@@ -302,7 +262,7 @@ impl Workspace {
         file: DiagnosticFileId,
         stmt: &ast::IncludeStmt,
     ) -> Result<(), EvalError> {
-        let value = eval::eval_chain(self, &stmt.param, file)?;
+        let value = werk_eval::eval_chain(self, &stmt.param, file)?;
         let mut files = vec![];
         value.value.try_visit(|include_file| {
             let path = werk_fs::PathBuf::new(include_file.string)
@@ -312,20 +272,16 @@ impl Workspace {
             Ok::<_, EvalError>(())
         })?;
         for included_file in files {
-            let file_entry = self.get_project_file(&included_file).ok_or_else(|| {
-                EvalError::IncludeIoError(
-                    file.span(stmt.span),
-                    included_file.to_string(),
-                    std::io::Error::new(std::io::ErrorKind::NotFound, "file not found").into(),
-                )
+            let file_entry = self.stat_file(&included_file).map_err(|err| {
+                EvalError::IncludeIoError(file.span(stmt.span), included_file.to_string(), err)
             })?;
 
+            // Note: The included file's mtime is not included in outdatedness
+            // calculations, because variables and recipes are tracked using
+            // fine-grained hashing.
+
             let source = self.io.read_file(&file_entry.path).map_err(|err| {
-                EvalError::IncludeIoError(
-                    file.span(stmt.span),
-                    included_file.to_string(),
-                    err.into(),
-                )
+                EvalError::IncludeIoError(file.span(stmt.span), included_file.to_string(), err)
             })?;
 
             let source = String::from_utf8(source).map_err(|_| {
@@ -363,10 +319,10 @@ impl Workspace {
             return Err(EvalError::DefaultInInclude(file.span(stmt.span())));
         }
 
-        // Note: Other types of `default` statements are handled upstream, while
+        // Note: Other types of `default` statements are handled upstream while
         // parsing `Defaults`, which happens prior to creating the workspace.
         if let ast::DefaultStmt::Target(stmt) = stmt {
-            let value = eval::eval_string_expr(self, &stmt.value, file)?;
+            let value = werk_eval::eval_string_expr(self, &stmt.value, file)?;
             self.default_target = Some(value.value.string);
         }
 
@@ -403,7 +359,7 @@ impl Workspace {
                 .global_variables
                 .insert(stmt.ident.ident, evaluated);
         } else {
-            let mut value = eval::eval_chain(self, &stmt.value, file)?;
+            let mut value = werk_eval::eval_chain(self, &stmt.value, file)?;
             value
                 .used
                 .insert(UsedVariable::Global(stmt.ident.ident, hash));
@@ -424,7 +380,7 @@ impl Workspace {
 
     fn eval_let(&mut self, file: DiagnosticFileId, stmt: &ast::LetStmt) -> Result<(), EvalError> {
         let hash = compute_stable_semantic_hash(&stmt.value);
-        let mut value = eval::eval_chain(self, &stmt.value, file)?;
+        let mut value = werk_eval::eval_chain(self, &stmt.value, file)?;
         value
             .used
             .insert(UsedVariable::Global(stmt.ident.ident, hash));
@@ -461,7 +417,8 @@ impl Workspace {
         build_recipe: ast::BuildRecipe,
     ) -> Result<(), EvalError> {
         let hash = compute_stable_semantic_hash(&build_recipe);
-        let mut pattern_builder = eval::eval_pattern_builder(self, &build_recipe.pattern, file)?;
+        let mut pattern_builder =
+            werk_eval::eval_pattern_builder(self, &build_recipe.pattern, file)?;
 
         // TODO: Consider if it isn't better to do this while matching recipes.
         pattern_builder.ensure_absolute_path();
@@ -483,15 +440,9 @@ impl Workspace {
 
     /// Write outdatedness cache (`which` and `glob`)  to "<out-dir>/.werk-cache".
     #[expect(clippy::unused_async)] // Preserving `async` for future-proofing.
-    pub async fn finalize(&self) -> std::io::Result<()> {
+    pub async fn finalize(&self) -> Result<(), IoError> {
         let cache = self.werk_cache.lock();
-        write_workspace_cache(&*self.io, &self.output_directory, &cache)
-    }
-
-    pub fn workspace_files(
-        &self,
-    ) -> impl ExactSizeIterator<Item = (&Absolute<werk_fs::PathBuf>, &DirEntry)> + '_ {
-        self.files.iter()
+        cache.write(&*self.io, &self.cache_dir)
     }
 
     #[inline]
@@ -500,60 +451,12 @@ impl Workspace {
     }
 
     #[inline]
-    pub fn output_directory(&self) -> &Absolute<std::path::Path> {
-        &self.output_directory
+    pub fn cache_dir(&self) -> &Absolute<std::path::Path> {
+        &self.cache_dir
     }
 
-    pub fn is_in_output_directory(&self, path: &Absolute<std::path::Path>) -> bool {
-        path.starts_with(&*self.output_directory)
-    }
-
-    pub fn get_project_file(&self, path: &Absolute<werk_fs::Path>) -> Option<&DirEntry> {
-        self.files.get(path)
-    }
-
-    pub fn get_existing_project_or_output_file(
-        &self,
-        path: &Absolute<werk_fs::Path>,
-    ) -> Result<Option<DirEntry>, Error> {
-        if let Some(dir_entry) = self.get_project_file(path) {
-            return Ok(Some(dir_entry.clone()));
-        }
-
-        self.get_existing_output_file(path)
-    }
-
-    pub fn get_existing_output_file(
-        &self,
-        path: &Absolute<werk_fs::Path>,
-    ) -> Result<Option<DirEntry>, Error> {
-        let fs_path = path.resolve(&self.output_directory);
-        match self.io.metadata(&fs_path) {
-            Ok(metadata) => Ok(Some(DirEntry {
-                path: fs_path,
-                metadata,
-            })),
-            Err(Error::Io(err)) => {
-                if err.kind() == std::io::ErrorKind::NotFound {
-                    Ok(None)
-                } else {
-                    Err(err.into())
-                }
-            }
-            Err(err) => Err(err),
-        }
-    }
-
-    /// Get the output file path for this abstract path. The file may or may not exist, but must be a valid path.
-    pub fn get_output_file_path(
-        &self,
-        path: &werk_fs::Path,
-    ) -> Result<Absolute<std::path::PathBuf>, PathError> {
-        path.resolve(&self.output_directory)
-    }
-
-    pub fn create_output_parent_dirs(&self, path: &Absolute<werk_fs::Path>) -> Result<(), Error> {
-        let fs_path = path.resolve(&self.output_directory);
+    pub fn create_parent_dirs(&self, path: &Absolute<werk_fs::Path>) -> Result<(), Error> {
+        let fs_path = path.resolve(self.project_root());
         self.io.create_parent_dirs(&fs_path).map_err(Into::into)
     }
 
@@ -561,18 +464,13 @@ impl Workspace {
         &self,
         path: &Absolute<std::path::Path>,
     ) -> Result<Absolute<werk_fs::PathBuf>, PathError> {
-        match path.unresolve(&self.output_directory) {
-            Ok(path) => Ok(path),
-            // The path is not in the output directory, try the project root.
-            Err(werk_fs::PathError::UnresolveBeyondRoot) => path.unresolve(&self.project_root),
-            Err(err) => Err(err),
-        }
+        path.unresolve(&self.project_root)
     }
 
     pub fn glob_workspace_files(
         &self,
         pattern: &str,
-    ) -> Result<(Vec<Absolute<werk_fs::PathBuf>>, Hash128), globset::Error> {
+    ) -> Result<(Vec<Absolute<werk_fs::PathBuf>>, Hash128), GlobError> {
         let mut state = self.runtime_caches.lock();
         let state = &mut *state;
         match state.glob_cache.entry(pattern.to_owned()) {
@@ -582,21 +480,25 @@ impl Workspace {
             }
             hash_map::Entry::Vacant(entry) => {
                 let glob = globset::Glob::new(pattern)?;
+                let matches = Mutex::new(vec![]);
                 let matcher = glob.compile_matcher();
-
-                // Note: Workspace files are already sorted.
-                let matches = self
-                    .files
-                    .iter()
-                    .filter_map(|(path, entry)| {
-                        if entry.metadata.is_file && matcher.is_match(path.as_os_path()) {
-                            Some(path.clone())
-                        } else {
-                            None
+                self.io.walk_directory(
+                    &self.project_root,
+                    self.glob_settings.clone(),
+                    &|path| {
+                        if let Some(unresolved_path) = self.unresolve_path(path).ok()
+                            && let Ok(metadata) = self.io.metadata(path)
+                            && metadata.is_file
+                            && matcher.is_match(unresolved_path.as_os_path())
+                        {
+                            matches.lock().push(unresolved_path);
                         }
-                    })
-                    .collect::<Vec<_>>();
+                    },
+                )?;
 
+                let mut matches = matches.into_inner();
+                // Sorting the matches for consistent hashing.
+                matches.sort();
                 let hash = compute_glob_hash(&matches);
 
                 entry.insert((matches.clone(), hash));
@@ -654,7 +556,7 @@ impl Workspace {
         }
     }
 
-    pub fn register_used_recipe_hash(&self, recipe: &ir::BuildRecipe) -> Hash128 {
+    pub fn register_used_recipe_hash(&self, recipe: &BuildRecipe) -> Hash128 {
         let mut state = self.runtime_caches.lock();
         let state = &mut *state;
         match state
@@ -672,17 +574,20 @@ impl Workspace {
 
     pub(crate) fn take_build_target_cache(
         &self,
-        path: &Absolute<werk_fs::Path>,
+        path: Absolute<SymPath>,
     ) -> Option<TargetOutdatednessCache> {
-        self.werk_cache.lock().build.remove(path)
+        self.werk_cache.lock().build.remove(path.as_path())
     }
 
     pub(crate) fn store_build_target_cache(
         &self,
-        path: Absolute<werk_fs::PathBuf>,
+        path: Absolute<SymPath>,
         cache: TargetOutdatednessCache,
     ) {
-        self.werk_cache.lock().build.insert(path, cache);
+        self.werk_cache
+            .lock()
+            .build
+            .insert(path.as_path().to_path_buf(), cache);
     }
 }
 
@@ -704,97 +609,6 @@ fn compute_glob_hash(files: &[Absolute<werk_fs::PathBuf>]) -> Hash128 {
     compute_stable_hash(files)
 }
 
-fn read_workspace_cache(io: &dyn Io, output_dir: &Absolute<std::path::Path>) -> WerkCache {
-    let werk_cache_path = output_dir.join(WERK_CACHE_FILENAME).unwrap();
-    tracing::debug!("trying to read .werk-cache: {}", werk_cache_path.display());
-    let data = match io.read_file(&werk_cache_path) {
-        Ok(data) => data,
-        Err(err) => {
-            if err.kind() != std::io::ErrorKind::NotFound {
-                tracing::error!("Failed to read workspace cache, even though it exists: {err}");
-            }
-            tracing::debug!(".werk-cache does not exist");
-            return WerkCache::default();
-        }
-    };
-
-    if data.is_empty() {
-        tracing::debug!(".werk-cache is empty");
-        return WerkCache::default();
-    }
-
-    match toml_edit::de::from_slice(&data) {
-        Ok(cache) => {
-            tracing::trace!(".werk-cache contents: {cache:#?}");
-            cache
-        }
-        Err(err) => {
-            tracing::error!("Failed to parse workspace cache: {err}");
-            WerkCache::default()
-        }
-    }
-}
-
-fn write_workspace_cache(
-    io: &dyn Io,
-    output_dir: &Absolute<std::path::Path>,
-    cache: &WerkCache,
-) -> std::io::Result<()> {
-    fn make_table(item: &mut toml_edit::Item) -> Option<&mut toml_edit::Table> {
-        match std::mem::take(item).into_table() {
-            Ok(table) => {
-                *item = toml_edit::Item::Table(table);
-                if let toml_edit::Item::Table(table) = item {
-                    Some(table)
-                } else {
-                    unreachable!()
-                }
-            }
-            Err(not_table) => {
-                *item = not_table;
-                None
-            }
-        }
-    }
-
-    let mut doc = match toml_edit::ser::to_document(cache) {
-        Ok(data) => data,
-        Err(err) => {
-            tracing::error!("Serialization error writing .werk-cache: {err}");
-            panic!("Serialization error writing .werk-cache: {err}");
-        }
-    };
-
-    if let Some(build) = doc.get_mut("build") {
-        let build = make_table(build).expect("build is not a table");
-        build.set_implicit(true);
-        for (_target, target_info) in build.iter_mut() {
-            make_table(target_info);
-        }
-    }
-
-    let toml = format!("# Generated by werk. It can be safely deleted.\n\n{doc}");
-
-    let path = output_dir.join(WERK_CACHE_FILENAME).unwrap();
-    tracing::debug!("writing .werk-cache to {}", path.display());
-
-    if let Err(err) = io.create_parent_dirs(&path) {
-        tracing::error!(
-            "Error creating parent directory for .werk-cache '{}': {err}",
-            output_dir.display()
-        );
-        return Err(err);
-    }
-
-    match io.write_file(&path, toml.as_bytes()) {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            tracing::error!("Error writing .werk-cache: {err}");
-            Err(err)
-        }
-    }
-}
-
 impl werk_util::DiagnosticSourceMap for &Workspace {
     #[inline]
     fn get_source(
@@ -802,5 +616,102 @@ impl werk_util::DiagnosticSourceMap for &Workspace {
         id: werk_util::DiagnosticFileId,
     ) -> Option<werk_util::DiagnosticSource<'_>> {
         self.manifest.get_source(id)
+    }
+}
+
+impl werk_eval::Scope for Workspace {
+    fn get(&self, name: Lookup) -> Option<LookupValue<'_>> {
+        let Lookup::Ident(name) = name else {
+            return None;
+        };
+
+        if let Some(var) = self
+            .manifest
+            .global_variables
+            .get(&name)
+            .map(LookupValue::EvalRef)
+        {
+            return Some(var);
+        }
+
+        // Global build-time constants.
+        if let Some(global_constant) = werk_eval::default_global_constants()
+            .get(&name)
+            .map(Eval::inherent)
+            .map(LookupValue::ValueRef)
+        {
+            return Some(global_constant);
+        }
+
+        // Runtime constants.
+        if name == sym!(COLOR) {
+            return Some(LookupValue::Owned(Eval::inherent(Value::from(
+                if self.force_color { "1" } else { "0" }.to_owned(),
+            ))));
+        }
+
+        None
+    }
+
+    fn io(&self) -> &dyn Io {
+        &*self.io
+    }
+
+    fn messenger(&self) -> &dyn werk_eval::Messenger {
+        &*self.render
+    }
+
+    fn message(&self, message: &str) {
+        self.render.message(None, message);
+    }
+
+    fn warning(&self, warning: &werk_eval::Warning) {
+        self.render.warning(None, warning);
+    }
+
+    fn which(
+        &self,
+        program_name: &str,
+    ) -> Result<Eval<Absolute<std::path::PathBuf>>, which::Error> {
+        let (path, hash) = Workspace::which(self, program_name)?;
+        let path = path.into_owned();
+        Ok(Eval::using_vars(
+            path,
+            hash.map(|hash| UsedVariable::Which(Symbol::new(program_name), hash)),
+        ))
+    }
+
+    fn env(&self, variable_name: &str) -> Eval<Option<String>> {
+        let (value, hash) = Workspace::env(self, variable_name);
+        Eval::using_var(
+            Some(value),
+            UsedVariable::Env(Symbol::new(variable_name), hash),
+        )
+    }
+
+    fn resolve_path(&self, path: &Absolute<werk_fs::Path>) -> Absolute<std::path::PathBuf> {
+        path.resolve(self.current_working_directory())
+    }
+
+    fn unresolve_path(
+        &self,
+        path: &Absolute<std::path::Path>,
+    ) -> Result<Absolute<werk_fs::PathBuf>, PathError> {
+        Workspace::unresolve_path(self, path)
+    }
+
+    fn glob_workspace_files(
+        &self,
+        pattern_string: &str,
+    ) -> Result<Eval<Vec<Absolute<werk_fs::PathBuf>>>, GlobError> {
+        let (results, hash) = Workspace::glob_workspace_files(self, pattern_string)?;
+        Ok(Eval::using_var(
+            results,
+            UsedVariable::Glob(Symbol::new(pattern_string), hash),
+        ))
+    }
+
+    fn current_working_directory(&self) -> &Absolute<std::path::Path> {
+        self.project_root()
     }
 }

@@ -29,7 +29,7 @@ fn with_werk<T: Default>(f: impl FnOnce(Workspace) -> Result<T, anyhow::Error> +
 
         let source_code = std::fs::read_to_string(&werkfile)?;
         let ast = werk_parser::parse_werk(&source_code)?;
-        let config = werk_runner::ir::Defaults::new(&ast, DiagnosticFileId(0))?;
+        let config = werk_runner::Defaults::new(&ast, DiagnosticFileId(0))?;
 
         let io = Arc::new(DryRun::new());
         let renderer = Arc::new(NullRender);

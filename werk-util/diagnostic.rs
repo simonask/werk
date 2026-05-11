@@ -4,13 +4,24 @@ use indexmap::{IndexMap, map::Entry};
 use crate::DiagnosticSpan;
 
 #[derive(Clone, Copy)]
-pub struct Annotated<T, R> {
-    pub repository: R,
+pub struct Annotated<'a, T> {
+    pub repository: &'a dyn DiagnosticSourceMap,
     pub error: T,
 }
 
-impl<T, R> Annotated<T, R> {
-    pub fn map_err<F: FnOnce(T) -> U, U>(self, f: F) -> Annotated<U, R> {
+impl<'a, T> Annotated<'a, T> {
+    pub fn into_inner(self) -> T {
+        self.error
+    }
+
+    pub fn inner_into<U: From<T>>(self) -> Annotated<'a, U> {
+        Annotated {
+            repository: self.repository,
+            error: self.error.into(),
+        }
+    }
+
+    pub fn map_err<F: FnOnce(T) -> U, U>(self, f: F) -> Annotated<'a, U> {
         Annotated {
             repository: self.repository,
             error: f(self.error),
@@ -18,7 +29,7 @@ impl<T, R> Annotated<T, R> {
     }
 }
 
-impl<T: AsDiagnostic, R: DiagnosticSourceMap + Sized> Annotated<T, R> {
+impl<T: AsDiagnostic> Annotated<'_, T> {
     pub fn display<'a>(
         &'a self,
         renderer: &'a annotate_snippets::Renderer,
@@ -27,13 +38,13 @@ impl<T: AsDiagnostic, R: DiagnosticSourceMap + Sized> Annotated<T, R> {
     }
 }
 
-impl<T: std::fmt::Debug, R> std::fmt::Debug for Annotated<T, R> {
+impl<T: std::fmt::Debug> std::fmt::Debug for Annotated<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.error.fmt(f)
     }
 }
 
-impl<T: AsDiagnostic, R: DiagnosticSourceMap> std::fmt::Display for Annotated<T, R> {
+impl<T: AsDiagnostic> std::fmt::Display for Annotated<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let renderer = annotate_snippets::Renderer::styled();
         let display = self.display(&renderer);
@@ -41,10 +52,9 @@ impl<T: AsDiagnostic, R: DiagnosticSourceMap> std::fmt::Display for Annotated<T,
     }
 }
 
-impl<T, R> std::error::Error for Annotated<T, R>
+impl<T> std::error::Error for Annotated<'_, T>
 where
     T: AsDiagnostic + std::error::Error,
-    R: DiagnosticSourceMap,
 {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.error.source()
@@ -223,7 +233,7 @@ pub trait AsDiagnostic {
         source_map: &'a dyn DiagnosticSourceMap,
     ) -> Vec<annotate_snippets::Group<'a>>;
 
-    fn into_diagnostic_error<R: DiagnosticSourceMap>(self, source_files: R) -> Annotated<Self, R>
+    fn into_diagnostic_error(self, source_files: &dyn DiagnosticSourceMap) -> Annotated<'_, Self>
     where
         Self: Sized,
     {

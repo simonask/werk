@@ -1,130 +1,18 @@
-mod string;
-mod used;
-pub(crate) use string::*;
 use stringleton::Symbol;
-pub use used::*;
 
 use werk_fs::Absolute;
-use werk_util::{DiagnosticFileId, Spanned as _};
+use werk_util::{DiagnosticFileId, DiagnosticSpan, Spanned as _};
 
 use std::sync::Arc;
 
 use werk_parser::ast;
 
 use crate::{
-    BuildRecipeScope, Env, EvalError, Lookup, LookupValue, MatchScope, Pattern, RunCommand, Scope,
-    ShellCommandLine, ShellError, StringFlags, StringValue, SubexprScope, TaskRecipeScope, Value,
-    Warning,
+    BuildTaskScope, CommandLineBuilder, Env, Eval, EvalError, Lookup, LookupValue, MatchScope,
+    Pattern, PatternBuilder, RunCommand, Scope, ScopeMut, ShellCommandLine, ShellError,
+    StringBuilder, StringFlags, StringValue, SubexprScope, Used, UsedVariable, Value, Warning,
+    dedup_recursive, flat_join,
 };
-
-/// Evaluated value, which keeps track of "outdatedness" with respect to cached
-/// build variables. Build recipes may use the outdatedness information to
-/// determine if some expression changed in a way that should cause a rebuild to
-/// occur, like the result of a glob pattern, or the result of a `which`
-/// expression (which is outdated if executable program path changed between
-/// runs).
-#[derive(Clone, Debug)]
-pub struct Eval<T = Value> {
-    pub value: T,
-    /// When the evaluated value can impact outdatedness (like a glob
-    /// expression), this is the variables used during evaluation.
-    pub used: Used,
-}
-
-impl<T> Eval<T> {
-    /// An inherent value that does not depend on any external variables.
-    pub const fn inherent(value: T) -> Self {
-        Self {
-            value,
-            used: Used::none(),
-        }
-    }
-
-    pub fn using_var(value: T, used: UsedVariable) -> Self {
-        Self::using_vars(value, [used])
-    }
-
-    pub fn using_vars(value: T, used: impl IntoIterator<Item = UsedVariable>) -> Self {
-        Self {
-            value,
-            used: Used::from_iter(used),
-        }
-    }
-
-    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Eval<U> {
-        Eval {
-            value: f(self.value),
-            used: self.used,
-        }
-    }
-
-    pub fn as_deref(&self) -> &T::Target
-    where
-        T: std::ops::Deref,
-    {
-        &self.value
-    }
-}
-
-impl<T> AsRef<T> for Eval<T> {
-    fn as_ref(&self) -> &T {
-        &self.value
-    }
-}
-
-impl<T: Default> Default for Eval<T> {
-    fn default() -> Self {
-        Self {
-            value: Default::default(),
-            used: Used::none(),
-        }
-    }
-}
-
-impl<T> Eval<&T> {
-    #[must_use]
-    pub fn cloned(&self) -> Eval<T>
-    where
-        T: Clone,
-    {
-        Eval {
-            value: self.value.clone(),
-            used: self.used.clone(),
-        }
-    }
-}
-
-impl<T> Eval<Option<T>> {
-    pub fn transpose(self) -> Option<Eval<T>> {
-        self.value.map(|value| Eval {
-            value,
-            used: self.used,
-        })
-    }
-}
-
-impl<T, E> Eval<Result<T, E>> {
-    pub fn transpose_result(self) -> Result<Eval<T>, E> {
-        self.value.map(|value| Eval {
-            value,
-            used: self.used,
-        })
-    }
-}
-
-impl<T> std::ops::Deref for Eval<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
-}
-
-impl<T> std::ops::DerefMut for Eval<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.value
-    }
-}
 
 pub fn eval(
     scope: &dyn Scope,
@@ -144,23 +32,20 @@ pub fn eval(
                 mut used,
             } = eval_string_expr(scope, &expr.param, file)?;
 
-            let (which, hash) = scope.workspace().which(&string).map_err(|e| {
+            let eval_path = scope.which(&string).map_err(|e| {
                 EvalError::CommandNotFound(file.span(expr.span), string.string.clone(), e)
             })?;
             // Note: TryFrom sets the correct StringFlags.
-            let which: StringValue = match which.into_owned().try_into() {
+            let which: StringValue = match eval_path.value.try_into() {
                 Ok(value) => value,
                 Err(path) => {
                     return Err(EvalError::NonUtf8Which(
                         file.span(expr.span),
-                        path.into_inner(),
+                        Absolute::into_inner(path),
                     ));
                 }
             };
-
-            if let Some(hash) = hash {
-                used.insert(UsedVariable::Which(Symbol::new(&string), hash));
-            }
+            used.vars.extend(eval_path.used);
 
             Ok(Eval {
                 value: Value::String(which),
@@ -172,10 +57,10 @@ pub fn eval(
                 value: name,
                 mut used,
             } = eval_string_expr(scope, &expr.param, file)?;
-            let (env, hash) = scope.workspace().env(&name);
-            used.insert(UsedVariable::Env(Symbol::new(&name), hash));
+            let eval_env = scope.env(&name);
+            used.vars.extend(eval_env.used);
             Ok(Eval {
-                value: Value::String(env.into()),
+                value: Value::String(eval_env.value.unwrap_or_default().into()),
                 used,
             })
         }
@@ -270,16 +155,16 @@ pub fn eval_op(
         ast::ExprOp::Info(expr) => {
             let scope = SubexprScope::new(scope, &param);
             let message = eval_string_expr(&scope, &expr.param, file)?;
-            scope.render().message(scope.task_id(), &message.value);
+            scope.message(&message.value);
             Ok(param)
         }
         ast::ExprOp::Warn(expr) => {
             let scope = SubexprScope::new(scope, &param);
             let message = eval_string_expr(&scope, &expr.param, file)?;
-            scope.render().warning(
-                scope.task_id(),
-                &Warning::WarningExpression(file.span(expr.span), message.value.string),
-            );
+            scope.warning(&Warning::WarningExpression(
+                file.span(expr.span),
+                message.value.string,
+            ));
             Ok(param)
         }
         ast::ExprOp::Error(error_expr) => {
@@ -525,26 +410,26 @@ fn eval_split_lines(_scope: &dyn Scope, param: Eval<Value>) -> Eval<Value> {
     }
 }
 
-pub(crate) fn eval_pattern_builder<'a, P: Scope + ?Sized>(
-    scope: &'a P,
+pub fn eval_pattern_builder<'a>(
+    scope: &'a dyn Scope,
     expr: &'a ast::PatternExpr,
     file: DiagnosticFileId,
-) -> Result<PatternBuilder<'a, P>, EvalError> {
+) -> Result<PatternBuilder<'a>, EvalError> {
     let mut pattern_builder = PatternBuilder::new(scope, file.span(expr.span));
     pattern_builder.eval(file, expr)?;
     Ok(pattern_builder)
 }
 
-pub fn eval_pattern<P: Scope + ?Sized>(
-    scope: &P,
+pub fn eval_pattern(
+    scope: &dyn Scope,
     expr: &ast::PatternExpr,
     file: DiagnosticFileId,
 ) -> Result<Eval<Pattern>, EvalError> {
     Ok(eval_pattern_builder(scope, expr, file)?.build())
 }
 
-pub fn eval_string_expr<P: Scope + ?Sized>(
-    scope: &P,
+pub fn eval_string_expr(
+    scope: &dyn Scope,
     expr: &ast::StringExpr,
     file: DiagnosticFileId,
 ) -> Result<Eval<StringValue>, EvalError> {
@@ -592,14 +477,14 @@ pub fn eval_index_expr(
 }
 
 #[expect(clippy::too_many_lines)]
-pub(crate) fn eval_run_exprs<S: Scope>(
-    scope: &S,
+pub fn eval_run_exprs(
+    scope: &dyn Scope,
     expr: &ast::RunExpr,
     commands: &mut Vec<RunCommand>,
     file: DiagnosticFileId,
 ) -> Result<Used, EvalError> {
-    fn eval_run_exprs_recursively<S: Scope>(
-        scope: &S,
+    fn eval_run_exprs_recursively(
+        scope: &dyn Scope,
         expr: &ast::RunExpr,
         commands: &mut Vec<RunCommand>,
         used: &mut Used,
@@ -622,8 +507,9 @@ pub(crate) fn eval_run_exprs<S: Scope>(
                     return Err(EvalError::UnexpectedList(file.span(expr.path.span())));
                 };
                 let dest_path = werk_fs::Path::new(&dest_path)
-                    .and_then(|path| scope.workspace().get_output_file_path(path))
-                    .map_err(|err| EvalError::Path(file.span(expr.span), err))?;
+                    .and_then(|path| path.absolutize(werk_fs::Path::ROOT))
+                    .map_err(|err| EvalError::Path(file.span(expr.span), err))
+                    .map(|path| scope.resolve_path(&path))?;
                 let data = eval(scope, &expr.value, file)?;
                 let write_used = destination.used | data.used;
                 let Value::String(data) = data.value else {
@@ -643,8 +529,9 @@ pub(crate) fn eval_run_exprs<S: Scope>(
                     })
                     .map_err(|err| EvalError::Path(file.span(expr.src.span), err))?;
                 let to_path = werk_fs::Path::new(&to)
-                    .and_then(|path| scope.workspace().get_output_file_path(path))
-                    .map_err(|err| EvalError::Path(file.span(expr.dest.span), err))?;
+                    .and_then(|path| path.absolutize(werk_fs::Path::ROOT))
+                    .map_err(|err| EvalError::Path(file.span(expr.dest.span), err))
+                    .map(|path| scope.resolve_path(&path))?;
                 let copy_used = from.used | to.used;
                 *used |= copy_used;
                 commands.push(RunCommand::Copy(from_path, to_path));
@@ -745,8 +632,8 @@ pub(crate) fn eval_run_exprs<S: Scope>(
     Ok(used)
 }
 
-pub fn eval_shell_command<P: Scope + ?Sized>(
-    scope: &P,
+pub fn eval_shell_command(
+    scope: &dyn Scope,
     expr: &ast::StringExpr,
     file: DiagnosticFileId,
 ) -> Result<Eval<ShellCommandLine>, EvalError> {
@@ -755,20 +642,8 @@ pub fn eval_shell_command<P: Scope + ?Sized>(
     builder.build()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ResolvePathMode {
-    /// Infer from whether or not the path exists in the workspace.
-    Infer,
-    /// The `:out-dir` operation was present.
-    OutDir,
-    /// The `:workspace` operation was present.
-    Workspace,
-    /// Cannot resolve paths here (e.g., in patterns)
-    Illegal,
-}
-
-pub fn eval_shell<P: Scope + ?Sized>(
-    scope: &P,
+pub fn eval_shell(
+    scope: &dyn Scope,
     expr: &ast::StringExpr,
     file: DiagnosticFileId,
 ) -> Result<Eval<StringValue>, EvalError> {
@@ -780,7 +655,7 @@ pub fn eval_shell<P: Scope + ?Sized>(
 
     let output = match scope
         .io()
-        .run_during_eval(&command, scope.workspace().project_root(), &env)
+        .run_during_eval(&command, scope.current_working_directory(), &env)
     {
         Ok(output) => output,
         Err(e) => {
@@ -813,8 +688,8 @@ pub fn eval_shell<P: Scope + ?Sized>(
     })
 }
 
-pub fn eval_read<P: Scope + ?Sized>(
-    scope: &P,
+pub fn eval_read(
+    scope: &dyn Scope,
     expr: &ast::StringExpr,
     file: DiagnosticFileId,
 ) -> Result<Eval<StringValue>, EvalError> {
@@ -824,26 +699,19 @@ pub fn eval_read<P: Scope + ?Sized>(
 
     let path = werk_fs::Path::new(&path).map_err(path_err)?;
     let path = path.absolutize(werk_fs::Path::ROOT).map_err(path_err)?;
-    let Some(fs_entry) = scope.workspace().get_project_file(&path) else {
-        return Err(EvalError::Io(
-            file.span(expr.span),
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("file not found during `read`: {path}"),
-            )
-            .into(),
-        ));
-    };
+    let fs_entry = scope
+        .stat_file(&path)
+        .map_err(|err| EvalError::Io(file.span(expr.span), err))?;
 
     let contents = scope
         .io()
         .read_file(&fs_entry.path)
-        .map_err(|err| EvalError::Io(file.span(expr.span), err.into()))?;
+        .map_err(|err| EvalError::Io(file.span(expr.span), err))?;
 
     let Ok(string) = String::from_utf8(contents) else {
         return Err(EvalError::NonUtf8Read(
             file.span(expr.span),
-            fs_entry.path.clone().into_inner(),
+            fs_entry.path.into_inner(),
         ));
     };
 
@@ -868,12 +736,15 @@ pub fn eval_glob(
     if !glob_pattern_string.starts_with('/') {
         glob_pattern_string.string.insert(0, '/');
     }
-    let (matches, hash) = scope
-        .workspace()
+    let eval_glob_files = scope
         .glob_workspace_files(&glob_pattern_string)
         .map_err(|err| EvalError::Glob(file.span(expr.span), Arc::new(err)))?;
-    used.insert(UsedVariable::Glob(Symbol::new(&glob_pattern_string), hash));
-    let matches = matches.into_iter().map(|p| p.into_inner().into()).collect();
+    used.vars.extend(eval_glob_files.used.vars);
+    let matches = eval_glob_files
+        .value
+        .into_iter()
+        .map(|p| Value::from(p.into_inner().into_string()))
+        .collect();
 
     Ok(Eval {
         value: matches,
@@ -881,19 +752,22 @@ pub fn eval_glob(
     })
 }
 
-pub(crate) struct EvaluatedBuildRecipe {
+pub struct EvaluatedBuildRecipe {
+    pub span: DiagnosticSpan,
     pub explicit_dependencies: Vec<StringValue>,
     pub depfile: Option<StringValue>,
     pub commands: Vec<RunCommand>,
     pub env: Env,
 }
 
-pub(crate) fn eval_build_recipe_statements(
-    scope: &mut BuildRecipeScope<'_>,
+pub fn eval_build_recipe_statements(
+    scope: &mut dyn BuildTaskScope,
+    span: DiagnosticSpan,
     body: &[ast::BodyStmt<ast::BuildRecipeStmt>],
     file: DiagnosticFileId,
 ) -> Result<Eval<EvaluatedBuildRecipe>, EvalError> {
     let mut evaluated = EvaluatedBuildRecipe {
+        span,
         explicit_dependencies: Vec::new(),
         depfile: None,
         commands: Vec::new(),
@@ -905,7 +779,7 @@ pub(crate) fn eval_build_recipe_statements(
         match stmt.statement {
             ast::BuildRecipeStmt::Let(ref let_stmt) => {
                 let value = eval_chain(scope, &let_stmt.value, file)?;
-                scope.set(let_stmt.ident.ident, value);
+                scope.set_local(file.span(let_stmt.span), let_stmt.ident.ident, value);
             }
             ast::BuildRecipeStmt::From(ref expr) => {
                 let value = eval_chain(scope, &expr.param, file)?;
@@ -919,7 +793,8 @@ pub(crate) fn eval_build_recipe_statements(
                 scope.push_input_files(
                     evaluated.explicit_dependencies[offset..]
                         .iter()
-                        .map(|s| s.string.clone()),
+                        .map(|s| s.string.clone())
+                        .collect(),
                 );
             }
             ast::BuildRecipeStmt::Depfile(ref expr) => {
@@ -928,7 +803,7 @@ pub(crate) fn eval_build_recipe_statements(
                 match value.value {
                     Value::String(ref depfile) => {
                         evaluated.depfile = Some(depfile.clone());
-                        scope.set(Symbol::from("depfile"), value);
+                        scope.set_local(file.span(expr.span), Symbol::from("depfile"), value);
                     }
                     Value::List(_) => {
                         return Err(EvalError::UnexpectedList(file.span(expr.span)));
@@ -981,14 +856,14 @@ pub(crate) fn eval_build_recipe_statements(
     })
 }
 
-pub(crate) struct EvaluatedTaskRecipe {
+pub struct EvaluatedTaskRecipe {
     pub build: Vec<StringValue>,
     pub commands: Vec<RunCommand>,
     pub env: Env,
 }
 
-pub(crate) fn eval_task_recipe_statements(
-    scope: &mut TaskRecipeScope<'_>,
+pub fn eval_task_recipe_statements(
+    scope: &mut dyn ScopeMut,
     body: &[ast::BodyStmt<ast::TaskRecipeStmt>],
     file: DiagnosticFileId,
 ) -> Result<EvaluatedTaskRecipe, EvalError> {
@@ -1002,7 +877,11 @@ pub(crate) fn eval_task_recipe_statements(
         match stmt.statement {
             ast::TaskRecipeStmt::Let(ref let_stmt) => {
                 let value = eval_chain(scope, &let_stmt.value, file)?;
-                scope.set(let_stmt.ident.ident, Eval::inherent(value.value));
+                scope.set_local(
+                    file.span(let_stmt.span),
+                    let_stmt.ident.ident,
+                    Eval::inherent(value.value),
+                );
             }
             ast::TaskRecipeStmt::Build(ref expr) => {
                 let value = eval_chain(scope, &expr.param, file)?;

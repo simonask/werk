@@ -1,2 +1,5 @@
 /target
 .DS_Store
+
+# Build files when the Zed plugin is installed as a local dev extension
+/zed-werk/grammars/werk

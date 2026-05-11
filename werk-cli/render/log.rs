@@ -1,4 +1,4 @@
-use werk_runner::Warning;
+use werk_eval::Warning;
 
 use super::OutputSettings;
 
@@ -15,10 +15,20 @@ impl LogWatcher {
     }
 }
 
+impl werk_eval::Messenger for LogWatcher {
+    fn message(&self, task_id: Option<werk_eval::TaskName>, message: &str) {
+        tracing::info!(task_id = ?task_id, "Message: {message}");
+    }
+
+    fn warning(&self, task_id: Option<werk_eval::TaskName>, message: &Warning) {
+        tracing::warn!(task_id = ?task_id, "Warning: {message}");
+    }
+}
+
 impl werk_runner::Render for LogWatcher {
     fn will_build(
         &self,
-        task_id: werk_runner::TaskId,
+        task_id: werk_eval::TaskName,
         num_steps: usize,
         outdatedness: &werk_runner::Outdatedness,
     ) {
@@ -36,7 +46,7 @@ impl werk_runner::Render for LogWatcher {
 
     fn did_build(
         &self,
-        task_id: werk_runner::TaskId,
+        task_id: werk_eval::TaskName,
         result: &Result<werk_runner::BuildStatus, werk_runner::Error>,
     ) {
         match result {
@@ -53,8 +63,8 @@ impl werk_runner::Render for LogWatcher {
 
     fn will_execute(
         &self,
-        task_id: werk_runner::TaskId,
-        command: &werk_runner::ShellCommandLine,
+        task_id: werk_eval::TaskName,
+        command: &werk_eval::ShellCommandLine,
         step: usize,
         _num_steps: usize,
     ) {
@@ -65,8 +75,8 @@ impl werk_runner::Render for LogWatcher {
 
     fn did_execute(
         &self,
-        task_id: werk_runner::TaskId,
-        command: &werk_runner::ShellCommandLine,
+        task_id: werk_eval::TaskName,
+        command: &werk_eval::ShellCommandLine,
         status: &std::io::Result<std::process::ExitStatus>,
         step: usize,
         _num_steps: usize,
@@ -83,13 +93,5 @@ impl werk_runner::Render for LogWatcher {
                 tracing::error!(task_id = %task_id, step = step, "Error: {err}");
             }
         }
-    }
-
-    fn message(&self, task_id: Option<werk_runner::TaskId>, message: &str) {
-        tracing::info!(task_id = ?task_id, "Message: {message}");
-    }
-
-    fn warning(&self, task_id: Option<werk_runner::TaskId>, message: &Warning) {
-        tracing::warn!(task_id = ?task_id, "Warning: {message}");
     }
 }

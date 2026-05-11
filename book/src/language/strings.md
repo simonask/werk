@@ -104,12 +104,6 @@ they are applied in order.
   produces the file-without-directory part of the path.
 - `{...:ext}`: When the stem refers to an [abstract path](../paths.md), produces
   the file extension (without the `.`) of the path.
-- `<...:out-dir>`: Disambiguate [native path resolution](./path_resolution.md)
-  to produce a path in the output directory. Does nothing in `{...}`
-  interpolations.
-- `<...:workspace>`: Disambiguate [native path resolution](./path_resolution.md)
-  to produce a path in the workspace directory. Does nothing in `{...}`
-  interpolations.
 
 ## String interpolation example
 
@@ -117,5 +111,5 @@ they are applied in order.
 let input-files = ["foo.c", "main.c"]
 
 info "{input-files ,*:.c=.o}"    # Prints "foo.o, main.o"
-info "<input-files*:.c=.o>"      # Prints "c:\workspace\output\foo.o c:\workspace\output\main.o"
+info "<input-files*:.c=.o>"      # Prints "c:\workspace\foo.o c:\workspace\main.o"
 ```

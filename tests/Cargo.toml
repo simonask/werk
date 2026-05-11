@@ -10,6 +10,8 @@ license.workspace = true
 werk-runner.workspace = true
 werk-parser.workspace = true
 werk-fs.workspace = true
+werk-eval.workspace = true
+werk-planner.workspace = true
 anyhow = "1"
 parking_lot.workspace = true
 ahash.workspace = true
@@ -26,6 +28,7 @@ anstream.workspace = true
 # Hijacking winnow for the Offset trait
 winnow.workspace = true
 stringleton.workspace = true
+literator.workspace = true
 
 [dev-dependencies]
 criterion = "0.8.1"

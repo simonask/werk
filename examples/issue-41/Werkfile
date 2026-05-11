@@ -1,4 +1,4 @@
-default out-dir = "../../target/examples/issue-41"
+default cache-dir = "../../target/examples/issue-41"
 default target = "build"
 
 build "foo" {
